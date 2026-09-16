@@ -637,7 +637,7 @@ func _draw() -> void:
 	var min_ty = clampi(int(floor((cam_pos.y - (vp_size.y * 0.5) / cam_zoom) / TILE_SIZE)) - margin, 0, height - 1)
 	var max_ty = clampi(int(ceil((cam_pos.y + (vp_size.y * 0.5) / cam_zoom) / TILE_SIZE)) + margin, 0, height - 1)
 	
-	# 1. Базовые тайлы поверхности
+	# 1. Базовые тайлы поверхности и плавные переходы биомов
 	for y in range(min_ty, max_ty + 1):
 		for x in range(min_tx, max_tx + 1):
 			var tile = tiles[y][x]
@@ -664,29 +664,41 @@ func _draw() -> void:
 				var biome_info = BiomeDefinitions.get_biome_info(tile["biome"])
 				draw_rect(rect, biome_info["color"])
 				
-			# Реки
+			# Плавные органические переходы биомов (Autotiling overlays)
+			var overlays = TerrainResolver.get_transition_overlays(tiles, x, y, width, height)
+			for ov in overlays:
+				var ov_tex = TileTextureManager.get_overlay_texture(ov["biome_folder"], ov["mask"])
+				if ov_tex:
+					draw_texture_rect(ov_tex, rect, false, mod_color)
+				
+			# Динамические реки с бесшовным соединением
 			if tile["is_river"] and not tile["is_water"]:
-				var c = rect.get_center()
-				var half = TILE_SIZE * 0.5
-				var river_outer = Color(0.22, 0.56, 0.84, 0.90)
-				var river_inner = Color(0.60, 0.88, 0.98, 0.75)
-				
-				var has_left = (x > 0 and (tiles[y][x-1]["is_river"] or tiles[y][x-1]["is_water"]))
-				var has_right = (x < tiles[0].size() - 1 and (tiles[y][x+1]["is_river"] or tiles[y][x+1]["is_water"]))
-				var has_up = (y > 0 and (tiles[y-1][x]["is_river"] or tiles[y-1][x]["is_water"]))
-				var has_down = (y < tiles.size() - 1 and (tiles[y+1][x]["is_river"] or tiles[y+1][x]["is_water"]))
-				
-				draw_circle(c, 3.2, river_outer)
-				if has_left: draw_line(c, c + Vector2(-half, 0), river_outer, 3.6)
-				if has_right: draw_line(c, c + Vector2(half, 0), river_outer, 3.6)
-				if has_up: draw_line(c, c + Vector2(0, -half), river_outer, 3.6)
-				if has_down: draw_line(c, c + Vector2(0, half), river_outer, 3.6)
-				
-				draw_circle(c, 1.4, river_inner)
-				if has_left: draw_line(c, c + Vector2(-half, 0), river_inner, 1.6)
-				if has_right: draw_line(c, c + Vector2(half, 0), river_inner, 1.6)
-				if has_up: draw_line(c, c + Vector2(0, -half), river_inner, 1.6)
-				if has_down: draw_line(c, c + Vector2(0, half), river_inner, 1.6)
+				var r_name = TerrainResolver.resolve_river_texture_name(tiles, x, y, width, height)
+				var river_tex = TileTextureManager.get_river_texture(r_name)
+				if river_tex:
+					draw_texture_rect(river_tex, rect, false)
+				else:
+					var c = rect.get_center()
+					var half = TILE_SIZE * 0.5
+					var river_outer = Color(0.22, 0.56, 0.84, 0.90)
+					var river_inner = Color(0.60, 0.88, 0.98, 0.75)
+					
+					var has_left = (x > 0 and (tiles[y][x-1]["is_river"] or tiles[y][x-1]["is_water"]))
+					var has_right = (x < tiles[0].size() - 1 and (tiles[y][x+1]["is_river"] or tiles[y][x+1]["is_water"]))
+					var has_up = (y > 0 and (tiles[y-1][x]["is_river"] or tiles[y-1][x]["is_water"]))
+					var has_down = (y < tiles.size() - 1 and (tiles[y+1][x]["is_river"] or tiles[y+1][x]["is_water"]))
+					
+					draw_circle(c, 3.2, river_outer)
+					if has_left: draw_line(c, c + Vector2(-half, 0), river_outer, 3.6)
+					if has_right: draw_line(c, c + Vector2(half, 0), river_outer, 3.6)
+					if has_up: draw_line(c, c + Vector2(0, -half), river_outer, 3.6)
+					if has_down: draw_line(c, c + Vector2(0, half), river_outer, 3.6)
+					
+					draw_circle(c, 1.4, river_inner)
+					if has_left: draw_line(c, c + Vector2(-half, 0), river_inner, 1.6)
+					if has_right: draw_line(c, c + Vector2(half, 0), river_inner, 1.6)
+					if has_up: draw_line(c, c + Vector2(0, -half), river_inner, 1.6)
+					if has_down: draw_line(c, c + Vector2(0, half), river_inner, 1.6)
 				
 			# Деревья, скалы, кустарники
 			var nature_tex = TileTextureManager.get_nature_overlay(tile["biome"], tile["coord"])
