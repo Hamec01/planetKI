@@ -671,45 +671,6 @@ func _draw() -> void:
 				if ov_tex:
 					draw_texture_rect(ov_tex, rect, false, mod_color)
 				
-			# Динамические плавные реки без прямоугольных артефактов и квадратов
-			if tile["is_river"] and not tile["is_water"]:
-				var c = rect.get_center()
-				var half = TILE_SIZE * 0.5
-				
-				var has_left = (x > 0 and (tiles[y][x-1]["is_river"] or tiles[y][x-1]["is_water"]))
-				var has_right = (x < tiles[0].size() - 1 and (tiles[y][x+1]["is_river"] or tiles[y][x+1]["is_water"]))
-				var has_up = (y > 0 and (tiles[y-1][x]["is_river"] or tiles[y-1][x]["is_water"]))
-				var has_down = (y < tiles.size() - 1 and (tiles[y+1][x]["is_river"] or tiles[y+1][x]["is_water"]))
-				
-				# Если река изолирована (без соседей), соединяем хотя бы по горизонтали
-				if not has_left and not has_right and not has_up and not has_down:
-					has_left = true
-					has_right = true
-				
-				# 1. Тень берега / русла реки (мягкое сглаженное углубление)
-				var bank_color = Color(0.12, 0.35, 0.45, 0.50)
-				draw_circle(c, 4.5, bank_color)
-				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), bank_color, 9.0, true)
-				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), bank_color, 9.0, true)
-				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), bank_color, 9.0, true)
-				if has_down: draw_line(c, c + Vector2(0, half + 1.0), bank_color, 9.0, true)
-				
-				# 2. Основное тело воды реки (насыщенный лазурный цвет)
-				var river_water = Color(0.14, 0.72, 0.92, 0.95)
-				draw_circle(c, 3.2, river_water)
-				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), river_water, 6.2, true)
-				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), river_water, 6.2, true)
-				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), river_water, 6.2, true)
-				if has_down: draw_line(c, c + Vector2(0, half + 1.0), river_water, 6.2, true)
-				
-				# 3. Внутренний световой блик воды (течение)
-				var river_shine = Color(0.70, 0.94, 1.0, 0.75)
-				draw_circle(c, 1.2, river_shine)
-				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), river_shine, 2.2, true)
-				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), river_shine, 2.2, true)
-				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), river_shine, 2.2, true)
-				if has_down: draw_line(c, c + Vector2(0, half + 1.0), river_shine, 2.2, true)
-				
 			# Иконки ресурсов
 			if tile["resource"] != null:
 				var should_draw_res = (current_map_mode == "resources" or hovered_tile_coord == tile["coord"])

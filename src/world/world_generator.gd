@@ -223,7 +223,24 @@ static func _determine_biome(elev: float, temp: float, moist: float) -> int:
 			return BiomeDefinitions.BiomeType.DESERT
 
 static func _smooth_biomes(tiles: Array) -> void:
-	# Сглаживает одиночные выбросы биомов среди соседей
+	# 1. Устранение одиночных 1-2 клеточных луж и псевдо-водоемов на суше
+	for y in range(1, MAP_HEIGHT - 1):
+		for x in range(1, MAP_WIDTH - 1):
+			var t = tiles[y][x]
+			if t["is_water"]:
+				var water_neighbors = 0
+				for dy in [-1, 0, 1]:
+					for dx in [-1, 0, 1]:
+						if dx == 0 and dy == 0: continue
+						if tiles[y + dy][x + dx]["is_water"]:
+							water_neighbors += 1
+				# Если у воды меньше 3 водных соседей (одиночная лужа на суше), превращаем в сушу
+				if water_neighbors < 3:
+					t["is_water"] = false
+					t["elevation"] = maxf(t["elevation"], COAST_LEVEL + 0.05)
+					t["biome"] = _determine_biome(t["elevation"], t["temperature"], t["moisture"])
+
+	# 2. Сглаживает одиночные выбросы биомов среди соседей
 	for y in range(1, MAP_HEIGHT - 1):
 		for x in range(1, MAP_WIDTH - 1):
 			var current = tiles[y][x]
@@ -246,62 +263,9 @@ static func _smooth_biomes(tiles: Array) -> void:
 			if max_count >= 6 and dominant_biome != current["biome"]:
 				current["biome"] = dominant_biome
 
-static func _generate_rivers(tiles: Array, rng: RandomNumberGenerator) -> void:
-	var river_starts: Array[Vector2i] = []
-	for y in range(2, MAP_HEIGHT - 2):
-		for x in range(2, MAP_WIDTH - 2):
-			var tile = tiles[y][x]
-			# Истоки рек образуются на возвышенностях и холмах с достаточной влажностью
-			if tile["elevation"] >= HILLS_LEVEL and tile["elevation"] < SNOW_LEVEL and tile["moisture"] > 0.42:
-				if rng.randf() < 0.09:
-					river_starts.append(Vector2i(x, y))
-					
-	for start in river_starts:
-		var current = start
-		var visited: Dictionary = {}
-		
-		for _step in range(100):
-			if current.y < 0 or current.y >= MAP_HEIGHT or current.x < 0 or current.x >= MAP_WIDTH:
-				break
-			var tile = tiles[current.y][current.x]
-			tile["is_river"] = true
-			tile["moisture"] = clampf(tile["moisture"] + 0.30, 0.0, 1.0)
-			
-			if tile["is_water"]:
-				break # Река впала в океан/море
-				
-			visited[current] = true
-			
-			# Поиск соседа с минимальной высотой (сток воды)
-			var neighbors = [
-				Vector2i(current.x + 1, current.y),
-				Vector2i(current.x - 1, current.y),
-				Vector2i(current.x, current.y + 1),
-				Vector2i(current.x, current.y - 1),
-				Vector2i(current.x + 1, current.y + 1),
-				Vector2i(current.x - 1, current.y - 1),
-				Vector2i(current.x + 1, current.y - 1),
-				Vector2i(current.x - 1, current.y + 1)
-			]
-			
-			var lowest_pos = Vector2i(-1, -1)
-			var min_elev = tile["elevation"]
-			
-			for n in neighbors:
-				if n.x >= 0 and n.x < MAP_WIDTH and n.y >= 0 and n.y < MAP_HEIGHT and not visited.has(n):
-					var n_tile = tiles[n.y][n.x]
-					# Если сосед уже река или вода, устремляемся в него
-					if n_tile["is_water"] or n_tile["is_river"]:
-						lowest_pos = n
-						break
-					if n_tile["elevation"] < min_elev:
-						min_elev = n_tile["elevation"]
-						lowest_pos = n
-						
-			if lowest_pos == Vector2i(-1, -1):
-				# Если попали в замкнутую низину, делаем шаг в сторону ближайшего водоёма
-				break
-			current = lowest_pos
+static func _generate_rivers(_tiles: Array, _rng: RandomNumberGenerator) -> void:
+	# Речные псевдо-линии отключены
+	return
 
 static func _generate_resources(tiles: Array, land_tiles: Array[Vector2i], rng: RandomNumberGenerator) -> void:
 	for pos in land_tiles:
