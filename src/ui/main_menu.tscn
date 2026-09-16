@@ -1,0 +1,119 @@
+[gd_scene load_steps=2 format=3 uid="uid://dm283nvei3v4a"]
+
+[ext_resource type="Script" path="res://src/ui/main_menu.gd" id="1_main_menu"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main_menu")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.07, 0.11, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MenuCard" type="PanelContainer" parent="CenterContainer"]
+custom_minimum_size = Vector2(540, 0)
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="CenterContainer/MenuCard"]
+layout_mode = 2
+theme_override_constants/margin_left = 32
+theme_override_constants/margin_top = 28
+theme_override_constants/margin_right = 32
+theme_override_constants/margin_bottom = 28
+
+[node name="VBox" type="VBoxContainer" parent="CenterContainer/MenuCard/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.88, 0.4, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 3
+theme_override_font_sizes/font_size = 48
+text = "🪐 ПЛАНЕТКИ"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.75, 0.82, 0.92, 1)
+theme_override_font_sizes/font_size = 16
+text = "От первого костра до звёздных империй"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+
+[node name="SeedLabel" type="Label" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.93, 0.98, 1)
+text = "Seed звёздной системы и планеты:"
+
+[node name="SeedBox" type="HBoxContainer" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SeedInput" type="LineEdit" parent="CenterContainer/MenuCard/Margin/VBox/SeedBox"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 15
+text = "PLN-7A4F-9231-B"
+placeholder_text = "Введите Seed..."
+
+[node name="RandomSeedBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox/SeedBox"]
+custom_minimum_size = Vector2(130, 42)
+layout_mode = 2
+text = "🎲 Случайный"
+
+[node name="Spacer" type="Control" parent="CenterContainer/MenuCard/Margin/VBox"]
+custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
+
+[node name="NewGameBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox"]
+custom_minimum_size = Vector2(0, 52)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.95, 0.6, 1)
+theme_override_font_sizes/font_size = 19
+text = "🔥 Начать новую цивилизацию"
+
+[node name="ContinueBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox"]
+custom_minimum_size = Vector2(0, 46)
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "📜 Продолжить историю"
+
+[node name="ExitBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox"]
+custom_minimum_size = Vector2(0, 42)
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+text = "Выход"
+
+[node name="HSeparator2" type="HSeparator" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+
+[node name="Footer" type="Label" parent="CenterContainer/MenuCard/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.55, 0.65, 1)
+theme_override_font_sizes/font_size = 12
+text = "Godot 4 • Grand Strategy Simulation"
+horizontal_alignment = 1

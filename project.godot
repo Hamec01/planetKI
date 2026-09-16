@@ -1,0 +1,44 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
+[application]
+
+config/name="Planetki"
+config/description="2D Grand Strategy / Civilization Simulation from Tribe to Space"
+config/version="0.1.0"
+run/main_scene="res://src/ui/main_menu.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[autoload]
+
+EventBus="*res://src/core/event_bus.gd"
+GameManager="*res://src/core/game_manager.gd"
+SaveSystem="*res://src/core/save_system.gd"
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/size/mode="maximized"
+window/size/resizable=true
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[gui]
+
+theme/custom="res://Assets/ui_theme.tres"
+
+[rendering]
+
+environment/defaults/default_clear_color=Color(0.08, 0.09, 0.11, 1)

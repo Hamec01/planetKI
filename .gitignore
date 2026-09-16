@@ -1,0 +1,47 @@
+# Godot 4 .gitignore
+
+# Godot-specific ignores
+.godot/
+*.import
+*.uid
+export_presets.cfg
+
+# System / IDE ignores
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+.vscode/
+.idea/
+
+# Media & Heavy Asset Directories (Code-only repo)
+Assets/
+Buildings/
+Characters/
+GUI/
+Icons/
+Tilemaps/
+tiles/
+tilemap/
+spriteframes/
+spritesheets/
+dock/
+addons/
+@icons picker.html
+
+# Raw binary media files
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.webp
+*.gif
+*.wav
+*.ogg
+*.mp3
+*.flac
+*.tga
+*.psd
+*.aseprite
+*.zip
+*.tar.gz

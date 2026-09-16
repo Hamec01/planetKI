@@ -1,0 +1,734 @@
+[gd_scene load_steps=9 format=3 uid="uid://c6f3q1g8mup9x"]
+
+[ext_resource type="Script" path="res://src/game.gd" id="1_game"]
+[ext_resource type="Script" path="res://src/map/world_map_view.gd" id="2_map_view"]
+[ext_resource type="Script" path="res://src/map/map_camera.gd" id="3_camera"]
+[ext_resource type="Script" path="res://src/ui/main_hud.gd" id="4_hud"]
+[ext_resource type="Script" path="res://src/ui/settlement_panel.gd" id="5_settlement"]
+[ext_resource type="Script" path="res://src/ui/faction_view.gd" id="6_faction"]
+[ext_resource type="Script" path="res://src/ui/events_dialog.gd" id="7_events"]
+[ext_resource type="Script" path="res://src/ui/battle_modal.gd" id="8_battle"]
+
+[node name="Game" type="Node2D"]
+script = ExtResource("1_game")
+
+[node name="MapView" type="Node2D" parent="."]
+script = ExtResource("2_map_view")
+
+[node name="MapCamera" type="Camera2D" parent="."]
+script = ExtResource("3_camera")
+
+[node name="MainHUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")
+
+[node name="TopBar" type="PanelContainer" parent="MainHUD"]
+custom_minimum_size = Vector2(0, 56)
+anchors_preset = 10
+anchor_right = 1.0
+grow_horizontal = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MainHUD/TopBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 6
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MainHUD/TopBar/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="DateLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.45, 1)
+theme_override_font_sizes/font_size = 15
+text = "День 1, Месяц 1 (Весна), Год 1"
+
+[node name="EpochLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.85, 0.95, 1)
+theme_override_font_sizes/font_size = 14
+text = "Эпоха 1 — Племя"
+
+[node name="VSeparator" type="VSeparator" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+
+[node name="ResContainer" type="HBoxContainer" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="FoodLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.95, 0.6, 1)
+text = "🍗 Еда: 180"
+
+[node name="WoodLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.8, 0.6, 1)
+text = "🪵 Дерево: 60"
+
+[node name="StoneLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.9, 0.95, 1)
+text = "🪨 Камень: 30"
+
+[node name="MetalLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.75, 0.45, 1)
+text = "⛏ Металл: 10"
+
+[node name="KubrikiLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.3, 1)
+text = "🪙 Кубрики: 50"
+
+[node name="KnowledgeLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/ResContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.85, 1, 1)
+text = "📜 Знания: 0"
+
+[node name="VSeparator2" type="VSeparator" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+
+[node name="PopContainer" type="HBoxContainer" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+
+[node name="PopLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/PopContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.95, 0.85, 1)
+text = "👥 Жители: 85 (раб. 60)"
+
+[node name="VSeparator3" type="VSeparator" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+
+[node name="StatsContainer" type="HBoxContainer" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="LoyaltyLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/StatsContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.6, 0.65, 1)
+text = "❤️ Лояльность: 75%"
+
+[node name="StabilityLabel" type="Label" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/StatsContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.9, 1, 1)
+text = "⚖️ Порядок: 80%"
+
+[node name="Spacer" type="Control" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpeedContainer" type="HBoxContainer" parent="MainHUD/TopBar/MarginContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PauseBtn" type="Button" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/SpeedContainer"]
+custom_minimum_size = Vector2(85, 34)
+layout_mode = 2
+text = "⏸ Пауза"
+
+[node name="Speed1Btn" type="Button" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/SpeedContainer"]
+custom_minimum_size = Vector2(40, 34)
+layout_mode = 2
+text = "1x"
+
+[node name="Speed2Btn" type="Button" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/SpeedContainer"]
+custom_minimum_size = Vector2(40, 34)
+layout_mode = 2
+text = "2x"
+
+[node name="Speed4Btn" type="Button" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/SpeedContainer"]
+custom_minimum_size = Vector2(40, 34)
+layout_mode = 2
+text = "4x"
+
+
+
+[node name="BottomDockBar" type="PanelContainer" parent="MainHUD"]
+custom_minimum_size = Vector2(0, 52)
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -52.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="TileInfoPanel" type="PanelContainer" parent="MainHUD"]
+visible = false
+custom_minimum_size = Vector2(300, 0)
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -320.0
+offset_top = 65.0
+offset_right = -20.0
+offset_bottom = 240.0
+grow_horizontal = 0
+
+[node name="MarginContainer" type="MarginContainer" parent="MainHUD/TileInfoPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="MainHUD/TileInfoPanel/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="MainHUD/TileInfoPanel/MarginContainer/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "Плодородные равнины"
+
+[node name="HSeparator" type="HSeparator" parent="MainHUD/TileInfoPanel/MarginContainer/VBox"]
+layout_mode = 2
+
+[node name="Details" type="Label" parent="MainHUD/TileInfoPanel/MarginContainer/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.85, 0.9, 0.95, 1)
+theme_override_font_sizes/font_size = 13
+text = "Высота: 45%\nВлажность: 60%\nТемпература: 55%"
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 2
+
+[node name="SettlementPanel" type="Control" parent="UI"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("5_settlement")
+
+[node name="Backdrop" type="Button" parent="UI/SettlementPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+flat = true
+
+[node name="ColorRect" type="ColorRect" parent="UI/SettlementPanel/Backdrop"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.04, 0.05, 0.08, 0.75)
+
+[node name="CenterContainer" type="CenterContainer" parent="UI/SettlementPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="UI/SettlementPanel/CenterContainer"]
+custom_minimum_size = Vector2(1040, 680)
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="UI/SettlementPanel/CenterContainer/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Header" type="HBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
+theme_override_font_sizes/font_size = 22
+text = "🏛 Стоянка Первого Костра (Эпоха 1 — Племя)"
+
+[node name="CloseBtn" type="Button" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/Header"]
+custom_minimum_size = Vector2(100, 36)
+layout_mode = 2
+text = "✕ Закрыть"
+
+[node name="HSeparator" type="HSeparator" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox"]
+layout_mode = 2
+
+[node name="PopBox" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="CohortsLabel" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/PopBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.93, 0.98, 1)
+theme_override_font_sizes/font_size = 14
+text = "👶 Дети: 15 | 🧒 Юноши: 10 | 🧑 Взрослые (М/Ж): 25/25 | 🧓 Старейшины: 8 | 👴 Старики: 2"
+
+[node name="HousingLabel" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/PopBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.82, 0.95, 1)
+theme_override_font_sizes/font_size = 13
+text = "🏠 Жилой фонд: 85 / 95 мест   •   🛡 Обороноспособность: 5.0"
+
+[node name="HSeparator2" type="HSeparator" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox"]
+layout_mode = 2
+
+[node name="ContentSplit" type="HBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="JobsBox" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit"]
+custom_minimum_size = Vector2(440, 0)
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="JobsTitle" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/JobsBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "⚒️ Распределение труда соплеменников:"
+
+[node name="IdleLabel" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/JobsBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.9, 0.6, 1)
+theme_override_font_sizes/font_size = 13
+text = "⚡ Свободные рабочие руки: 5 (Всего рабочих: 60)"
+
+[node name="JobsScroll" type="ScrollContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/JobsBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="JobsList" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/JobsBox/JobsScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="VSeparator" type="VSeparator" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit"]
+layout_mode = 2
+
+[node name="BuildingsBox" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="BuildTitle" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "🏗️ Строительство зданий 1-й эпохи:"
+
+[node name="QueueCard" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="QueueLabel" type="Label" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox/QueueCard"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+theme_override_font_sizes/font_size = 13
+text = "Сейчас ничего не возводится."
+
+[node name="QueueProgress" type="ProgressBar" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox/QueueCard"]
+visible = false
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+
+[node name="BuildScroll" type="ScrollContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="BuildingsList" type="VBoxContainer" parent="UI/SettlementPanel/CenterContainer/Panel/Margin/VBox/ContentSplit/BuildingsBox/BuildScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="FactionView" type="PanelContainer" parent="UI"]
+visible = false
+custom_minimum_size = Vector2(880, 640)
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -440.0
+offset_top = -320.0
+offset_right = 440.0
+offset_bottom = 320.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("6_faction")
+
+[node name="Margin" type="MarginContainer" parent="UI/FactionView"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="UI/FactionView/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Header" type="HBoxContainer" parent="UI/FactionView/Margin/VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="UI/FactionView/Margin/VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
+theme_override_font_sizes/font_size = 22
+text = "🏛 Управление цивилизацией"
+
+[node name="CloseBtn" type="Button" parent="UI/FactionView/Margin/VBox/Header"]
+custom_minimum_size = Vector2(100, 36)
+layout_mode = 2
+text = "✕ Закрыть"
+
+[node name="TabContainer" type="TabContainer" parent="UI/FactionView/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Законы" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Законы"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="LawsList" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Законы/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="Вера" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Вера"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="ReligName" type="Label" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
+theme_override_font_sizes/font_size = 18
+text = "🏛 Вера: Вера Предков"
+
+[node name="ReligValues" type="Label" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+text = "Ценности: Семья, Честь, Традиция, Старшие"
+
+[node name="ReligBonuses" type="Label" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.9, 0.7, 1)
+text = "Бонусы: Устойчивые семьи, высокая рождаемость"
+
+[node name="HSeparator" type="HSeparator" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+
+[node name="SelectTitle" type="Label" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+text = "Доступные верования и реформы:"
+
+[node name="SelectBox" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Вера/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Наука" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Наука"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="CurrentTechLabel" type="Label" parent="UI/FactionView/Margin/VBox/TabContainer/Наука/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "Изучается: Силки и охотничьи луки"
+
+[node name="TechProgress" type="ProgressBar" parent="UI/FactionView/Margin/VBox/TabContainer/Наука/VBox"]
+custom_minimum_size = Vector2(0, 24)
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Наука/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="TechList" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Наука/VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="Армия" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Армия"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="RecruitArmyBtn" type="Button" parent="UI/FactionView/Margin/VBox/TabContainer/Армия/VBox"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "⚔️ Сформировать новый отряд дружины (30 еды, 20 дерева)"
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Армия/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="GeneralsList" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Армия/VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="Дипломатия" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Дипломатия"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Дипломатия/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="DiploList" type="VBoxContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Дипломатия/VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="Хроника" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Хроника"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="HistoryText" type="RichTextLabel" parent="UI/FactionView/Margin/VBox/TabContainer/Хроника/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+text = "Хроника деяний..."
+
+[node name="Система" type="TabBar" parent="UI/FactionView/Margin/VBox/TabContainer"]
+visible = false
+layout_mode = 2
+
+[node name="Scroll" type="ScrollContainer" parent="UI/FactionView/Margin/VBox/TabContainer/Система"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="StarText" type="RichTextLabel" parent="UI/FactionView/Margin/VBox/TabContainer/Система/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+bbcode_enabled = true
+text = "Параметры звездной системы..."
+
+[node name="EventsDialog" type="PanelContainer" parent="UI"]
+visible = false
+custom_minimum_size = Vector2(620, 440)
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -310.0
+offset_top = -220.0
+offset_right = 310.0
+offset_bottom = 220.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("7_events")
+
+[node name="Margin" type="MarginContainer" parent="UI/EventsDialog"]
+layout_mode = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 22
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 22
+
+[node name="VBox" type="VBoxContainer" parent="UI/EventsDialog/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
+theme_override_font_sizes/font_size = 20
+text = "📜 Голодная зима"
+
+[node name="Speaker" type="Label" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.7, 0.82, 0.95, 1)
+theme_override_font_sizes/font_size = 14
+text = "— Старейшина Иара"
+
+[node name="HSeparator" type="HSeparator" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+
+[node name="Text" type="Label" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.93, 0.98, 1)
+text = "Вождь, амбары почти пусты..."
+autowrap_mode = 3
+
+[node name="Spacer" type="Control" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ChoicesBox" type="VBoxContainer" parent="UI/EventsDialog/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="BattleModal" type="PanelContainer" parent="UI"]
+visible = false
+custom_minimum_size = Vector2(740, 560)
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -370.0
+offset_top = -280.0
+offset_right = 370.0
+offset_bottom = 280.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("8_battle")
+
+[node name="Margin" type="MarginContainer" parent="UI/BattleModal"]
+layout_mode = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="UI/BattleModal/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="UI/BattleModal/Margin/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
+theme_override_font_sizes/font_size = 20
+text = "⚔️ Битва у Каменного Брода"
+
+[node name="ArmiesBox" type="HBoxContainer" parent="UI/BattleModal/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="AttackerBox" type="VBoxContainer" parent="UI/BattleModal/Margin/VBox/ArmiesBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Name" type="Label" parent="UI/BattleModal/Margin/VBox/ArmiesBox/AttackerBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.85, 1, 1)
+text = "Атакующие: Дружина (Брок)"
+
+[node name="Stats" type="Label" parent="UI/BattleModal/Margin/VBox/ArmiesBox/AttackerBox"]
+layout_mode = 2
+text = "Воины: 38\nМораль: 85%"
+
+[node name="VSeparator" type="VSeparator" parent="UI/BattleModal/Margin/VBox/ArmiesBox"]
+layout_mode = 2
+
+[node name="DefenderBox" type="VBoxContainer" parent="UI/BattleModal/Margin/VBox/ArmiesBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Name" type="Label" parent="UI/BattleModal/Margin/VBox/ArmiesBox/DefenderBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.65, 0.65, 1)
+text = "Обороняющиеся: Защитники"
+
+[node name="Stats" type="Label" parent="UI/BattleModal/Margin/VBox/ArmiesBox/DefenderBox"]
+layout_mode = 2
+text = "Воины: 30\nМораль: 70%"
+
+[node name="HSeparator" type="HSeparator" parent="UI/BattleModal/Margin/VBox"]
+layout_mode = 2
+
+[node name="ChronicleBox" type="VBoxContainer" parent="UI/BattleModal/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ChronicleTitle" type="Label" parent="UI/BattleModal/Margin/VBox/ChronicleBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+text = "Хроника боя по часам:"
+
+[node name="RichText" type="RichTextLabel" parent="UI/BattleModal/Margin/VBox/ChronicleBox"]
+layout_mode = 2
+size_flags_vertical = 3
+text = "06:00 — Стороны развернули боевые порядки..."
+
+[node name="ActionsBox" type="HBoxContainer" parent="UI/BattleModal/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="NextRoundBtn" type="Button" parent="UI/BattleModal/Margin/VBox/ActionsBox"]
+custom_minimum_size = Vector2(180, 40)
+layout_mode = 2
+text = "⚔️ Следующий раунд"
+
+[node name="RetreatBtn" type="Button" parent="UI/BattleModal/Margin/VBox/ActionsBox"]
+custom_minimum_size = Vector2(160, 40)
+layout_mode = 2
+text = "🛡 Отступить"
+
+[node name="CloseBtn" type="Button" parent="UI/BattleModal/Margin/VBox/ActionsBox"]
+custom_minimum_size = Vector2(120, 40)
+layout_mode = 2
+text = "Закрыть окно"
