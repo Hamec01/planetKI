@@ -123,6 +123,10 @@ func toggle_pause() -> void:
 	is_paused = !is_paused
 	EventBus.game_speed_changed.emit(game_speed, is_paused)
 
+func set_paused(paused: bool) -> void:
+	is_paused = paused
+	EventBus.game_speed_changed.emit(game_speed, is_paused)
+
 func set_speed(speed: float) -> void:
 	game_speed = speed
 	is_paused = false

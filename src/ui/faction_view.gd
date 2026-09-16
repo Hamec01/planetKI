@@ -66,52 +66,96 @@ func _refresh_all() -> void:
 	_refresh_history()
 	_refresh_star_system()
 
-func _refresh_laws(f: FactionData) -> void:
+func _refresh_laws(_f: FactionData) -> void:
 	for child in laws_list.get_children():
 		child.queue_free()
-		
-	for law_id in LawSystem.LAWS:
-		var law = LawSystem.get_law(law_id)
+	
+	# Новая система: Законы и обычаи рождаются из CultureMemory
+	var culture: CultureMemory = GameManager.culture_memory
+	if culture == null or culture.entries.is_empty():
+		var empty_lbl = Label.new()
+		empty_lbl.text = "Обычаи и законы ещё не возникли.\nОни родятся из событий и решений соплеменников."
+		empty_lbl.add_theme_font_size_override("font_size", 12)
+		empty_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+		laws_list.add_child(empty_lbl)
+		return
+	
+	# Карточка формы правления
+	var gov = culture.get_derived_government()
+	var gov_lbl = Label.new()
+	gov_lbl.text = "🏛 %s\n%s\nВласть правителя: %s | Совет: %s" % [
+		gov.get("title", ""), gov.get("description", ""),
+		gov.get("ruler_power", ""), gov.get("council_power", "")
+	]
+	gov_lbl.add_theme_font_size_override("font_size", 12)
+	gov_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	gov_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	laws_list.add_child(gov_lbl)
+	
+	var sep = HSeparator.new()
+	laws_list.add_child(sep)
+	
+	# Список укоренившихся традиций
+	for k in culture.entries:
+		var entry = culture.entries[k]
 		var row = HBoxContainer.new()
-		var is_active = f.active_laws.has(law_id)
+		row.add_theme_constant_override("separation", 8)
 		
 		var lbl = Label.new()
-		lbl.text = ("✅ " if is_active else "⬜ ") + law["name"] + "\n" + law["description"]
+		lbl.text = "⚖️ %s\nКатегория: %s | Год %d | Сила нормы: %d%%" % [
+			entry.source_choice_title, entry.category,
+			entry.established_year, int(entry.strength)
+		]
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(lbl)
 		
-		var btn = Button.new()
-		btn.text = "Принят" if is_active else "Принять закон"
-		btn.disabled = is_active
-		btn.pressed.connect(func():
-			f.active_laws.append(law_id)
-			GameManager.add_history_entry(GameManager.current_year, "Принят закон", "Вождь утвердил закон: " + law["name"], "Политика")
-			_refresh_laws(f)
-		)
-		row.add_child(btn)
 		laws_list.add_child(row)
 
-func _refresh_religion(f: FactionData) -> void:
-	var cur_rel = ReligionSystem.get_religion(f.religion_id)
-	relig_name_label.text = "🏛 Вера: " + cur_rel["name"]
-	relig_values_label.text = "Ценности: " + ", ".join(cur_rel["values"])
-	relig_bonuses_label.text = "Бонусы: " + cur_rel["bonuses"] + "\nРиски: " + cur_rel["risks"]
+func _refresh_religion(_f: FactionData) -> void:
+	# Новая система: Религия рождается из CultureMemory
+	var culture: CultureMemory = GameManager.culture_memory
+	if culture == null:
+		return
+	
+	var r = culture.religion_data
+	var is_def = r.get("defined", false)
+	
+	if not is_def:
+		relig_name_label.text = "🔮 Верования ещё не оформлены"
+		relig_values_label.text = "Взгляды народа родятся из первого природного знамения."
+		relig_bonuses_label.text = ""
+	else:
+		var r_name = r.get("name", "Вера")
+		relig_name_label.text = "🔮 %s" % r_name
+		
+		var desc = ""
+		match r.get("type", "UNDEFINED"):
+			"ANIMISM": desc = "Почитание духов природы и священных рощ."
+			"MONOTHEISM": desc = "Поклонение Единому Создателю (%s)." % r.get("deity_name", "Творец")
+			"POLYTHEISM": desc = "Почитание сонма богов (%s)." % r.get("pantheon_name", "Пантеон")
+			"ANCESTOR_WORSHIP": desc = "Связь с духами предков."
+			"EARLY_RATIONALISM": desc = "Познание мира через опыт и наблюдение."
+		relig_values_label.text = desc
+		relig_bonuses_label.text = "Установлено в Год %d" % r.get("established_year", 1)
 	
 	for child in relig_select_box.get_children():
 		child.queue_free()
-		
-	for rel_id in ReligionSystem.RELIGIONS:
-		if rel_id == f.religion_id:
-			continue
-		var r = ReligionSystem.get_religion(rel_id)
-		var btn = Button.new()
-		btn.text = "Принять культ: " + r["name"]
-		btn.pressed.connect(func():
-			f.religion_id = rel_id
-			GameManager.add_history_entry(GameManager.current_year, "Смена веры", "Племя обратилось к культу: " + r["name"], "Религия")
-			_refresh_religion(f)
-		)
-		relig_select_box.add_child(btn)
+	
+	# Вместо кнопок выбора — информация о священных постройках
+	if culture.is_building_unlocked("shrine"):
+		var info_lbl = Label.new()
+		info_lbl.text = "🏛 Святилище духов / Алтарь — построено."
+		info_lbl.add_theme_font_size_override("font_size", 11)
+		info_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		relig_select_box.add_child(info_lbl)
+	if culture.is_building_unlocked("cemetery"):
+		var info_lbl = Label.new()
+		info_lbl.text = "🕯️ Кладбище — построено."
+		info_lbl.add_theme_font_size_override("font_size", 11)
+		info_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		relig_select_box.add_child(info_lbl)
 
 func _refresh_tech(f: FactionData) -> void:
 	if f.current_research_tech != "":
