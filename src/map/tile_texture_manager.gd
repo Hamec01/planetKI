@@ -7,35 +7,42 @@ static var base_textures: Dictionary = {}
 static var overlay_textures: Dictionary = {} # "biome_folder/mask_name" -> Texture2D
 static var river_textures: Dictionary = {} # "river_name" -> Texture2D
 static var nature_sprites: Dictionary = {}
+static var special_tiles: Dictionary = {} # "farm_plowed", "farm_crops", "farm_wheat", "cobblestone"
 static var is_loaded: bool = false
 
 static func load_all_textures() -> void:
 	if is_loaded:
 		return
 		
-	# 1. Загрузка бесшовных базовых текстур нового атласа
-	_load_base_biome(BiomeType.DEEP_OCEAN, ["res://Assets/terrain_atlas/base/water_deep.png", "res://Assets/clean_tiles/ocean_deep"])
-	_load_base_biome(BiomeType.SHALLOW_COAST, ["res://Assets/terrain_atlas/base/water_shallow.png", "res://Assets/clean_tiles/ocean_shallow"])
-	_load_base_biome(BiomeType.PLAINS, ["res://Assets/terrain_atlas/base/plains.png", "res://Assets/clean_tiles/plains"])
-	_load_base_biome(BiomeType.MEADOW, ["res://Assets/terrain_atlas/base/meadow.png", "res://Assets/clean_tiles/meadow"])
-	_load_base_biome(BiomeType.DECIDUOUS_FOREST, ["res://Assets/terrain_atlas/base/plains.png", "res://Assets/clean_tiles/plains"])
-	_load_base_biome(BiomeType.PINE_TAIGA, ["res://Assets/terrain_atlas/base/plains.png", "res://Assets/clean_tiles/plains"])
-	_load_base_biome(BiomeType.JUNGLE, ["res://Assets/terrain_atlas/base/meadow.png", "res://Assets/clean_tiles/meadow"])
-	_load_base_biome(BiomeType.SAVANNA, ["res://Assets/terrain_atlas/base/savanna.png", "res://Assets/clean_tiles/plains"])
-	_load_base_biome(BiomeType.DESERT, ["res://Assets/terrain_atlas/base/sand.png", "res://Assets/clean_tiles/sand"])
-	_load_base_biome(BiomeType.SWAMP, ["res://Assets/terrain_atlas/base/swamp.png", "res://Assets/clean_tiles/dirt"])
-	_load_base_biome(BiomeType.HILLS, ["res://Assets/terrain_atlas/base/dirt.png", "res://Assets/clean_tiles/dirt"])
-	_load_base_biome(BiomeType.MOUNTAINS, ["res://Assets/terrain_atlas/base/mountains.png", "res://Assets/clean_tiles/dirt"])
-	_load_base_biome(BiomeType.SNOW_PEAKS, ["res://Assets/terrain_atlas/base/snow_peaks.png", "res://Assets/clean_tiles/snow"])
-	_load_base_biome(BiomeType.TUNDRA, ["res://Assets/terrain_atlas/base/snow.png", "res://Assets/clean_tiles/snow"])
+	# 1. Загрузка исключительно нового бесшовного terrain-атласа
+	_load_base_biome(BiomeType.DEEP_OCEAN, ["res://Assets/terrain_atlas/base/water_deep.png"])
+	_load_base_biome(BiomeType.SHALLOW_COAST, ["res://Assets/terrain_atlas/base/water_shallow.png"])
+	_load_base_biome(BiomeType.PLAINS, ["res://Assets/terrain_atlas/base/plains.png"])
+	_load_base_biome(BiomeType.MEADOW, ["res://Assets/terrain_atlas/base/meadow.png"])
+	_load_base_biome(BiomeType.DECIDUOUS_FOREST, ["res://Assets/terrain_atlas/base/plains.png"])
+	_load_base_biome(BiomeType.PINE_TAIGA, ["res://Assets/terrain_atlas/base/plains.png"])
+	_load_base_biome(BiomeType.JUNGLE, ["res://Assets/terrain_atlas/base/meadow.png"])
+	_load_base_biome(BiomeType.SAVANNA, ["res://Assets/terrain_atlas/base/savanna.png"])
+	_load_base_biome(BiomeType.DESERT, ["res://Assets/terrain_atlas/base/sand.png", "res://Assets/terrain_atlas/base/sand_alt.png"])
+	_load_base_biome(BiomeType.SWAMP, ["res://Assets/terrain_atlas/base/swamp.png"])
+	_load_base_biome(BiomeType.HILLS, ["res://Assets/terrain_atlas/base/dirt.png", "res://Assets/terrain_atlas/base/dirt_alt.png"])
+	_load_base_biome(BiomeType.MOUNTAINS, ["res://Assets/terrain_atlas/base/mountains.png", "res://Assets/terrain_atlas/base/stone.png"])
+	_load_base_biome(BiomeType.SNOW_PEAKS, ["res://Assets/terrain_atlas/base/snow_peaks.png"])
+	_load_base_biome(BiomeType.TUNDRA, ["res://Assets/terrain_atlas/base/snow.png"])
 	
-	# 2. Загрузка оверлеев переходов между биомами
+	# Спец-покрытия из нового атласа (поля, мощеные дороги)
+	special_tiles["farm_plowed"] = _load_single("res://Assets/terrain_atlas/base/farm_plowed.png")
+	special_tiles["farm_crops"] = _load_single("res://Assets/terrain_atlas/base/farm_crops.png")
+	special_tiles["farm_wheat"] = _load_single("res://Assets/terrain_atlas/base/farm_wheat.png")
+	special_tiles["cobblestone"] = _load_single("res://Assets/terrain_atlas/base/cobblestone.png")
+	
+	# 2. Загрузка оверлеев переходов нового атласа
 	_load_all_overlays()
 	
-	# 3. Загрузка процедурных речных коннекторов
+	# 3. Загрузка процедурных речных коннекторов нового атласа
 	_load_all_rivers()
 	
-	# 4. Чистые отдельные спрайты деревьев, скал и кустарников
+	# 4. Природные спрайты деревьев, скал и кустарников
 	nature_sprites["tree_oak_green"] = _load_single("res://Assets/nature/tree_oak_green.png")
 	nature_sprites["tree_pine_dark"] = _load_single("res://Assets/nature/tree_pine_dark.png")
 	nature_sprites["tree_pine_small"] = _load_single("res://Assets/nature/tree_pine_small.png")
@@ -55,13 +62,9 @@ static func load_all_textures() -> void:
 static func _load_base_biome(biome: int, paths: Array) -> void:
 	var list: Array[Texture2D] = []
 	for p in paths:
-		if p.ends_with(".png"):
-			var t = _load_single(p)
-			if t:
-				list.append(t)
-		else:
-			var dir_list = _load_dir(p)
-			list.append_array(dir_list)
+		var t = _load_single(p)
+		if t:
+			list.append(t)
 	base_textures[biome] = list
 
 static func _load_all_overlays() -> void:
@@ -107,22 +110,6 @@ static func _load_single(path: String) -> Texture2D:
 		return load(path)
 	return null
 
-static func _load_dir(dir_path: String) -> Array[Texture2D]:
-	var result: Array[Texture2D] = []
-	var dir = DirAccess.open(dir_path)
-	if dir:
-		dir.list_dir_begin()
-		var file_name = dir.get_next()
-		while file_name != "":
-			if not dir.current_is_dir() and file_name.ends_with(".png") and not file_name.ends_with(".import"):
-				var full_p = dir_path + "/" + file_name
-				if ResourceLoader.exists(full_p):
-					var tex = load(full_p)
-					if tex:
-						result.append(tex)
-			file_name = dir.get_next()
-	return result
-
 static func get_tile_texture(biome: int, coord: Vector2i, _is_river: bool = false) -> Texture2D:
 	load_all_textures()
 	var list: Array = base_textures.get(biome, [])
@@ -133,6 +120,10 @@ static func get_tile_texture(biome: int, coord: Vector2i, _is_river: bool = fals
 	var seed_val = (coord.x * 73856093) ^ (coord.y * 19349663)
 	var rand_idx = abs(seed_val) % list.size()
 	return list[rand_idx]
+
+static func get_special_texture(key: String) -> Texture2D:
+	load_all_textures()
+	return special_tiles.get(key, null)
 
 static func get_overlay_texture(biome_folder: String, mask_name: String) -> Texture2D:
 	load_all_textures()
