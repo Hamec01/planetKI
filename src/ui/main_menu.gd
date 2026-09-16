@@ -5,6 +5,7 @@ extends Control
 @onready var random_seed_btn: Button = $CenterContainer/MenuCard/Margin/VBox/SeedBox/RandomSeedBtn
 @onready var new_game_btn: Button = $CenterContainer/MenuCard/Margin/VBox/NewGameBtn
 @onready var continue_btn: Button = $CenterContainer/MenuCard/Margin/VBox/ContinueBtn
+@onready var map_editor_btn: Button = $CenterContainer/MenuCard/Margin/VBox/MapEditorBtn
 @onready var exit_btn: Button = $CenterContainer/MenuCard/Margin/VBox/ExitBtn
 
 func _ready() -> void:
@@ -15,6 +16,9 @@ func _ready() -> void:
 	
 	new_game_btn.pressed.connect(_on_new_game)
 	continue_btn.pressed.connect(_on_continue)
+	map_editor_btn.pressed.connect(func():
+		get_tree().change_scene_to_file("res://src/editor/map_editor.tscn")
+	)
 	exit_btn.pressed.connect(func(): get_tree().quit())
 	
 	continue_btn.disabled = not SaveSystem.has_save_file()

@@ -102,6 +102,13 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "📜 Продолжить историю"
 
+[node name="MapEditorBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox"]
+custom_minimum_size = Vector2(0, 46)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.4, 0.9, 1.0, 1)
+theme_override_font_sizes/font_size = 16
+text = "🗺️ Редактор карт"
+
 [node name="ExitBtn" type="Button" parent="CenterContainer/MenuCard/Margin/VBox"]
 custom_minimum_size = Vector2(0, 42)
 layout_mode = 2

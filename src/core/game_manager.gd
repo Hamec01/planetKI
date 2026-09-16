@@ -33,6 +33,7 @@ var settlements: Dictionary = {} # id -> SettlementData
 var tile_buildings: Dictionary = {} # Vector2i -> Dictionary {"id": "hut", "status": "active"|"constructing", "settlement_id": String, "days_left": float, "total_days": int}
 var building_instances: Dictionary = {} # Vector2i -> RefCounted
 var planet_data: Dictionary = {}
+var custom_map_to_play: Dictionary = {}
 var star_system_data: Dictionary = {}
 var history_log: Array[Dictionary] = []
 

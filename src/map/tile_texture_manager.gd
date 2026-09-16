@@ -148,16 +148,21 @@ static func get_river_texture(river_name: String) -> Texture2D:
 	load_all_textures()
 	return river_textures.get(river_name, null)
 
-# Возвращает структурированные данные о природном объекте для тайла с учетом биома и срубленного ресурса
-static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant = null) -> Dictionary:
+# Возвращает структурированные данные о природном объекте для тайла с учетом биома, ресурса или авторской расстановки
+static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant = null, custom_nature_name: String = "") -> Dictionary:
 	load_all_textures()
-	var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
-	var rand_idx = abs(seed_val)
-	var roll = rand_idx % 100
 	
 	var picked_name = ""
-	
-	match biome:
+	if custom_nature_name != "":
+		if custom_nature_name == "none":
+			return {}
+		picked_name = custom_nature_name
+	else:
+		var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
+		var rand_idx = abs(seed_val)
+		var roll = rand_idx % 100
+		
+		match biome:
 		# 1. ЗИМА (СТРОГО ТОЛЬКО ЗИМНИЕ ОБЪЕКТЫ И СНЕГ)
 		BiomeType.SNOW_PEAKS:
 			if roll < 50:

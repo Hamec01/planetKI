@@ -30,10 +30,8 @@ SaveSystem="*res://src/core/save_system.gd"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/size/mode="maximized"
-window/size/resizable=true
+window/size/mode=3
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
 
 [gui]
 

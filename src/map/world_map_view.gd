@@ -672,7 +672,8 @@ func _draw() -> void:
 					draw_texture_rect(ov_tex, rect, false, mod_color)
 					
 			# 2. Природные объекты (деревья, скалы, кустарники, трава, цветы, грибы)
-			var n_data = TileTextureManager.get_nature_data(tile["biome"], tile["coord"], tile.get("resource", null))
+			var custom_nat = tile.get("nature_object", "")
+			var n_data = TileTextureManager.get_nature_data(tile["biome"], tile["coord"], tile.get("resource", null), custom_nat)
 			if not n_data.is_empty() and n_data.get("tex", null) != null and tile["settlement_id"] == "" and not GameManager.tile_buildings.has(Vector2i(x, y)):
 				var c = rect.get_center()
 				var n_tex: Texture2D = n_data["tex"]

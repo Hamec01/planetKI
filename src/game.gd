@@ -27,8 +27,13 @@ func start_game(seed_str: String) -> void:
 	var star_system = StarSystemGenerator.generate_system(GameManager.world_seed)
 	GameManager.star_system_data = star_system
 	
-	# 2. Генерация карты мира
-	var world_data = WorldGenerator.generate_world(GameManager.world_seed)
+	# 2. Получение данных карты мира (авторская карта или процедурная)
+	var world_data: Dictionary = {}
+	if not GameManager.custom_map_to_play.is_empty():
+		world_data = GameManager.custom_map_to_play
+		GameManager.custom_map_to_play = {}
+	else:
+		world_data = WorldGenerator.generate_world(GameManager.world_seed)
 	GameManager.planet_data = world_data
 	
 	# 3. Создание фракции и поселения игрока
