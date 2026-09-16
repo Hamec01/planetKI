@@ -26,6 +26,8 @@ const CultureMemoryScript = preload("res://src/simulation/culture_memory.gd")
 const CivilizationEventManagerScript = preload("res://src/events/civilization_event_manager.gd")
 
 var player_faction_id: String = "player_tribe"
+var player_race: String = "north" # "desert", "savanna", "north"
+var faction_races: Dictionary = {} # faction_id -> race_id
 var factions: Dictionary = {} # id -> FactionData
 var settlements: Dictionary = {} # id -> SettlementData
 var tile_buildings: Dictionary = {} # Vector2i -> Dictionary {"id": "hut", "status": "active"|"constructing", "settlement_id": String, "days_left": float, "total_days": int}
