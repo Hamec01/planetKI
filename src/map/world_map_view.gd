@@ -664,60 +664,51 @@ func _draw() -> void:
 				var biome_info = BiomeDefinitions.get_biome_info(tile["biome"])
 				draw_rect(rect, biome_info["color"])
 				
-			# Плавные органические переходы биомов (Autotiling overlays)
+			# Плавные переходы биомов суши к воде и между слоями
 			var overlays = TerrainResolver.get_transition_overlays(tiles, x, y, width, height)
 			for ov in overlays:
 				var ov_tex = TileTextureManager.get_overlay_texture(ov["biome_folder"], ov["mask"])
 				if ov_tex:
 					draw_texture_rect(ov_tex, rect, false, mod_color)
 				
-			# Динамические реки с бесшовным соединением
+			# Динамические плавные реки без прямоугольных артефактов и квадратов
 			if tile["is_river"] and not tile["is_water"]:
-				var r_name = TerrainResolver.resolve_river_texture_name(tiles, x, y, width, height)
-				var river_tex = TileTextureManager.get_river_texture(r_name)
-				if river_tex:
-					draw_texture_rect(river_tex, rect, false)
-				else:
-					var c = rect.get_center()
-					var half = TILE_SIZE * 0.5
-					var river_outer = Color(0.22, 0.56, 0.84, 0.90)
-					var river_inner = Color(0.60, 0.88, 0.98, 0.75)
-					
-					var has_left = (x > 0 and (tiles[y][x-1]["is_river"] or tiles[y][x-1]["is_water"]))
-					var has_right = (x < tiles[0].size() - 1 and (tiles[y][x+1]["is_river"] or tiles[y][x+1]["is_water"]))
-					var has_up = (y > 0 and (tiles[y-1][x]["is_river"] or tiles[y-1][x]["is_water"]))
-					var has_down = (y < tiles.size() - 1 and (tiles[y+1][x]["is_river"] or tiles[y+1][x]["is_water"]))
-					
-					draw_circle(c, 3.2, river_outer)
-					if has_left: draw_line(c, c + Vector2(-half, 0), river_outer, 3.6)
-					if has_right: draw_line(c, c + Vector2(half, 0), river_outer, 3.6)
-					if has_up: draw_line(c, c + Vector2(0, -half), river_outer, 3.6)
-					if has_down: draw_line(c, c + Vector2(0, half), river_outer, 3.6)
-					
-					draw_circle(c, 1.4, river_inner)
-					if has_left: draw_line(c, c + Vector2(-half, 0), river_inner, 1.6)
-					if has_right: draw_line(c, c + Vector2(half, 0), river_inner, 1.6)
-					if has_up: draw_line(c, c + Vector2(0, -half), river_inner, 1.6)
-					if has_down: draw_line(c, c + Vector2(0, half), river_inner, 1.6)
-				
-			# Деревья, скалы, кустарники
-			var nature_tex = TileTextureManager.get_nature_overlay(tile["biome"], tile["coord"])
-			if nature_tex and tile["settlement_id"] == "" and not GameManager.tile_buildings.has(Vector2i(x, y)):
 				var c = rect.get_center()
-				var n_size = nature_tex.get_size()
-				var aspect = n_size.x / maxf(1.0, n_size.y)
-				var is_major = tile["biome"] in [
-					BiomeDefinitions.BiomeType.DECIDUOUS_FOREST,
-					BiomeDefinitions.BiomeType.PINE_TAIGA,
-					BiomeDefinitions.BiomeType.JUNGLE,
-					BiomeDefinitions.BiomeType.MOUNTAINS
-				]
-				var target_h = 24.0 if is_major else 16.0
-				var target_w = target_h * aspect
+				var half = TILE_SIZE * 0.5
 				
-				draw_circle(c + Vector2(0, 10.0), target_w * 0.32, Color(0, 0, 0, 0.22))
-				var n_rect = Rect2(c.x - target_w * 0.5, c.y + 11.0 - target_h, target_w, target_h)
-				draw_texture_rect(nature_tex, n_rect, false)
+				var has_left = (x > 0 and (tiles[y][x-1]["is_river"] or tiles[y][x-1]["is_water"]))
+				var has_right = (x < tiles[0].size() - 1 and (tiles[y][x+1]["is_river"] or tiles[y][x+1]["is_water"]))
+				var has_up = (y > 0 and (tiles[y-1][x]["is_river"] or tiles[y-1][x]["is_water"]))
+				var has_down = (y < tiles.size() - 1 and (tiles[y+1][x]["is_river"] or tiles[y+1][x]["is_water"]))
+				
+				# Если река изолирована (без соседей), соединяем хотя бы по горизонтали
+				if not has_left and not has_right and not has_up and not has_down:
+					has_left = true
+					has_right = true
+				
+				# 1. Тень берега / русла реки (мягкое сглаженное углубление)
+				var bank_color = Color(0.12, 0.35, 0.45, 0.50)
+				draw_circle(c, 4.5, bank_color)
+				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), bank_color, 9.0, true)
+				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), bank_color, 9.0, true)
+				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), bank_color, 9.0, true)
+				if has_down: draw_line(c, c + Vector2(0, half + 1.0), bank_color, 9.0, true)
+				
+				# 2. Основное тело воды реки (насыщенный лазурный цвет)
+				var river_water = Color(0.14, 0.72, 0.92, 0.95)
+				draw_circle(c, 3.2, river_water)
+				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), river_water, 6.2, true)
+				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), river_water, 6.2, true)
+				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), river_water, 6.2, true)
+				if has_down: draw_line(c, c + Vector2(0, half + 1.0), river_water, 6.2, true)
+				
+				# 3. Внутренний световой блик воды (течение)
+				var river_shine = Color(0.70, 0.94, 1.0, 0.75)
+				draw_circle(c, 1.2, river_shine)
+				if has_left: draw_line(c, c + Vector2(-half - 1.0, 0), river_shine, 2.2, true)
+				if has_right: draw_line(c, c + Vector2(half + 1.0, 0), river_shine, 2.2, true)
+				if has_up: draw_line(c, c + Vector2(0, -half - 1.0), river_shine, 2.2, true)
+				if has_down: draw_line(c, c + Vector2(0, half + 1.0), river_shine, 2.2, true)
 				
 			# Иконки ресурсов
 			if tile["resource"] != null:
