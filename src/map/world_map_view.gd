@@ -670,12 +670,32 @@ func _draw() -> void:
 				var ov_tex = TileTextureManager.get_overlay_texture(ov["biome_folder"], ov["mask"])
 				if ov_tex:
 					draw_texture_rect(ov_tex, rect, false, mod_color)
+					
+			# 2. Природные объекты (деревья, скалы, кустарники, трава, цветы)
+			var nature_tex = TileTextureManager.get_nature_overlay(tile["biome"], tile["coord"])
+			if nature_tex and tile["settlement_id"] == "" and not GameManager.tile_buildings.has(Vector2i(x, y)):
+				var c = rect.get_center()
+				var n_size = nature_tex.get_size()
+				var aspect = n_size.x / maxf(1.0, n_size.y)
+				var is_large = tile["biome"] in [
+					BiomeDefinitions.BiomeType.DECIDUOUS_FOREST,
+					BiomeDefinitions.BiomeType.PINE_TAIGA,
+					BiomeDefinitions.BiomeType.JUNGLE,
+					BiomeDefinitions.BiomeType.SNOW_PEAKS,
+					BiomeDefinitions.BiomeType.TUNDRA,
+					BiomeDefinitions.BiomeType.MOUNTAINS
+				]
+				var target_h = 24.0 if is_large else 16.0
+				var target_w = target_h * aspect
 				
-			# Иконки ресурсов
-			if tile["resource"] != null:
-				var should_draw_res = (current_map_mode == "resources" or hovered_tile_coord == tile["coord"])
-				if should_draw_res:
-					_draw_resource_icon(rect, tile["resource"]["type"])
+				# Тень под объектом
+				draw_circle(c + Vector2(0, 10.0), target_w * 0.30, Color(0, 0, 0, 0.22))
+				var n_rect = Rect2(c.x - target_w * 0.5, c.y + 11.0 - target_h, target_w, target_h)
+				draw_texture_rect(nature_tex, n_rect, false)
+				
+			# Иконки ресурсов отображаются ТОЛЬКО в специальном режиме карты "Ресурсы"
+			if tile["resource"] != null and current_map_mode == "resources":
+				_draw_resource_icon(rect, tile["resource"]["type"])
 
 	# 2. Построенные и строящиеся здания
 	_draw_visible_settlement_buildings()
