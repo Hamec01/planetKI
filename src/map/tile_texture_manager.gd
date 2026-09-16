@@ -7,6 +7,7 @@ static var base_textures: Dictionary = {}
 static var overlay_textures: Dictionary = {} # "biome_folder/mask_name" -> Texture2D
 static var river_textures: Dictionary = {} # "river_name" -> Texture2D
 static var nature_sprites: Dictionary = {} # "sprite_name" -> Texture2D
+static var nature_meta: Dictionary = {} # "sprite_name" -> Dictionary
 static var special_tiles: Dictionary = {} # "farm_plowed", "farm_crops", "farm_wheat", "cobblestone"
 static var is_loaded: bool = false
 
@@ -42,7 +43,7 @@ static func load_all_textures() -> void:
 	# 3. Реки
 	_load_all_rivers()
 	
-	# 4. Загрузка 64 природных объектов нового набора Assets/nature_v2/
+	# 4. Загрузка 64 чистых природных объектов из Assets/nature_clean/
 	_load_all_nature()
 	
 	is_loaded = true
@@ -94,7 +95,7 @@ static func _load_all_rivers() -> void:
 			f_name = dir.get_next()
 
 static func _load_all_nature() -> void:
-	var nature_dir = "res://Assets/nature_v2"
+	var nature_dir = "res://Assets/nature_clean"
 	var dir = DirAccess.open(nature_dir)
 	if dir:
 		dir.list_dir_begin()
@@ -107,6 +108,16 @@ static func _load_all_nature() -> void:
 				if tex:
 					nature_sprites[sprite_name] = tex
 			f_name = dir.get_next()
+			
+	# Загрузка метаданных масштабов и категорий
+	var json_path = "res://Assets/nature_clean/nature_meta.json"
+	if FileAccess.file_exists(json_path):
+		var f = FileAccess.open(json_path, FileAccess.READ)
+		if f:
+			var json_text = f.get_as_text()
+			var parsed = JSON.parse_string(json_text)
+			if parsed is Dictionary:
+				nature_meta = parsed
 
 static func _load_single(path: String) -> Texture2D:
 	if ResourceLoader.exists(path):
@@ -137,94 +148,138 @@ static func get_river_texture(river_name: String) -> Texture2D:
 	load_all_textures()
 	return river_textures.get(river_name, null)
 
-static func get_nature_overlay(biome: int, coord: Vector2i) -> Texture2D:
+# Возвращает структурированные данные о природном объекте для тайла с учетом биома и срубленного ресурса
+static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant = null) -> Dictionary:
 	load_all_textures()
 	var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
 	var rand_idx = abs(seed_val)
 	var roll = rand_idx % 100
 	
+	var picked_name = ""
+	
 	match biome:
-		# 1. ЗИМНИЕ БИОМЫ (СТРОГО ТОЛЬКО ЗИМНИЕ ДЕРЕВЬЯ И СНЕЖНЫЕ КАМНИ)
+		# 1. ЗИМА (СТРОГО ТОЛЬКО ЗИМНИЕ ОБЪЕКТЫ И СНЕГ)
 		BiomeType.SNOW_PEAKS:
-			if roll < 55:
+			if roll < 50:
 				var pool = ["rock_snow_boulder", "tree_spruce_snow", "tree_dead"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+				picked_name = pool[rand_idx % pool.size()]
+				
 		BiomeType.TUNDRA:
-			if roll < 65:
-				var pool = ["tree_spruce_snow", "tree_pine_snow", "tree_bare", "bush_dry_thorny", "rock_snow_boulder"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
-		# 2. ХВОЙНЫЙ ЛЕС (ТАЙГА)
+			if roll < 60:
+				var pool = ["tree_spruce_snow", "tree_pine_snow", "tree_bare", "tree_dead", "bush_dry_thorny", "rock_snow_boulder"]
+				picked_name = pool[rand_idx % pool.size()]
+				
+		# 2. ХВОЙНЫЙ ЛЕС (ТАЙГА) — Густой настоящий лес
 		BiomeType.PINE_TAIGA:
-			if roll < 80:
-				var pool = ["tree_spruce", "tree_spruce_blue", "tree_pine", "tree_spruce_young", "stump_mossy", "log_fallen", "mushrooms_brown", "plant_dense_fern"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
-		# 3. ШИРОКОЛИСТВЕННЫЙ ЛЕС
+			if roll < 72:
+				# 72% деревья
+				var trees = ["tree_spruce", "tree_spruce_blue", "tree_pine", "tree_spruce_young"]
+				picked_name = trees[rand_idx % trees.size()]
+			elif roll < 84:
+				# 12% лесной подлесок
+				var under = ["stump_mossy", "log_fallen", "mushrooms_brown", "plant_dense_fern"]
+				picked_name = under[rand_idx % under.size()]
+				
+		# 3. ШИРОКОЛИСТВЕННЫЙ ЛЕС — Густой лиственный лес
 		BiomeType.DECIDUOUS_FOREST:
-			if roll < 85:
-				var pool = ["tree_oak", "tree_birch", "tree_maple_green", "tree_poplar", "tree_autumn_red", "tree_birch_yellow", "bush_berries_red", "bush_berries_blue", "mushrooms_brown", "mushrooms_flyagaric"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 70:
+				# 70% деревья
+				var trees = ["tree_oak", "tree_birch", "tree_maple_green", "tree_poplar", "tree_autumn_red", "tree_birch_yellow"]
+				picked_name = trees[rand_idx % trees.size()]
+			elif roll < 85:
+				# 15% грибы, ягоды и лесные растения
+				var under = ["bush_berries_red", "bush_berries_blue", "mushrooms_brown", "mushrooms_flyagaric", "plant_dense_fern"]
+				picked_name = under[rand_idx % under.size()]
+				
 		# 4. ДЖУНГЛИ
 		BiomeType.JUNGLE:
-			if roll < 85:
-				var pool = ["tree_willow", "tree_maple_green", "plant_dense_fern", "plant_broadleaf", "bush_round_green", "bush_berries_red"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
-		# 5. ЛУГ
+			if roll < 70:
+				var trees = ["tree_willow", "tree_maple_green", "plant_broadleaf"]
+				picked_name = trees[rand_idx % trees.size()]
+			elif roll < 85:
+				var under = ["plant_dense_fern", "bush_round_green", "bush_berries_red"]
+				picked_name = under[rand_idx % under.size()]
+				
+		# 5. ЦВЕТУЩИЙ ЛУГ
 		BiomeType.MEADOW:
 			if roll < 45:
-				var pool = ["flowers_white", "flowers_yellow", "flowers_purple", "flowers_poppies", "grass_tall_meadow", "bush_flowers", "bush_berry_low", "sapling"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
-		# 6. РАВНИНЫ
+				# Цветы и луговая трава
+				var flowers = ["flowers_white", "flowers_yellow", "flowers_purple", "flowers_poppies", "grass_tall_meadow", "bush_flowers", "bush_berry_low"]
+				picked_name = flowers[rand_idx % flowers.size()]
+			elif roll < 52:
+				picked_name = "tree_young"
+				
+		# 6. РАВНИНЫ (Свободные поля с редкими кустиками)
 		BiomeType.PLAINS:
-			if roll < 25:
-				var pool = ["grass_dense", "grass_tuft_low", "bush_round_green", "bush_light", "tree_young"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 16:
+				var p_grass = ["grass_dense", "grass_tuft_low", "bush_round_green", "bush_light"]
+				picked_name = p_grass[rand_idx % p_grass.size()]
+			elif roll < 20:
+				picked_name = "tree_young"
+				
 		# 7. САВАННА
 		BiomeType.SAVANNA:
-			if roll < 40:
-				var pool = ["grass_dry_yellow", "grass_steppe_orange", "tumbleweed", "bush_dry_thorny", "rock_red_stone", "tree_autumn_red"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 30:
+				var dry = ["grass_dry_yellow", "grass_steppe_orange", "tumbleweed", "bush_dry_thorny", "rock_red_stone"]
+				picked_name = dry[rand_idx % dry.size()]
+			elif roll < 40:
+				picked_name = "tree_autumn_red"
+				
 		# 8. ПУСТЫНЯ
 		BiomeType.DESERT:
-			if roll < 20:
-				var pool = ["cactus_branched", "cactus_round", "tumbleweed", "rock_limestone"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 18:
+				var desert_p = ["cactus_branched", "cactus_round", "tumbleweed", "rock_limestone"]
+				picked_name = desert_p[rand_idx % desert_p.size()]
+				
 		# 9. БОЛОТО
 		BiomeType.SWAMP:
-			if roll < 60:
-				var pool = ["reeds", "cattails", "marsh_grass", "marsh_broadleaf", "stump_mossy", "tree_willow"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 50:
+				var swamp_p = ["reeds", "cattails", "marsh_grass", "marsh_broadleaf", "stump_mossy", "tree_willow"]
+				picked_name = swamp_p[rand_idx % swamp_p.size()]
+				
 		# 10. ХОЛМЫ И ГОРЫ
 		BiomeType.HILLS:
-			if roll < 50:
-				var pool = ["rock_round_boulder", "rock_small_pebbles", "rock_mossy", "bush_dark", "grass_thin"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 45:
+				var hills_p = ["rock_round_boulder", "rock_small_pebbles", "rock_mossy", "bush_dark", "grass_thin"]
+				picked_name = hills_p[rand_idx % hills_p.size()]
+				
 		BiomeType.MOUNTAINS:
-			if roll < 70:
-				var pool = ["rock_cliff_group", "rock_flat_slabs", "rock_round_boulder", "rock_small_pebbles"]
-				return nature_sprites.get(pool[rand_idx % pool.size()], null)
-			return null
-			
+			if roll < 65:
+				var rocks = ["rock_cliff_group", "rock_flat_slabs", "rock_round_boulder", "rock_small_pebbles"]
+				picked_name = rocks[rand_idx % rocks.size()]
+				
 		_:
-			return null
+			return {}
+			
+	if picked_name == "":
+		return {}
+		
+	# Обработка срубленных/добытых ресурсов (если ресурс исчерпан)
+	if tile_resource != null and tile_resource is Dictionary:
+		var amount = tile_resource.get("amount", 100)
+		if amount <= 0:
+			var res_type = tile_resource.get("type", "")
+			if res_type == "wood":
+				picked_name = "stump_fresh"
+			elif res_type == "stone":
+				picked_name = "rock_small_pebbles"
+			elif res_type == "food":
+				return {}
+				
+	var tex = nature_sprites.get(picked_name, null)
+	if tex == null:
+		return {}
+		
+	var meta = nature_meta.get(picked_name, {})
+	var scale_h = meta.get("scale_h", 20.0)
+	var cat = meta.get("category", "detail")
+	var can_harvest = meta.get("harvest_resource", null) != null
+	
+	return {
+		"name": picked_name,
+		"tex": tex,
+		"category": cat,
+		"scale_h": scale_h,
+		"can_harvest": can_harvest,
+		"harvest_res": meta.get("harvest_resource", null)
+	}
