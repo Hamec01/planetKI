@@ -11,13 +11,16 @@ const RESPAWN_INTERVAL: float = 30.0 # Проверка восполнения �
 
 # Максимальные популяции по категориям
 const MAX_TOTAL_ANIMALS: int = 36
+const MAX_HUNTERS_PER_GROUP: int = 3
 
 var _next_animal_id: int = 1
 var _next_carcass_id: int = 1
+var hunt_groups: Dictionary = {} # animal_id -> Array[String]
 
 func init_wildlife(world_data: Dictionary, nav_grid) -> void:
 	animals.clear()
 	carcasses.clear()
+	hunt_groups.clear()
 	_next_animal_id = 1
 	_next_carcass_id = 1
 	
@@ -246,7 +249,7 @@ func find_nearest_hunt_target(from_pos: Vector2, max_radius: float, hunter_id: S
 	for animal in animals.values():
 		if not animal.is_alive():
 			continue
-		if animal.reserved_by != "" and animal.reserved_by != hunter_id:
+		if not can_join_hunt_group(animal.id, hunter_id):
 			continue
 		if animal.is_child: # Детёнышей не берем в приоритет
 			continue
@@ -262,7 +265,7 @@ func find_nearest_hunt_target(from_pos: Vector2, max_radius: float, hunter_id: S
 	for animal in animals.values():
 		if not animal.is_alive():
 			continue
-		if animal.reserved_by != "" and animal.reserved_by != hunter_id:
+		if not can_join_hunt_group(animal.id, hunter_id):
 			continue
 		var d = from_pos.distance_to(animal.pos)
 		if d < min_dist:
@@ -281,7 +284,15 @@ func find_nearest_carcass(from_pos: Vector2, max_radius: float, hunter_id: Strin
 			continue
 		if c["reserved_by"] != "" and c["reserved_by"] != hunter_id:
 			continue
-		var d = from_pos.distance_to(c["pos"])
+		var c_pos = c.get("pos", Vector2.ZERO)
+		if c_pos is String:
+			var parsed = str_to_var(c_pos)
+			c_pos = parsed if parsed is Vector2 else Vector2.ZERO
+			c["pos"] = c_pos
+		elif c_pos is Array:
+			c_pos = Vector2(float(c_pos[0]), float(c_pos[1]))
+			c["pos"] = c_pos
+		var d = from_pos.distance_to(c_pos)
 		if d < min_dist:
 			min_dist = d
 			nearest_carcass = c
@@ -303,6 +314,45 @@ func release_animal(animal_id: String, citizen_id: String) -> void:
 		if a.reserved_by == citizen_id:
 			a.reserved_by = ""
 
+func can_join_hunt_group(animal_id: String, citizen_id: String) -> bool:
+	if not animals.has(animal_id):
+		return false
+	var group: Array = hunt_groups.get(animal_id, [])
+	if group.has(citizen_id):
+		return true
+	var animal = animals[animal_id]
+	if group.is_empty() and animal.reserved_by != "" and animal.reserved_by != citizen_id:
+		return false
+	return group.size() < MAX_HUNTERS_PER_GROUP
+
+func join_hunt_group(animal_id: String, citizen_id: String) -> bool:
+	if not can_join_hunt_group(animal_id, citizen_id):
+		return false
+	var group: Array = hunt_groups.get(animal_id, [])
+	if not group.has(citizen_id):
+		group.append(citizen_id)
+		hunt_groups[animal_id] = group
+	animals[animal_id].reserved_by = "hunt_group:%s" % animal_id
+	return true
+
+func leave_hunt_group(animal_id: String, citizen_id: String) -> void:
+	if not hunt_groups.has(animal_id):
+		return
+	var group: Array = hunt_groups[animal_id]
+	group.erase(citizen_id)
+	if group.is_empty():
+		hunt_groups.erase(animal_id)
+		if animals.has(animal_id):
+			animals[animal_id].reserved_by = ""
+	else:
+		hunt_groups[animal_id] = group
+
+func find_group_carcass_for_hunter(citizen_id: String) -> Dictionary:
+	for carcass in carcasses.values():
+		if carcass.get("assigned_hunters", []).has(citizen_id) and carcass.get("meat_remaining", 0.0) > 0.0:
+			return carcass
+	return {}
+
 func reserve_carcass(carcass_id: String, citizen_id: String) -> bool:
 	if not carcasses.has(carcass_id):
 		return false
@@ -321,6 +371,10 @@ func release_carcass(carcass_id: String, citizen_id: String) -> void:
 func create_carcass_from_animal(animal: WildAnimal) -> Dictionary:
 	var c_id = "carcass_%d" % _next_carcass_id
 	_next_carcass_id += 1
+	var assigned_hunters: Array = hunt_groups.get(animal.id, []).duplicate()
+	if assigned_hunters.is_empty() and animal.reserved_by != "" and not animal.reserved_by.begins_with("hunt_group:"):
+		assigned_hunters.append(animal.reserved_by)
+	hunt_groups.erase(animal.id)
 	var carcass = {
 		"id": c_id,
 		"species": animal.species,
@@ -333,6 +387,7 @@ func create_carcass_from_animal(animal: WildAnimal) -> Dictionary:
 		"extra_material_count": animal.extra_material_count,
 		"extra_remaining": animal.extra_material_count,
 		"reserved_by": animal.reserved_by,
+		"assigned_hunters": assigned_hunters,
 		"decay_timer": 300.0 # 5 минут игрового времени
 	}
 	carcasses[c_id] = carcass
@@ -365,18 +420,25 @@ func serialize() -> Dictionary:
 		anim_list.append(a.serialize())
 	var carcass_list = []
 	for c in carcasses.values():
-		carcass_list.append(c.duplicate())
+		var c_dict = c.duplicate()
+		var c_pos = c.get("pos", Vector2.ZERO)
+		if c_pos is Vector2:
+			c_dict["pos_x"] = c_pos.x
+			c_dict["pos_y"] = c_pos.y
+		carcass_list.append(c_dict)
 	return {
 		"animals": anim_list,
 		"carcasses": carcass_list,
 		"next_animal_id": _next_animal_id,
 		"next_carcass_id": _next_carcass_id,
-		"respawn_timer": respawn_timer
+		"respawn_timer": respawn_timer,
+		"hunt_groups": hunt_groups
 	}
 
 func deserialize(data: Dictionary) -> void:
 	animals.clear()
 	carcasses.clear()
+	hunt_groups = data.get("hunt_groups", {}).duplicate()
 	_next_animal_id = data.get("next_animal_id", 1)
 	_next_carcass_id = data.get("next_carcass_id", 1)
 	respawn_timer = data.get("respawn_timer", 0.0)
@@ -389,5 +451,13 @@ func deserialize(data: Dictionary) -> void:
 		
 	var carcass_list = data.get("carcasses", [])
 	for c_data in carcass_list:
-		carcasses[c_data["id"]] = c_data
+		var c_dict = c_data.duplicate()
+		if c_dict.has("pos_x") and c_dict.has("pos_y"):
+			c_dict["pos"] = Vector2(float(c_dict["pos_x"]), float(c_dict["pos_y"]))
+		elif c_dict.get("pos") is String:
+			var parsed = str_to_var(c_dict["pos"])
+			c_dict["pos"] = parsed if parsed is Vector2 else Vector2.ZERO
+		elif c_dict.get("pos") is Array:
+			c_dict["pos"] = Vector2(float(c_dict["pos"][0]), float(c_dict["pos"][1]))
+		carcasses[c_dict["id"]] = c_dict
 	is_initialized = true

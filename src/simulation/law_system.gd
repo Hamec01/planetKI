@@ -34,6 +34,14 @@ const LAWS: Dictionary = {
 		"description": "Охотничьи угодья и поля принадлежат всему роду. Уменьшает социальное неравенство.",
 		"effects": {"loyalty": 10.0, "happiness": 5.0}
 	},
+	"land_territorial_zones": {
+		"id": "land_territorial_zones",
+		"category": "land",
+		"name": "Охраняемые угодья",
+		"epoch": 1,
+		"description": "Разрешает племени размечать охраняемые и запретные участки угодий.",
+		"effects": {"unlock_reserved_zones": true}
+	},
 	"tax_tribute_in_kind": {
 		"id": "tax_tribute_in_kind",
 		"category": "tax",

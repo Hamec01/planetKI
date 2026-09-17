@@ -81,7 +81,43 @@ func initialize_from_tiles(tiles_data: Array, width: int, height: int) -> void:
 				if not spatial_grid.has(chunk_k):
 					spatial_grid[chunk_k] = []
 				spatial_grid[chunk_k].append(coord)
+	_add_fishing_spots(tiles_data, width, height)
 	is_initialized = true
+
+func _add_fishing_spots(tiles_data: Array, width: int, height: int) -> void:
+	if not GameManager.nav_grid:
+		return
+	for y in range(2, height - 2, 4):
+		for x in range(2, width - 2, 4):
+			var water_coord = Vector2i(x, y)
+			if not GameManager.nav_grid.is_water_tile(water_coord):
+				continue
+			for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var shore_coord = water_coord + offset
+				if nodes.has(shore_coord) or not GameManager.nav_grid.is_tile_walkable(shore_coord):
+					continue
+				nodes[shore_coord] = {
+					"id": "fish_%d_%d" % [shore_coord.x, shore_coord.y],
+					"coord": shore_coord,
+					"pos": Vector2(shore_coord.x * 32.0 + 16.0, shore_coord.y * 32.0 + 16.0),
+					"type": "fish",
+					"category": "fish",
+					"name": "Рыбное место",
+					"amount": 18.0,
+					"max_amount": 18.0,
+					"reserved_by": "",
+					"depleted": false,
+					"original_sprite": "",
+					"depleted_sprite": "",
+					"updates_tile": false,
+					"regrowth_timer": 0.0,
+					"regrowth_duration": 90.0
+				}
+				var chunk_k = Vector2i(shore_coord.x / CHUNK_SIZE, shore_coord.y / CHUNK_SIZE)
+				if not spatial_grid.has(chunk_k):
+					spatial_grid[chunk_k] = []
+				spatial_grid[chunk_k].append(shore_coord)
+				break
 
 func find_available_node(center_coord: Vector2i, category: String, max_radius: int, citizen_id: String) -> Dictionary:
 	var best_node: Dictionary = {}
@@ -152,7 +188,7 @@ func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 			
 		# Обновляем визуальный спрайт на карте (куст пустеет / дерево срублено под корень -> "none")
 		var tiles = GameManager.planet_data.get("tiles", [])
-		if coord.y < tiles.size() and coord.x < tiles[0].size():
+		if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
 			tiles[coord.y][coord.x]["nature_object"] = node["depleted_sprite"]
 			
 	return gathered
@@ -257,7 +293,7 @@ func update_regrowth(delta: float) -> void:
 				node["depleted"] = false
 				node["amount"] = node["max_amount"]
 				node["reserved_by"] = ""
-				if coord.y < tiles.size() and coord.x < tiles[0].size():
+				if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
 					tiles[coord.y][coord.x]["nature_object"] = node["original_sprite"]
 
 # Сериализация для сохранений
@@ -265,16 +301,20 @@ func serialize() -> Array[Dictionary]:
 	var list: Array[Dictionary] = []
 	for coord in nodes:
 		var n = nodes[coord]
-		list.append({
+		var item = {
 			"coord": [coord.x, coord.y],
-			"amount": n["amount"],
-			"depleted": n["depleted"],
-			"regrowth_timer": n["regrowth_timer"],
-			"reserved_by": n["reserved_by"]
-		})
+			"amount": n.get("amount", 0.0),
+			"depleted": n.get("depleted", false),
+			"regrowth_timer": n.get("regrowth_timer", 0.0),
+			"reserved_by": n.get("reserved_by", "")
+		}
+		if growing_trees.has(coord):
+			item["growing_tree"] = growing_trees[coord].duplicate()
+		list.append(item)
 	return list
 
 func deserialize(data_list: Array) -> void:
+	growing_trees.clear()
 	for item in data_list:
 		var c_arr = item.get("coord", [0, 0])
 		var coord = Vector2i(c_arr[0], c_arr[1])
@@ -284,3 +324,5 @@ func deserialize(data_list: Array) -> void:
 			n["depleted"] = item.get("depleted", false)
 			n["regrowth_timer"] = item.get("regrowth_timer", 0.0)
 			n["reserved_by"] = item.get("reserved_by", "")
+			if item.has("growing_tree"):
+				growing_trees[coord] = item["growing_tree"].duplicate()

@@ -315,7 +315,10 @@ func _update_ui_values() -> void:
 		"child": cohort_str = "ребёнок"
 		"youth": cohort_str = "подросток"
 		"elder": cohort_str = "старейшина"
-	subtitle_lbl.text = "%d лет · %s, %s" % [current_citizen.age, cohort_str, gender_str]
+	if current_citizen.is_ruler:
+		subtitle_lbl.text = "Вождь племени · Правитель (%s)" % [gender_str]
+	else:
+		subtitle_lbl.text = "%d лет · %s, %s" % [current_citizen.age, cohort_str, gender_str]
 	
 	job_lbl.text = _get_job_display_name(current_citizen.job_id)
 	

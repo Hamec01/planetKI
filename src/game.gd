@@ -121,8 +121,7 @@ func _on_day_passed(_day: int, _month: int, _year: int) -> void:
 			var ai_s = GameManager.settlements.get(f_id + "_settlement", null)
 			AIController.process_ai_daily(ai_f, ai_s, season)
 			
-	# Проверка триггеров событий
-	EventManager.check_triggers()
+	# CivilizationEventManager is the sole event source; it runs from GameManager._advance_day.
 
 func _on_month_passed(_month: int, _year: int) -> void:
 	var season = GameManager.current_season
@@ -131,9 +130,9 @@ func _on_month_passed(_month: int, _year: int) -> void:
 		s.sim_monthly_tick(season)
 
 func _on_year_passed(_year: int) -> void:
-	for s_id in GameManager.settlements:
-		var s = GameManager.settlements[s_id]
-		s.population.sim_yearly_aging()
+	# Старение граждан происходит непрерывно в био-шкале симуляции (sim_aging),
+	# календарный вызов отключен для исключения дублирования.
+	pass
 
 func _on_battle_started(_battle_data: Dictionary) -> void:
 	# Бои теперь идут прямо в реальном времени на карте (RTS), без модального окна!
@@ -156,5 +155,3 @@ func _on_tab_opened(tab_name: String, extra_data: Variant = null) -> void:
 		get_tree().change_scene_to_file("res://src/ui/main_menu.tscn")
 	else:
 		faction_view.open_tab(tab_name)
-
-

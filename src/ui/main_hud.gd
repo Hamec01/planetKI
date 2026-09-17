@@ -55,6 +55,7 @@ func _ready() -> void:
 	EventBus.nature_object_selected.connect(_on_nature_object_selected)
 	EventBus.animal_selected.connect(_on_animal_selected)
 	EventBus.selection_cleared.connect(_on_selection_cleared)
+	EventBus.time_period_changed.connect(func(_p): _update_ui())
 	EventBus.settlement_selected.connect(_on_settlement_context_selected)
 	EventBus.notification_toast.connect(_on_notification_toast)
 	
@@ -85,6 +86,7 @@ func _ready() -> void:
 const RTSBuildMenuScript = preload("res://src/ui/rts_build_menu.gd")
 const BuildingDetailPanelScript = preload("res://src/ui/building_detail_panel.gd")
 const CivilizationEventModalScript = preload("res://src/ui/civilization_event_modal.gd")
+const EventRegistryPanelScript = preload("res://src/ui/event_registry_panel.gd")
 const TraditionsRegistryModalScript = preload("res://src/ui/traditions_registry_modal.gd")
 const FaithChronicleModalScript = preload("res://src/ui/faith_chronicle_modal.gd")
 const DevEventInspectorScript = preload("res://src/ui/dev_event_inspector.gd")
@@ -92,6 +94,7 @@ const DevEventInspectorScript = preload("res://src/ui/dev_event_inspector.gd")
 var rts_build_menu: Control = null
 var building_detail_panel: Control = null
 var civilization_event_modal: Control = null
+var event_registry_panel: Control = null
 var traditions_modal: Control = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
@@ -112,6 +115,13 @@ func _setup_rts_build_menu() -> void:
 		civilization_event_modal.name = "CivilizationEventModal"
 		add_child(civilization_event_modal)
 		EventBus.civilization_event_triggered.connect(func(ev):
+			civilization_event_modal.open_event(ev)
+		)
+	if event_registry_panel == null:
+		event_registry_panel = EventRegistryPanelScript.new()
+		event_registry_panel.name = "EventRegistryPanel"
+		add_child(event_registry_panel)
+		event_registry_panel.event_open_requested.connect(func(ev):
 			civilization_event_modal.open_event(ev)
 		)
 			
@@ -262,6 +272,7 @@ func _setup_bottom_rts_dock_bar() -> void:
 		{"id": "relig", "name": "🔮 Религия [R]", "icon": "crystal_01"},
 		{"id": "army", "name": "⚔️ Армия [A]", "icon": "short_sword_01"},
 		{"id": "map_modes", "name": "🗺 Карта [M]", "icon": "apple_red_01"},
+		{"id": "events", "name": "⚡ События", "icon": "book_01"},
 		{"id": "history", "name": "📖 Хроника [E]", "icon": "book_01"},
 		{"id": "inspector", "name": "⚙️ Инспектор [F12]", "icon": "gold_01"}
 	]
@@ -320,6 +331,9 @@ func _on_menu_item_clicked(item_id: String) -> void:
 	elif item_id == "inspector":
 		if dev_inspector:
 			dev_inspector.toggle_inspector()
+	elif item_id == "events":
+		if event_registry_panel:
+			event_registry_panel.open_registry()
 	else:
 		tab_opened.emit(item_id, null)
 		
@@ -456,6 +470,17 @@ func _on_notification_toast(title_text: String, message_text: String, toast_type
 	tween.tween_interval(3.5)
 	tween.tween_property(toast, "modulate:a", 0.0, 0.5)
 	tween.tween_callback(func(): if is_instance_valid(toast): toast.queue_free())
+
+var _clock_refresh_timer: float = 0.0
+
+func _process(delta: float) -> void:
+	_clock_refresh_timer += delta
+	if _clock_refresh_timer >= 0.25:
+		_clock_refresh_timer = 0.0
+		if is_instance_valid(date_label):
+			date_label.text = GameManager.get_formatted_date()
+	if cursor_context_menu and cursor_context_menu.visible and active_inspected_nature_coord != Vector2i(-1, -1):
+		_refresh_nature_context_live()
 
 func _on_day_passed(_day: int, _month: int, _year: int) -> void:
 	_update_ui()
@@ -654,10 +679,6 @@ func _on_tile_selected(coord: Vector2i, tile_data: Dictionary) -> void:
 func _on_selection_cleared() -> void:
 	cursor_context_menu.visible = false
 	active_inspected_nature_coord = Vector2i(-1, -1)
-
-func _process(_delta: float) -> void:
-	if cursor_context_menu and cursor_context_menu.visible and active_inspected_nature_coord != Vector2i(-1, -1):
-		_refresh_nature_context_live()
 
 func _refresh_nature_context_live() -> void:
 	if not GameManager.resource_manager or not GameManager.resource_manager.nodes.has(active_inspected_nature_coord):

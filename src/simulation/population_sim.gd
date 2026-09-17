@@ -18,6 +18,12 @@ var happiness_index: float = 80.0 # 0 - 100
 var citizens: Array[CitizenNPC] = []
 var next_citizen_num: int = 11
 
+func find_citizen(c_id: String) -> CitizenNPC:
+	for c in citizens:
+		if c.citizen_id == c_id:
+			return c
+	return null
+
 func _init() -> void:
 	_init_starter_citizens()
 
@@ -42,6 +48,8 @@ func _init_starter_citizens() -> void:
 		var c = CitizenNPCScript.new(s["id"], s["name"], s["gender"], s["age"], s["cohort"], race)
 		c.job_id = s["job"]
 		c.experience = s["exp"].duplicate()
+		if s["id"] == "cit_1":
+			c.is_ruler = true
 		citizens.append(c)
 		
 	sync_cohorts()
@@ -110,7 +118,7 @@ func get_mobilization_pool() -> int:
 			count += 1
 	return count
 
-func add_newborn(parent_settlement_id: String = "", spawn_pos: Vector2 = Vector2.ZERO) -> CitizenNPC:
+func add_newborn(parent_settlement_id: String = "", spawn_pos: Vector2 = Vector2.ZERO, mother_id: String = "", father_id: String = "", family_id_val: String = "") -> CitizenNPC:
 	var race = GameManager.player_race if "player_race" in GameManager else "north"
 	var is_male = randf() < 0.5
 	var gender_str = "m" if is_male else "f"
@@ -125,6 +133,21 @@ func add_newborn(parent_settlement_id: String = "", spawn_pos: Vector2 = Vector2
 	child.settlement_id = parent_settlement_id
 	child.pos = spawn_pos
 	child.home_pos = spawn_pos
+	child.family_id = family_id_val
+	if mother_id != "":
+		child.add_relationship(mother_id, "parent", 100.0)
+		child.guardian_id = mother_id
+		var mother_cit = find_citizen(mother_id)
+		if mother_cit:
+			mother_cit.add_relationship(c_id, "child", 100.0)
+	if father_id != "":
+		child.add_relationship(father_id, "parent", 100.0)
+		if child.guardian_id == "":
+			child.guardian_id = father_id
+		var father_cit = find_citizen(father_id)
+		if father_cit:
+			father_cit.add_relationship(c_id, "child", 100.0)
+	
 	child.last_status_reason = "Новорождённый"
 	citizens.append(child)
 	sync_cohorts()
@@ -147,21 +170,8 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	var deaths = 0
 	var death_reasons = []
 	
-	# 1. Рождаемость
-	if food_ratio >= 1.0:
-		var fertile_couples = min(adults_m, adults_f)
-		var birth_rate = 0.035
-		if total_pop > housing_capacity:
-			birth_rate *= 0.6
-		if season == "Весна" or season == "Лето":
-			birth_rate *= 1.2
-			
-		var potential_births = int(fertile_couples * birth_rate)
-		if randf() < (fertile_couples * birth_rate - potential_births):
-			potential_births += 1
-		births = potential_births
-		for _b in range(births):
-			add_newborn()
+	# 1. Рождаемость: абстрактный спавн отключен (S07), рождения происходят физически через беременность и уход
+
 	
 	# 2. Смертность
 	var to_kill: Array[String] = []
@@ -210,9 +220,9 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	}
 
 func sim_yearly_aging() -> void:
-	for c in citizens:
-		c.age += 1
-	sync_cohorts()
+	# Непрерывное старение выполняется в симуляционном цикле через CitizenNPC.sim_aging.
+	# Дискретный календарный метод отключен для предотвращения дублирования.
+	pass
 
 func serialize() -> Dictionary:
 	var cit_arr = []

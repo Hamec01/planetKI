@@ -130,6 +130,16 @@ func _build_ui() -> void:
 	conf_sbox.set_corner_radius_all(6)
 	confirm_btn.add_theme_stylebox_override("normal", conf_sbox)
 	main_vbox.add_child(confirm_btn)
+	var passive_actions = HBoxContainer.new()
+	main_vbox.add_child(passive_actions)
+	var defer_button = Button.new()
+	defer_button.text = "Отложить"
+	defer_button.pressed.connect(_on_defer_pressed)
+	passive_actions.add_child(defer_button)
+	var ignore_button = Button.new()
+	ignore_button.text = "Не вмешиваться"
+	ignore_button.pressed.connect(_on_ignore_pressed)
+	passive_actions.add_child(ignore_button)
 
 func open_event(ev: Dictionary) -> void:
 	current_event = ev
@@ -182,7 +192,7 @@ func open_event(ev: Dictionary) -> void:
 		choices_container.add_child(btn)
 		
 	visible = true
-	GameManager.set_paused(true)
+	GameManager.push_modal_pause()
 
 func _select_choice(choice_id: String) -> void:
 	selected_choice_id = choice_id
@@ -224,8 +234,20 @@ func _on_confirm_pressed() -> void:
 			extra_data["deity_name"] = txt
 			extra_data["pantheon_name"] = txt
 			
-	var ev_id = current_event.get("id", "")
-	GameManager.civilization_event_manager.apply_choice(ev_id, selected_choice_id, extra_data)
+	var instance_id = current_event.get("instance_id", "")
+	GameManager.civilization_event_manager.apply_choice(instance_id, selected_choice_id, extra_data)
 	
 	visible = false
-	GameManager.set_paused(false)
+	GameManager.pop_modal_pause()
+
+func _on_defer_pressed() -> void:
+	var instance_id = current_event.get("instance_id", "")
+	GameManager.civilization_event_manager.defer_event(instance_id)
+	visible = false
+	GameManager.pop_modal_pause()
+
+func _on_ignore_pressed() -> void:
+	var instance_id = current_event.get("instance_id", "")
+	GameManager.civilization_event_manager.resolve_without_intervention(instance_id)
+	visible = false
+	GameManager.pop_modal_pause()

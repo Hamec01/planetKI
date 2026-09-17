@@ -582,14 +582,15 @@ func _render_upgrades() -> void:
 		hbox.add_child(vbox)
 		
 		var buy_btn = Button.new()
-		buy_btn.text = "Изучено" if is_unlocked else "Исследовать"
-		buy_btn.disabled = is_unlocked or not can_afford
+		var is_in_progress = current_building.has_pending_upgrade() and current_building.pending_upgrade.get("id", "") == u_id
+		buy_btn.text = "Изучено" if is_unlocked else ("Строится..." if is_in_progress else "Исследовать")
+		buy_btn.disabled = is_unlocked or is_in_progress
 		buy_btn.custom_minimum_size = Vector2(85, 30)
 		buy_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		buy_btn.add_theme_font_size_override("font_size", 10)
 		buy_btn.pressed.connect(func():
-			if econ.deduct_cost(u["cost"]):
-				current_building.unlock_upgrade(u_id)
+			if current_building.start_upgrade(u_id, u.get("cost", {})):
+				EventBus.notification_toast.emit("Улучшение начато", "Начато улучшение: %s. Требуется доставка стройматериалов." % u.get("name", u_id), "info")
 				refresh_all_tabs()
 		)
 		hbox.add_child(buy_btn)
@@ -677,62 +678,12 @@ func _render_orders() -> void:
 func _render_events() -> void:
 	for c in events_vbox.get_children():
 		c.queue_free()
-		
-	var title = Label.new()
-	title.text = "Текущие ситуации и дилеммы мастерской:"
-	title.add_theme_font_size_override("font_size", 11)
-	title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
-	events_vbox.add_child(title)
-	
-	var sample_event = PanelContainer.new()
-	var sbox = StyleBoxFlat.new()
-	sbox.bg_color = Color(0.15, 0.13, 0.18, 0.95)
-	sbox.border_color = Color(0.85, 0.5, 0.3, 0.8)
-	sbox.set_border_width_all(1)
-	sbox.set_corner_radius_all(6)
-	sbox.set_content_margin_all(8)
-	sample_event.add_theme_stylebox_override("panel", sbox)
-	
-	var ev_vbox = VBoxContainer.new()
-	ev_vbox.add_theme_constant_override("separation", 4)
-	
-	var ev_title = Label.new()
-	ev_title.text = "⚡ Искры в ночи: ночная смена мастера"
-	ev_title.add_theme_font_size_override("font_size", 12)
-	ev_title.add_theme_color_override("font_color", Color(1.0, 0.8, 0.4))
-	ev_vbox.add_child(ev_title)
-	
-	var ev_desc = Label.new()
-	ev_desc.text = "Мастер трудится допоздна, горн горит ярким пламенем. Это ускоряет изготовление орудий, но искры могут поджечь сухую солому на крыше."
-	ev_desc.add_theme_font_size_override("font_size", 10)
-	ev_desc.add_theme_color_override("font_color", Color(0.9, 0.92, 0.96))
-	ev_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ev_vbox.add_child(ev_desc)
-	
-	var btns_hbox = HBoxContainer.new()
-	btns_hbox.add_theme_constant_override("separation", 8)
-	
-	var opt1_btn = Button.new()
-	opt1_btn.text = "1. Разрешить ночную работу (+20% выработка, риск)"
-	opt1_btn.add_theme_font_size_override("font_size", 10)
-	opt1_btn.pressed.connect(func():
-		current_building.add_history_entry(GameManager.current_year, "Вождь разрешил ночные смены в мастерской.")
-		refresh_all_tabs()
-	)
-	btns_hbox.add_child(opt1_btn)
-	
-	var opt2_btn = Button.new()
-	opt2_btn.text = "2. Запретить огонь ночью (безопасность)"
-	opt2_btn.add_theme_font_size_override("font_size", 10)
-	opt2_btn.pressed.connect(func():
-		current_building.add_history_entry(GameManager.current_year, "Вождь запретил ночные работы ради безопасности.")
-		refresh_all_tabs()
-	)
-	btns_hbox.add_child(opt2_btn)
-	
-	ev_vbox.add_child(btns_hbox)
-	sample_event.add_child(ev_vbox)
-	events_vbox.add_child(sample_event)
+	var empty_lbl = Label.new()
+	empty_lbl.text = "Событий, связанных с этим зданием, нет. Общие решения и происшествия доступны в журнале событий."
+	empty_lbl.add_theme_font_size_override("font_size", 11)
+	empty_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
+	empty_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	events_vbox.add_child(empty_lbl)
 
 func _render_history() -> void:
 	for c in history_vbox.get_children():

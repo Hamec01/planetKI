@@ -27,6 +27,8 @@ var citizen_id: String = ""
 var name: String = ""
 var gender: String = "m" # "m" или "f"
 var age: int = 25
+var age_progress: float = 0.0 # Дробный прогресс взросления к следующему году (1800 сек = 1 год)
+var is_ruler: bool = false    # Правитель не стареет и возраст скрыт (PlanetKI v2 ТЗ)
 var cohort: String = "adult" # "child", "youth", "adult", "elder"
 var race_id: String = "north" # "desert", "savanna", "north"
 var appearance_role: String = "villager_brown_m"
@@ -38,7 +40,16 @@ var workplace_id: String = ""
 var workplace_coord: Vector2i = Vector2i(-1, -1)
 var home_id: String = ""
 var home_coord: Vector2i = Vector2i(-1, -1)
+var household_id: String = ""
+var is_guest: bool = false
+var family_id: String = ""
+var spouse_id: String = ""
 var settlement_id: String = ""
+
+# --- СЕМЕЙНЫЕ СВЯЗИ, ОТНОШЕНИЯ И ОПЕКА (S07) ---
+var relationships: Dictionary = {} # other_id -> {"type": "spouse"|"parent"|"child"|"sibling"|"guardian"|"ward", "closeness": float, "romance": float, "married": bool}
+var guardian_id: String = "" # ID опекуна для детей/сирот
+var pregnancy: Dictionary = {} # {"partner_id": String, "progress_sec": float, "gestation_sec": float, "stage": String, "health_risk": float}
 
 # --- ПОЗИЦИОНИРОВАНИЕ И НАВИГАЦИЯ ---
 var pos: Vector2 = Vector2.ZERO
@@ -53,15 +64,18 @@ var last_stuck_pos: Vector2 = Vector2.ZERO
 # --- СОСТОЯНИЕ И ЗАДАНИЕ ---
 var state: int = State.IDLE
 var task_id: String = ""
+var task_instance_id: String = ""
 var target_type: String = "none" # "none", "resource", "building", "home", "animal", "citizen"
 var target_id: String = ""
 var target_coord: Vector2i = Vector2i(-1, -1)
 var target_pos: Vector2 = Vector2.ZERO
 var reservation_ids: Array[String] = []
 
+
 # --- ИНВЕНТАРЬ И ГРУЗ ---
 var cargo_type: String = "" # "food", "wood", "stone", "metal", "game", "carcass", etc.
 var cargo_amount: float = 0.0
+var cargo_batch: Dictionary = {}
 var max_carry: float = 6.0
 
 # --- ПОТРЕБНОСТИ И ЗДОРОВЬЕ ---
@@ -111,10 +125,29 @@ var daily_physical_hours: float = 0.0
 var daily_profession_hours: float = 0.0
 var daily_hunt_xp: float = 0.0
 
+# --- ЛИЧНОСТЬ, ХАРАКТЕР И УСТОЙЧИВОСТЬ ВЫБОРА (S08 / ТЗ РАЗДЕЛ 7) ---
+var traits: Dictionary = {
+	"diligence": 50.0,       # Трудолюбие (0..100)
+	"bravery": 50.0,         # Храбрость (0..100)
+	"empathy": 50.0,         # Сочувствие / взаимовыручка к близким (0..100)
+	"pride": 50.0,           # Профессиональная гордость (0..100)
+	"loyalty_ruler": 50.0,   # Доверие правителю (0..100)
+	"tradition": 50.0,       # Приверженность традициям (0..100)
+	"tolerance": 50.0,       # Терпимость (0..100)
+	"aggression": 20.0       # Агрессивность (0..100)
+}
+var commitment_timer: float = 0.0 # Таймер устойчивости выбора (защита от метания)
+var ongoing_task_kind: String = "" # Текущий закрепленный тип задачи
+
 func take_damage(amount: float, source_name: String = "") -> bool:
 	health = maxf(0.0, health - amount)
 	if health <= 0.0:
 		is_alive = false
+		if is_ruler:
+			var killer = source_name if source_name != "" else "Опасности диких земель"
+			EventBus.ruler_died.emit(name, killer)
+			if GameManager and GameManager.has_method("trigger_game_over"):
+				GameManager.trigger_game_over("Вождь племени %s погиб от: %s. Племя осталось без предводителя." % [name, killer])
 		return true # Погиб
 	return false
 
@@ -286,10 +319,19 @@ func set_job(new_job: String) -> void:
 func is_idle() -> bool:
 	return job_id == "idle" and workplace_id == "" and cohort in ["adult", "youth"]
 
-func set_home(p_home_id: String, p_coord: Vector2i, p_pos: Vector2) -> void:
+func set_home(p_home_id: String, p_coord: Vector2i, p_pos: Vector2, p_is_guest: bool = false, p_household_id: String = "") -> void:
 	home_id = p_home_id
 	home_coord = p_coord
 	home_pos = p_pos
+	is_guest = p_is_guest
+	household_id = p_household_id if p_household_id != "" else p_home_id
+
+func clear_home() -> void:
+	home_id = ""
+	home_coord = Vector2i(-1, -1)
+	home_pos = Vector2.ZERO
+	is_guest = false
+	household_id = ""
 
 func set_workplace(p_work_id: String, p_coord: Vector2i) -> void:
 	workplace_id = p_work_id
@@ -367,6 +409,8 @@ func serialize() -> Dictionary:
 		"name": name,
 		"gender": gender,
 		"age": age,
+		"age_progress": age_progress,
+		"is_ruler": is_ruler,
 		"cohort": cohort,
 		"race_id": race_id,
 		"appearance_role": appearance_role,
@@ -375,12 +419,19 @@ func serialize() -> Dictionary:
 		"workplace_coord": [workplace_coord.x, workplace_coord.y],
 		"home_id": home_id,
 		"home_coord": [home_coord.x, home_coord.y],
+		"household_id": household_id,
+		"is_guest": is_guest,
+		"family_id": family_id,
+		"spouse_id": spouse_id,
 		"settlement_id": settlement_id,
 		"pos": [pos.x, pos.y],
 		"home_pos": [home_pos.x, home_pos.y],
 		"state": state,
+		"task_id": task_id,
+		"task_instance_id": task_instance_id,
 		"cargo_type": cargo_type,
 		"cargo_amount": cargo_amount,
+		"cargo_batch": cargo_batch.duplicate(),
 		"health": health,
 		"hunger": hunger,
 		"energy": energy,
@@ -396,7 +447,13 @@ func serialize() -> Dictionary:
 		"weapon_skills": weapon_skills,
 		"encounter_growth_points": encounter_growth_points,
 		"recent_encounters": recent_encounters,
-		"equipment": equipment
+		"equipment": equipment,
+		"relationships": relationships.duplicate(true),
+		"guardian_id": guardian_id,
+		"pregnancy": pregnancy.duplicate(),
+		"traits": traits.duplicate(),
+		"commitment_timer": commitment_timer,
+		"profession_levels": profession_levels.duplicate()
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -404,6 +461,8 @@ func deserialize(data: Dictionary) -> void:
 	name = data.get("name", "")
 	gender = data.get("gender", "m")
 	age = data.get("age", 25)
+	age_progress = data.get("age_progress", 0.0)
+	is_ruler = data.get("is_ruler", false)
 	cohort = data.get("cohort", "adult")
 	race_id = data.get("race_id", "north")
 	appearance_role = data.get("appearance_role", "villager_brown_m")
@@ -414,14 +473,30 @@ func deserialize(data: Dictionary) -> void:
 	home_id = data.get("home_id", "")
 	var hc = data.get("home_coord", [-1, -1])
 	home_coord = Vector2i(hc[0], hc[1])
+	household_id = data.get("household_id", home_id)
+	is_guest = bool(data.get("is_guest", false))
+	family_id = data.get("family_id", "")
+	spouse_id = data.get("spouse_id", "")
 	settlement_id = data.get("settlement_id", "")
+	relationships = data.get("relationships", {}).duplicate(true)
+	guardian_id = data.get("guardian_id", "")
+	pregnancy = data.get("pregnancy", {}).duplicate()
+	traits = data.get("traits", {
+		"diligence": 50.0, "bravery": 50.0, "empathy": 50.0, "pride": 50.0,
+		"loyalty_ruler": 50.0, "tradition": 50.0, "tolerance": 50.0, "aggression": 20.0
+	}).duplicate()
+	commitment_timer = float(data.get("commitment_timer", 0.0))
+	profession_levels = data.get("profession_levels", {}).duplicate()
 	var p = data.get("pos", [0, 0])
 	pos = Vector2(p[0], p[1])
 	var hp = data.get("home_pos", [0, 0])
 	home_pos = Vector2(hp[0], hp[1])
 	state = data.get("state", State.IDLE)
+	task_id = data.get("task_id", "")
+	task_instance_id = data.get("task_instance_id", "")
 	cargo_type = data.get("cargo_type", "")
 	cargo_amount = data.get("cargo_amount", 0.0)
+	cargo_batch = data.get("cargo_batch", {}).duplicate()
 	health = data.get("health", 100.0)
 	hunger = data.get("hunger", 100.0)
 	energy = data.get("energy", 100.0)
@@ -454,3 +529,200 @@ func deserialize(data: Dictionary) -> void:
 		"arrows": "basic_arrows"
 	})
 	cached_texture = null
+
+func sim_aging(sim_delta: float) -> void:
+	if is_ruler:
+		return
+	var year_duration = 1800.0
+	if "NPC_YEAR_DURATION" in GameManager:
+		year_duration = GameManager.NPC_YEAR_DURATION
+	age_progress += sim_delta / year_duration
+	while age_progress >= 1.0:
+		age_progress -= 1.0
+		age += 1
+		_sync_cohort_on_age_change()
+
+func _sync_cohort_on_age_change() -> void:
+	if age <= 13:
+		cohort = "child"
+	elif age <= 17:
+		cohort = "youth"
+	elif age <= 45:
+		cohort = "adult"
+	else:
+		cohort = "elder"
+
+# --- МЕТОДЫ ОТНОШЕНИЙ, СОЮЗОВ И ОПЕКИ (S07) ---
+func add_relationship(other_id: String, rel_type: String, closeness: float = 50.0, romance: float = 0.0, married: bool = false) -> void:
+	var was_parent = false
+	if relationships.has(other_id):
+		was_parent = relationships[other_id].get("type", "") == "parent" or relationships[other_id].get("is_parent", false)
+	relationships[other_id] = {
+		"type": rel_type,
+		"closeness": closeness,
+		"romance": romance,
+		"married": married,
+		"is_parent": (rel_type == "parent" or was_parent)
+	}
+	if rel_type == "spouse" or married:
+		spouse_id = other_id
+
+func remove_relationship(other_id: String) -> void:
+	relationships.erase(other_id)
+	if spouse_id == other_id:
+		spouse_id = ""
+
+func get_relationship(other_id: String) -> Dictionary:
+	return relationships.get(other_id, {})
+
+func get_spouses() -> Array[String]:
+	var result: Array[String] = []
+	for o_id in relationships:
+		var r = relationships[o_id]
+		if r.get("type", "") == "spouse" or r.get("married", false):
+			result.append(o_id)
+	return result
+
+func get_parents() -> Array[String]:
+	var result: Array[String] = []
+	for o_id in relationships:
+		var r = relationships[o_id]
+		if r.get("type", "") == "parent" or r.get("is_parent", false):
+			result.append(o_id)
+	return result
+
+func get_children() -> Array[String]:
+	var result: Array[String] = []
+	for o_id in relationships:
+		if relationships[o_id].get("type", "") == "child":
+			result.append(o_id)
+	return result
+
+func is_related_to(other: CitizenNPC) -> bool:
+	if other == null or other.citizen_id == citizen_id:
+		return false
+	if family_id != "" and other.family_id != "" and family_id == other.family_id:
+		return true
+	var r = get_relationship(other.citizen_id)
+	if not r.is_empty() and r.get("type", "") in ["parent", "child", "sibling"]:
+		return true
+	var my_parents = get_parents()
+	var other_parents = other.get_parents()
+	for p in my_parents:
+		if other_parents.has(p):
+			return true
+	return false
+
+func can_marry(other: CitizenNPC, marriage_law: String = "monogamy") -> Dictionary:
+	if other == null:
+		return {"allowed": false, "reason": "Партнёр не существует"}
+	if other.citizen_id == citizen_id:
+		return {"allowed": false, "reason": "Нельзя вступить в союз с самим собой"}
+	if age < 18 or other.age < 18:
+		return {"allowed": false, "reason": "Совершеннолетие для союзов — с 18 лет"}
+	if is_related_to(other):
+		return {"allowed": false, "reason": "Близкое кровное родство исключает союз"}
+	
+	if marriage_law == "monogamy":
+		if not get_spouses().is_empty():
+			return {"allowed": false, "reason": "При моногамии гражданин уже состоит в браке"}
+		if not other.get_spouses().is_empty():
+			return {"allowed": false, "reason": "При моногамии избранник уже состоит в браке"}
+	elif marriage_law == "polygamy":
+		if get_spouses().size() >= 4:
+			return {"allowed": false, "reason": "Достигнут предел супругов"}
+	return {"allowed": true, "reason": "Союз разрешён"}
+
+func marry(other: CitizenNPC, marriage_law: String = "monogamy") -> bool:
+	var check = can_marry(other, marriage_law)
+	if not check.get("allowed", false):
+		return false
+	add_relationship(other.citizen_id, "spouse", 80.0, 80.0, true)
+	other.add_relationship(citizen_id, "spouse", 80.0, 80.0, true)
+	if family_id == "" and other.family_id == "":
+		family_id = "fam_" + citizen_id
+		other.family_id = family_id
+	elif family_id != "" and other.family_id == "":
+		other.family_id = family_id
+	elif family_id == "" and other.family_id != "":
+		family_id = other.family_id
+	return true
+
+func is_pregnant() -> bool:
+	return not pregnancy.is_empty()
+
+func start_pregnancy(partner_id: String, p_gestation_sec: float = 450.0) -> bool:
+	if gender != "f" or age < 18 or age > 45 or is_pregnant():
+		return false
+	pregnancy = {
+		"partner_id": partner_id,
+		"progress_sec": 0.0,
+		"gestation_sec": p_gestation_sec,
+		"stage": "early",
+		"health_risk": 0.0
+	}
+	return true
+
+func advance_pregnancy(delta: float) -> String:
+	if pregnancy.is_empty():
+		return ""
+	pregnancy["progress_sec"] = float(pregnancy.get("progress_sec", 0.0)) + delta
+	var progress = float(pregnancy["progress_sec"])
+	var total = float(pregnancy.get("gestation_sec", 450.0))
+	var ratio = progress / maxf(1.0, total)
+	if ratio >= 1.0:
+		pregnancy["stage"] = "labor"
+		return "birth"
+	elif ratio >= 0.75:
+		pregnancy["stage"] = "late"
+	elif ratio >= 0.35:
+		pregnancy["stage"] = "mid"
+	else:
+		pregnancy["stage"] = "early"
+	return pregnancy["stage"]
+
+# --- ОЦЕНКА ПОЛЕЗНОСТИ ЗАДАЧ И ОПЫТ (S08) ---
+func score_task(task_type: String, target_distance: float = 0.0, is_family_task: bool = false, requires_skill: String = "") -> float:
+	var score = 50.0
+	
+	if requires_skill != "" and (requires_skill == job_id or weapon_skills.has(requires_skill + "_level")):
+		score += 25.0
+	elif job_id != "idle" and task_type != job_id and task_type != "rest":
+		score -= (float(traits.get("pride", 50.0)) * 0.25)
+		
+	score -= target_distance * 0.05
+	
+	if energy < 35.0 or hunger < 40.0:
+		if task_type == "rest":
+			score += 60.0
+		else:
+			score -= (40.0 - energy) * 1.5
+	elif task_type == "rest":
+		score -= 40.0
+		
+	if is_family_task:
+		score += (float(traits.get("empathy", 50.0)) * 0.5)
+		
+	score += (float(traits.get("diligence", 50.0)) - 50.0) * 0.3
+	
+	if task_type == ongoing_task_kind and commitment_timer > 0.0:
+		score += 30.0
+		
+	return score
+
+func gain_profession_xp(prof_name: String, work_seconds: float) -> void:
+	if prof_name == "" or prof_name == "idle":
+		return
+	var gained_xp = (work_seconds / 900.0) * 100.0
+	experience[prof_name] = float(experience.get(prof_name, 0.0)) + gained_xp
+	var cur_xp = float(experience[prof_name])
+	var cur_level = int(profession_levels.get(prof_name, 0))
+	var next_level_thresh = (cur_level + 1) * 100.0
+	if cur_xp >= next_level_thresh:
+		profession_levels[prof_name] = cur_level + 1
+		EventBus.notification_toast.emit(
+			"Рост мастерства",
+			"%s повысил уровень в ремесле (%s: ур. %d)" % [name, prof_name, cur_level + 1],
+			"good"
+		)
+

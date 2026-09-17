@@ -212,49 +212,14 @@ func _process(delta: float) -> void:
 	anim_time += delta
 	redraw_timer += delta
 	
-	# 1. Обновление реальной симуляции NPC жителей в поселениях и фауны
+	# Симуляция граждан, фауны и армий перенесена в авторитетный runner GameManager (S01).
+	# RTS бой и визуальные боевые эффекты исполняются только когда игра не на паузе:
 	if not GameManager.is_paused:
 		var sim_delta = delta * GameManager.game_speed
-		var threat_positions: Array = []
-		for s_id in GameManager.settlements:
-			var s: SettlementData = GameManager.settlements[s_id]
-			s.update_citizens(sim_delta)
-			if s.population:
-				for c in s.population.citizens:
-					if c.health > 0:
-						threat_positions.append({"pos": c.pos, "citizen": c})
-						
-		if GameManager.wildlife_manager:
-			GameManager.wildlife_manager.update(sim_delta, GameManager.nav_grid, threat_positions)
-					
-	# 2. Обновление перемещения армий на карте
-	for f_id in GameManager.factions:
-		var f: FactionData = GameManager.factions[f_id]
-		for a in f.armies:
-			if a.speech_timer > 0.0:
-				a.speech_timer -= delta
-				if a.speech_timer <= 0.0:
-					a.speech_bubble = ""
-					
-			if a.is_moving:
-				var dest = Vector2(a.target_pos.x * TILE_SIZE + 16, a.target_pos.y * TILE_SIZE + 16)
-				var to_dest = dest - a.world_pos
-				var dist = to_dest.length()
-				if dist <= a.move_speed * delta or dist < 2.0:
-					a.world_pos = dest
-					a.pos = a.target_pos
-					a.is_moving = false
-				else:
-					a.world_pos += to_dest.normalized() * a.move_speed * delta
-					a.pos = Vector2i(int(floor(a.world_pos.x / TILE_SIZE)), int(floor(a.world_pos.y / TILE_SIZE)))
-					
-	# 3. Реал-тайм RTS БОЕВАЯ СИСТЕМА
-	_process_rts_combat(delta)
+		_process_rts_combat(sim_delta)
+		_process_combat_effects(sim_delta)
 	
-	# 4. Обновление стрел и эффектов
-	_process_combat_effects(delta)
-	
-	# 5. Обработка наведения мыши
+	# Обработка наведения мыши
 	_process_mouse_hover()
 	
 	if redraw_timer >= 0.033:

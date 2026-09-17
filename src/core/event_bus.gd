@@ -63,5 +63,7 @@ signal settlement_selected(settlement_data: RefCounted)
 signal history_entry_added(year: int, title: String, description: String, category: String)
 signal notification_toast(title: String, message: String, type: String)
 signal map_mode_changed(mode_name: String)
+signal ruler_died(ruler_name: String, killer_name: String)
+signal game_over(reason: String)
 
 

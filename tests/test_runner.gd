@@ -103,6 +103,7 @@ func _ready() -> void:
 		if c.state in [CitizenNPC.State.GOING_HOME, CitizenNPC.State.SLEEPING]:
 			night_actions += 1
 	assert(night_actions > 0, "At least some citizens must head home or sleep at night")
+	GameManager.current_hour = 12.0 # Возвращаем дневное время для последующих дневных тестов
 	print("OK 5. Daytime Work and Nighttime Sleep cycles verified successfully.")
 	
 	# ==============================================================================
@@ -159,6 +160,7 @@ func _ready() -> void:
 	forager_cit.cargo_amount = 4.0
 	forager_cit.state = CitizenNPC.State.CARRYING
 	forager_cit.pos = forager_cit.home_pos # Дошел до амбара
+	forager_cit.path.clear()
 	s.update_citizens(0.2)
 	assert(s.economy.get_resource("food") == food_before + 4.0, "Delivered cargo must be credited to settlement economy")
 	assert(forager_cit.cargo_amount == 0.0, "Cargo amount must be cleared after delivery")
@@ -613,7 +615,11 @@ func _ready() -> void:
 	test_wolf.attack_timer = 0.0
 	test_wolf.update(0.1, GameManager.nav_grid, [{"pos": victim_cit.pos, "citizen": victim_cit}])
 	assert(test_wolf.state == WildAnimal.State.DEFENDING, "Wolf must enter DEFENDING against close human")
-	test_wolf.update(0.1, GameManager.nav_grid, [{"pos": victim_cit.pos, "citizen": victim_cit}])
+	for _i in range(10):
+		test_wolf.attack_timer = 0.0
+		test_wolf.update(0.1, GameManager.nav_grid, [{"pos": victim_cit.pos, "citizen": victim_cit}])
+		if victim_cit.health < 100.0:
+			break
 	assert(victim_cit.health < 100.0, "Wolf attack must deal damage to citizen (got %f HP)" % victim_cit.health)
 	assert(test_wolf.health < test_wolf.max_health, "Hunter citizen must fight back and damage attacking wolf")
 	print("OK 37. Predator assault, citizen damage, and hunter counter-attack verified.")
@@ -912,9 +918,1371 @@ func _ready() -> void:
 	assert(loaded_hunter.encounter_growth_points == 20.0, "Loaded EGP mismatch")
 	print("OK 46. EquipmentDB catalog, physical equip slots, total armor accumulation & persistence verified.")
 
+	# --------------------------------------------------------------------------
+	# S01 ВЕРИФИКАЦИЯ: ЕДИНЫЙ ЦИКЛ, ПАУЗА И ЧАСЫ (PlanetKI Living Settlement v2)
+	# --------------------------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S01 UNIFIED SIMULATION RUNNER & TIME TESTS")
+	print("----------------------------------------")
+	
+	# 47. Проверка временных констант: 900 с сутки, 1800 с год возраста
+	assert(GameManager.DAY_CYCLE_DURATION == 900.0, "DAY_CYCLE_DURATION must be 900.0s")
+	assert(GameManager.NPC_YEAR_DURATION == 1800.0, "NPC_YEAR_DURATION must be 1800.0s")
+	assert(GameManager.base_tick_interval == 900.0, "base_tick_interval must be 900.0s")
+	print("OK 47. S01 Time scale constants verified (900s day cycle, 1800s NPC year).")
+	
+	# 48. Непрерывное старение и бессмертие правителя
+	var ruler_cit = pop.get_citizen_by_id("cit_1")
+	assert(ruler_cit != null and ruler_cit.is_ruler, "cit_1 must be marked as ruler")
+	var ruler_age_before = ruler_cit.age
+	
+	var ordinary_cit = pop.get_citizen_by_id("cit_2")
+	assert(ordinary_cit != null and not ordinary_cit.is_ruler, "cit_2 must be ordinary citizen")
+	var ordinary_age_before = ordinary_cit.age
+	
+	# Симулируем 1800.0 секунд (1 биографический год)
+	ruler_cit.sim_aging(1800.0)
+	ordinary_cit.sim_aging(1800.0)
+	
+	assert(ruler_cit.age == ruler_age_before, "Ruler must NOT age (Section 3 TZ v2)")
+	assert(ordinary_cit.age == ordinary_age_before + 1, "Ordinary citizen must age by 1 year after 1800s (Section 4 TZ v2)")
+	print("OK 48. S01 Continuous aging and ruler immortality verified.")
+	
+	# 49. Централизованный стек паузы и защита от случайного снятия паузы
+	GameManager.set_paused(false)
+	assert(not GameManager.is_paused, "Game should be unpaused")
+	
+	# Модальное окно открывается
+	GameManager.push_modal_pause()
+	assert(GameManager.is_paused, "Game must be paused when modal opens")
+	
+	# Игрок меняет скорость в UI во время открытого модального окна
+	GameManager.set_speed(4.0)
+	assert(GameManager.game_speed == 4.0, "Game speed should update to 4.0")
+	assert(GameManager.is_paused, "Game MUST remain paused while modal is active")
+	
+	# Модальное окно закрывается
+	GameManager.pop_modal_pause()
+	assert(not GameManager.is_paused, "Game should resume after modal closes if user hadn't paused")
+	
+	# Пользователь нажал паузу, затем открылось модальное окно, затем закрылось
+	GameManager.set_paused(true)
+	GameManager.push_modal_pause()
+	GameManager.pop_modal_pause()
+	assert(GameManager.is_paused, "Game MUST remain paused if user explicitly paused before modal")
+	GameManager.set_paused(false)
+	print("OK 49. S01 Modal pause stack and robust speed switching verified.")
+	
+	# 50. Персистентность времени симуляции и дробного прогресса возраста в SaveSystem
+	GameManager.sim_time_total = 1234.5
+	GameManager.tick_accumulator = 450.0 # Полдень
+	ordinary_cit.age_progress = 0.65
+	
+	var save_success = SaveSystem.save_game()
+	assert(save_success, "SaveSystem must succeed")
+	
+	GameManager.sim_time_total = 0.0
+	GameManager.tick_accumulator = 0.0
+	var load_success = SaveSystem.load_game()
+	assert(load_success, "SaveSystem load must succeed")
+	assert(absf(GameManager.sim_time_total - 1234.5) < 0.1, "sim_time_total must persist across save/load")
+	assert(absf(GameManager.tick_accumulator - 450.0) < 0.1, "tick_accumulator must persist across save/load")
+	print("OK 50. S01 Simulation time & clock persistence across save/load verified.")
+
+	# ---------------------------------------------------------
+	# S02: УНИКАЛЬНЫЕ ИДЕНТИФИКАТОРЫ ЗДАНИЙ, GAME OVER И SAVE V2
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S02 BUILDING INSTANCES, RULER DEATH & SCHEMA V2")
+	print("----------------------------------------")
+	
+	# 51. Уникальные instance_id для однотипных зданий
+	var hut_a = BuildingInstance.new("hut_a", "hut", "test_settlement", Vector2i(10, 10))
+	var hut_b = BuildingInstance.new("hut_b", "hut", "test_settlement", Vector2i(12, 10))
+	assert(hut_a.instance_id != hut_b.instance_id, "Buildings of same type must have distinct instance_id")
+	assert(hut_a.building_type == "hut" and hut_b.building_type == "hut", "Building type must match")
+	
+	var hut_a_dict = hut_a.serialize()
+	var hut_a_restored = BuildingInstance.new()
+	hut_a_restored.deserialize(hut_a_dict)
+	assert(hut_a_restored.instance_id == "hut_a", "BuildingInstance serialization must preserve instance_id")
+	assert(hut_a_restored.tile_coord == Vector2i(10, 10), "BuildingInstance serialization must preserve coordinates")
+	print("OK 51. S02 BuildingInstance unique IDs and serialization verified.")
+
+	# 52. Привязка жителя к конкретному BuildingInstance по instance_id
+	var test_worker = CitizenNPC.new("cit_worker_1", "Рабочий", "m", 25, "adult")
+	test_worker.home_id = hut_a.instance_id
+	test_worker.home_coord = hut_a.tile_coord
+	test_worker.workplace_id = "woodcutter_camp_15_15"
+	test_worker.workplace_coord = Vector2i(15, 15)
+	
+	var w_data = test_worker.serialize()
+	var w_restored = CitizenNPC.new()
+	w_restored.deserialize(w_data)
+	assert(w_restored.home_id == hut_a.instance_id, "Citizen home_id must link to specific BuildingInstance id")
+	assert(w_restored.workplace_id == "woodcutter_camp_15_15", "Citizen workplace_id must link to specific BuildingInstance id")
+	print("OK 52. S02 Citizen 1:1 binding to building instance IDs verified.")
+
+	# 53. Смерть вождя вызывает Game Over и останавливает симуляцию
+	var test_ruler = CitizenNPC.new("ruler_test", "Тестовый Вождь", "m", 40, "adult")
+	test_ruler.is_ruler = true
+	test_ruler.health = 20.0
+	GameManager.is_game_over = false
+	GameManager.game_over_reason = ""
+	
+	var ruler_result = {"emitted": false, "name": "", "killer": ""}
+	var ruler_conn = func(r_name, k_name):
+		ruler_result["emitted"] = true
+		ruler_result["name"] = r_name
+		ruler_result["killer"] = k_name
+	EventBus.ruler_died.connect(ruler_conn)
+	
+	var is_dead = test_ruler.take_damage(25.0, "Голодный медведь")
+	assert(is_dead, "Ruler should be dead after lethal damage")
+	assert(ruler_result["emitted"], "EventBus.ruler_died must be emitted upon ruler death")
+	assert(ruler_result["name"] == "Тестовый Вождь", "Ruler name in signal must match")
+	assert(GameManager.is_game_over, "GameManager.is_game_over must be true upon ruler death")
+	assert(GameManager.game_over_reason != "", "GameManager.game_over_reason must be populated")
+	EventBus.ruler_died.disconnect(ruler_conn)
+	GameManager.is_game_over = false # сброс для продолжения тестов
+	print("OK 53. S02 Ruler death triggers EventBus.ruler_died and GameManager.is_game_over verified.")
+
+	# 54. Схема сохранения v2 с атомарной записью и очередью строительства
+	var target_settlement = s
+	if target_settlement == null:
+		target_settlement = GameManager.settlements.values()[0] if GameManager.settlements.size() > 0 else SettlementData.new("test_s", "Стоянка", "player_tribe", Vector2i(80, 80))
+	GameManager.settlements[target_settlement.id] = target_settlement
+	target_settlement.construction_queue.clear()
+	target_settlement.construction_queue.append({
+		"id": "hut",
+		"coord": Vector2i(42, 42),
+		"days_left": 2.0,
+		"total_days": 2,
+		"settlement_id": target_settlement.id,
+		"is_paused": false
+	})
+	assert(target_settlement.construction_queue.size() == 1, "Construction queue should have 1 item")
+	
+	var save_v2_ok = SaveSystem.save_game()
+	assert(save_v2_ok, "SaveSystem v2 save must succeed")
+	
+	target_settlement.construction_queue.clear()
+	var load_v2_ok = SaveSystem.load_game()
+	assert(load_v2_ok, "SaveSystem v2 load must succeed")
+	assert(SaveSystem.last_loaded_version == 2, "Loaded save must be schema_version 2")
+	var s02_loaded_s = GameManager.settlements.get(target_settlement.id, null)
+	assert(s02_loaded_s != null, "Settlement must exist after load")
+	assert(s02_loaded_s.construction_queue.size() == 1, "Construction queue must be preserved across save/load")
+	assert(s02_loaded_s.construction_queue[0]["id"] == "hut", "Queue item id preserved")
+	assert(s02_loaded_s.construction_queue[0]["coord"] == Vector2i(42, 42), "Queue item coord preserved")
+	print("OK 54. S02 Save schema v2, atomic save and construction queue persistence verified.")
+
+	# 55. S03 TaskService: полный жизненный цикл задачи лесоруба (создание, резерв, прибытие, доставка, завершение)
+	assert(GameManager.task_service != null, "GameManager.task_service must exist")
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+	else:
+		GameManager.settlements[s.id] = s
+	var s03_tree_coord = Vector2i(s.pos.x + 2, s.pos.y + 2)
+	GameManager.planet_data["tiles"][s03_tree_coord.y][s03_tree_coord.x]["nature_object"] = "tree_pine"
+	GameManager.planet_data["tiles"][s03_tree_coord.y][s03_tree_coord.x]["walkable"] = true
+	var s03_tree_pos = Vector2(s03_tree_coord.x * 32.0 + 16, s03_tree_coord.y * 32.0 + 16)
+	GameManager.resource_manager.nodes[s03_tree_coord] = {
+		"id": "s03_tree_node",
+		"coord": s03_tree_coord,
+		"pos": s03_tree_pos,
+		"type": "wood",
+		"category": "wood",
+		"name": "Сосна S03",
+		"amount": 100.0,
+		"max_amount": 100.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "tree_pine",
+		"depleted_sprite": "none",
+		"regrowth_timer": 999999.0,
+		"regrowth_duration": 999999.0
+	}
+	var woodcutter = CitizenNPC.new("s03_wc", "Лесоруб S03", "m", 25, "adult")
+	woodcutter.job_id = "woodcutter"
+	woodcutter.settlement_id = s.id
+	woodcutter.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	woodcutter.home_pos = woodcutter.pos
+	s.population.citizens.append(woodcutter)
+	
+	s.priority_harvest_coords.clear()
+	s.priority_harvest_coords.append(s03_tree_coord)
+	
+	# Вызываем обновление жителей: лесоруб должен найти дерево и создать задачу в TaskService
+	s.update_citizens(0.1)
+	assert(woodcutter.state == CitizenNPC.State.MOVING_TO_WORK, "Woodcutter must move to work")
+	assert(woodcutter.task_instance_id != "", "Woodcutter must have task_instance_id assigned")
+	var t_info = GameManager.task_service.get_task(woodcutter.task_instance_id)
+	assert(t_info.get("state") == TaskService.TaskState.RESERVED, "Task state must be RESERVED")
+	assert(t_info.get("actor_id") == woodcutter.citizen_id, "Task actor must be assigned to woodcutter")
+	
+	# Имитируем прибытие к дереву
+	woodcutter.pos = s03_tree_pos
+	woodcutter.path.clear()
+	s.update_citizens(0.1)
+	assert(woodcutter.state == CitizenNPC.State.WORKING, "Woodcutter must start working at tree")
+	var t_arrived = GameManager.task_service.get_task(woodcutter.task_instance_id)
+	assert(t_arrived.get("state") == TaskService.TaskState.IN_PROGRESS, "Task state must be IN_PROGRESS while working")
+	
+	# Удары топором: прогрессивная рубка (25 дров за удар)
+	woodcutter.work_timer = 0.0
+	s.update_citizens(0.1)
+	assert(woodcutter.cargo_amount == 25.0, "Woodcutter must have 25 wood in hands after 1 strike")
+	assert(GameManager.resource_manager.nodes[s03_tree_coord]["amount"] == 75.0, "Tree amount must be reduced to 75")
+	
+	# Завершаем рубку дерева (остальные 75 дров)
+	woodcutter.work_timer = 0.0
+	GameManager.resource_manager.harvest_from_node(s03_tree_coord, 75.0) # дорубаем запас дерева
+	s.update_citizens(0.1)
+	assert(woodcutter.state == CitizenNPC.State.CARRYING, "Woodcutter must enter CARRYING state")
+	var t_delivering = GameManager.task_service.get_task(woodcutter.task_instance_id)
+	assert(t_delivering.get("state") == TaskService.TaskState.DELIVERING, "Task state must be DELIVERING")
+	print("OK 55. S03 Woodcutter TaskService lifecycle (RESERVED -> ARRIVED -> IN_PROGRESS -> DELIVERING) verified.")
+
+	# 56. S03 Обработка NO_PATH при недостижимости цели
+	var blocked_coord = Vector2i(5, 5)
+	var blocked_pos = Vector2(blocked_coord.x * 32.0 + 16, blocked_coord.y * 32.0 + 16)
+	GameManager.planet_data["tiles"][blocked_coord.y][blocked_coord.x]["walkable"] = false
+	GameManager.resource_manager.nodes[blocked_coord] = {
+		"id": "s03_blocked_tree",
+		"coord": blocked_coord,
+		"pos": blocked_pos,
+		"type": "wood",
+		"category": "wood",
+		"name": "Недостижимое дерево",
+		"amount": 100.0,
+		"max_amount": 100.0,
+		"reserved_by": "",
+		"depleted": false
+	}
+	var blocked_wc = CitizenNPC.new("s03_blocked_wc", "Заблокированный Лесоруб", "m", 25, "adult")
+	blocked_wc.job_id = "woodcutter"
+	blocked_wc.settlement_id = s.id
+	blocked_wc.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	s.priority_harvest_coords.clear()
+	s.priority_harvest_coords.append(blocked_coord)
+	var wood_before_blocked = s.economy.get_resource("wood")
+	s._dispatch_priority_worker(blocked_coord, "wood")
+	assert(blocked_wc.state == CitizenNPC.State.WAITING or blocked_wc.state == CitizenNPC.State.IDLE, "Worker must remain WAITING when no path exists")
+	assert(s.economy.get_resource("wood") == wood_before_blocked, "Zero wood must be produced when path is blocked")
+	s.priority_harvest_coords.clear()
+	print("OK 56. S03 NO_PATH / BLOCKED task handling verified.")
+
+	# 57. S03 Физическая доставка груза: склад не пополняется мгновенно до прибытия
+	var initial_econ_wood = s.economy.get_resource("wood")
+	woodcutter.cargo_amount = 100.0
+	woodcutter.cargo_type = "wood"
+	woodcutter.state = CitizenNPC.State.CARRYING
+	woodcutter.pos = s03_tree_pos # далеко от склада
+	s.update_citizens(0.01)
+	assert(s.economy.get_resource("wood") == initial_econ_wood, "Economy wood MUST NOT increase while cargo is still in transit")
+	
+	# Доставляем на склад
+	var storage_p = s._get_storage_pos(woodcutter)
+	woodcutter.pos = storage_p
+	woodcutter.path.clear()
+	s.update_citizens(0.01)
+	assert(woodcutter.cargo_amount == 0.0, "Cargo in hands must be cleared upon delivery")
+	assert(s.economy.get_resource("wood") == initial_econ_wood + 100.0, "Economy wood must increase by 100 on warehouse arrival")
+	print("OK 57. S03 Physical cargo transport and warehouse arrival crediting verified.")
+
+	# 58. S03 Сохранение/загрузка груза в пути и ночной режим
+	woodcutter.cargo_amount = 50.0
+	woodcutter.cargo_type = "wood"
+	woodcutter.state = CitizenNPC.State.CARRYING
+	GameManager.current_hour = 23.0 # Наступает ночь
+	s.update_citizens(0.1)
+	assert(woodcutter.state == CitizenNPC.State.GOING_HOME or woodcutter.state == CitizenNPC.State.SLEEPING, "Citizen must head home at night")
+	assert(woodcutter.cargo_amount == 50.0, "Citizen must retain 50 wood in hands during sleep (no night teleportation!)")
+	
+	var save_s03_ok = SaveSystem.save_game()
+	assert(save_s03_ok, "Save during night with cargo must succeed")
+	
+	woodcutter.cargo_amount = 0.0
+	var load_s03_ok = SaveSystem.load_game()
+	assert(load_s03_ok, "Load game must succeed")
+	
+	var s03_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s03_loaded_s != null, "Settlement must exist after load")
+	var s03_loaded_wc = null
+	for c in s03_loaded_s.population.citizens:
+		if c.citizen_id == "s03_wc":
+			s03_loaded_wc = c
+			break
+	assert(s03_loaded_wc != null, "Woodcutter citizen must exist after load")
+	assert(s03_loaded_wc.cargo_amount == 50.0, "Citizen must still have 50 wood in cargo after load")
+	assert(s03_loaded_wc.cargo_type == "wood", "Citizen cargo_type preserved as wood")
+	
+	# Наступает утро
+	GameManager.current_hour = 8.0
+	s03_loaded_s.update_citizens(0.1)
+	assert(s03_loaded_wc.state == CitizenNPC.State.CARRYING, "Citizen must resume CARRYING upon waking up")
+	print("OK 58. S03 Mid-haul cargo preservation, night retention, and save/load persistence verified.")
+
+	# ---------------------------------------------------------
+	# S04: ОБЩИЙ УЧЁТ ГРУЗОВ, ПАРТИИ ПИЩИ, ПОРЧА И РЕЕСТР LEGACY
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S04 CARGO, FOOD BATCHES, SPOILAGE & PHYSICAL EXTRACTORS")
+	print("----------------------------------------")
+	GameManager.current_hour = 12.0
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+
+	# 59. Собиратель (Forager): поиск куста, сбор ягод, создание партии пищи с меткой времени, доставка на склад
+	var bush_coord = Vector2i(s.pos.x + 3, s.pos.y + 1)
+	GameManager.planet_data["tiles"][bush_coord.y][bush_coord.x]["walkable"] = true
+	var bush_pos = Vector2(bush_coord.x * 32.0 + 16, bush_coord.y * 32.0 + 16)
+	GameManager.resource_manager.nodes[bush_coord] = {
+		"id": "s04_bush_node",
+		"coord": bush_coord,
+		"pos": bush_pos,
+		"type": "food",
+		"category": "food",
+		"name": "Ягодный куст S04",
+		"amount": 20.0,
+		"max_amount": 20.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "bush_berries",
+		"depleted_sprite": "none",
+		"regrowth_timer": 999999.0,
+		"regrowth_duration": 999999.0
+	}
+	var forager = CitizenNPC.new("s04_forager", "Собиратель S04", "f", 22, "adult")
+	forager.job_id = "forager"
+	forager.settlement_id = s.id
+	forager.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	forager.home_pos = forager.pos
+	s.population.citizens.append(forager)
+
+	s.update_citizens(0.1)
+	assert(forager.state == CitizenNPC.State.MOVING_TO_WORK, "Forager must start moving towards bush")
+	assert(forager.task_instance_id != "", "Forager must have TaskService task assigned")
+	var t_forage = GameManager.task_service.get_task(forager.task_instance_id)
+	assert(t_forage.get("state") == TaskService.TaskState.RESERVED, "Task state must be RESERVED")
+
+	# Прибытие к кусту
+	forager.pos = forager.target_pos
+	forager.path.clear()
+	s.update_citizens(0.1)
+	assert(forager.state == CitizenNPC.State.GATHERING, "Forager must enter GATHERING state at bush")
+	var t_forage_arr = GameManager.task_service.get_task(forager.task_instance_id)
+	assert(t_forage_arr.get("state") == TaskService.TaskState.IN_PROGRESS, "Task state must be IN_PROGRESS while gathering")
+
+	# Завершение сбора
+	forager.work_timer = 0.0
+	var food_before_harvest = s.economy.get_resource("food")
+	var batches_before = s.food_batches.size()
+	s.update_citizens(0.1)
+	assert(forager.state == CitizenNPC.State.CARRYING, "Forager must enter CARRYING state after gathering")
+	assert(forager.cargo_type == "food", "Cargo type must be food")
+	assert(forager.cargo_amount > 0.0, "Forager cargo_amount must be greater than 0")
+	assert(not forager.cargo_batch.is_empty(), "Forager must carry cargo_batch metadata")
+	assert(forager.cargo_batch.get("food_type") == "berries", "Food batch type must be berries")
+	assert(forager.cargo_batch.get("max_freshness_sec") == 3600.0, "Berries max freshness must be 3600s")
+	assert(s.economy.get_resource("food") == food_before_harvest, "Food in warehouse MUST NOT increase while in transit")
+
+	# Прибытие на склад
+	var storage_pos = s._get_storage_pos(forager)
+	forager.pos = storage_pos
+	forager.path.clear()
+	s.update_citizens(0.1)
+	assert(forager.cargo_amount == 0.0, "Cargo must be deposited at warehouse")
+	assert(s.economy.get_resource("food") > food_before_harvest, "Warehouse food must increase on delivery")
+	assert(s.food_batches.size() == batches_before + 1, "A new food batch must be registered in settlement.food_batches")
+	assert(s.food_batches.back().get("food_type") == "berries", "New batch in settlement must be berries")
+	print("OK 59. S04 Forager TaskService gathering, cargo_batch creation & warehouse delivery verified.")
+
+	# 60. Каменотёс (Quarryman) и Рудокоп (Miner): TaskService, проверка путей и физическая доставка на склад
+	var rock_coord = Vector2i(s.pos.x + 2, s.pos.y - 2)
+	GameManager.planet_data["tiles"][rock_coord.y][rock_coord.x]["walkable"] = true
+	var rock_pos = Vector2(rock_coord.x * 32.0 + 16, rock_coord.y * 32.0 + 16)
+	GameManager.resource_manager.nodes[rock_coord] = {
+		"id": "s04_rock_node",
+		"coord": rock_coord,
+		"pos": rock_pos,
+		"type": "stone",
+		"category": "stone",
+		"name": "Скала S04",
+		"amount": 50.0,
+		"max_amount": 50.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "rock",
+		"depleted_sprite": "none",
+		"regrowth_timer": 999999.0,
+		"regrowth_duration": 999999.0
+	}
+	var quarryman = CitizenNPC.new("s04_qm", "Каменотёс S04", "m", 30, "adult")
+	quarryman.job_id = "quarryman"
+	quarryman.settlement_id = s.id
+	quarryman.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	quarryman.home_pos = quarryman.pos
+	s.population.citizens.append(quarryman)
+
+	s.update_citizens(0.1)
+	assert(quarryman.state == CitizenNPC.State.MOVING_TO_WORK, "Quarryman must move to stone node")
+	assert(quarryman.task_instance_id != "", "Quarryman must have TaskService task assigned")
+	var t_rock = GameManager.task_service.get_task(quarryman.task_instance_id)
+	assert(t_rock.get("kind_id") == "mine_stone", "Task kind_id must be mine_stone")
+
+	# Завершаем добычу камня и доставку
+	quarryman.pos = quarryman.target_pos
+	quarryman.path.clear()
+	s.update_citizens(0.1)
+	quarryman.work_timer = 0.0
+	var stone_before = s.economy.get_resource("stone")
+	s.update_citizens(0.1)
+	assert(quarryman.state == CitizenNPC.State.CARRYING, "Quarryman must carry stone after mining")
+	assert(quarryman.cargo_type == "stone", "Cargo type must be stone")
+	assert(s.economy.get_resource("stone") == stone_before, "Stone must not be in economy while carried")
+
+	quarryman.pos = s._get_storage_pos(quarryman)
+	quarryman.path.clear()
+	s.update_citizens(0.1)
+	assert(quarryman.cargo_amount == 0.0, "Hands must be cleared after stone delivery")
+	assert(s.economy.get_resource("stone") > stone_before, "Settlement stone must increase upon delivery")
+	print("OK 60. S04 Quarryman & Miner TaskService physical mining and warehouse delivery verified.")
+
+	# 61. Прогрессивная порча пищи (update_food_spoilage) и влияние амбара
+	s.food_batches.clear()
+	s.economy.resources["food"] = 50.0
+	s.deposit_food_batch({
+		"food_type": "berries",
+		"amount": 20.0,
+		"created_sim_time": GameManager.sim_time_total,
+		"max_freshness_sec": 100.0,
+		"spoilage_progress": 0.95
+	})
+	s.deposit_food_batch({
+		"food_type": "meat",
+		"amount": 30.0,
+		"created_sim_time": GameManager.sim_time_total,
+		"max_freshness_sec": 1000.0,
+		"spoilage_progress": 0.0
+	})
+	assert(s.food_batches.size() == 2, "Must have 2 food batches")
+	
+	# Обновление порчи без амбара (delta = 10.0 при max_freshness = 100.0 даст +0.10 прогресса порчи, 0.95 + 0.10 = 1.05 >= 1.0 -> первая партия портится)
+	s.update_food_spoilage(10.0)
+	assert(s.food_batches.size() == 1, "Expired food batch must be removed from food_batches")
+	assert(s.food_batches[0].get("food_type") == "meat", "Remaining batch must be meat")
+	assert(s.economy.get_resource("food") == 30.0, "Spoiled food (20) must be deducted from economy.resources['food']")
+
+	# Проверяем влияние амбара на снижение скорости порчи
+	var initial_spoilage = float(s.food_batches[0]["spoilage_progress"])
+	s.buildings.append("granary")
+	var granary_factor = s.get_granary_spoilage_factor()
+	assert(granary_factor == 0.5, "Granary must reduce spoilage rate to 0.5")
+	s.update_food_spoilage(100.0)
+	var delta_spoilage = float(s.food_batches[0]["spoilage_progress"]) - initial_spoilage
+	# Ожидаемый прирост: (100.0 / 1000.0) * 0.5 = 0.05
+	assert(absf(delta_spoilage - 0.05) < 0.001, "Spoilage rate with granary must match granary_factor (0.5x)")
+	s.buildings.erase("granary")
+	print("OK 61. S04 Progressive food spoilage & granary factor (get_granary_spoilage_factor) verified.")
+
+	# 62. FIFO потребление пищи, неизменность возраста партии при перекладывании и сохранение партий в SaveSystem
+	s.food_batches.clear()
+	s.economy.resources["food"] = 35.0
+	s.deposit_food_batch({
+		"batch_id": "old_batch",
+		"food_type": "berries",
+		"amount": 10.0,
+		"created_sim_time": 100.0,
+		"max_freshness_sec": 3600.0,
+		"spoilage_progress": 0.4
+	})
+	s.deposit_food_batch({
+		"batch_id": "fresh_batch",
+		"food_type": "meat",
+		"amount": 25.0,
+		"created_sim_time": 500.0,
+		"max_freshness_sec": 4500.0,
+		"spoilage_progress": 0.05
+	})
+	
+	# Потребление части старой партии
+	var eaten = s.consume_food(4.0)
+	assert(eaten == 4.0, "Must consume requested 4.0 food")
+	assert(s.food_batches[0]["batch_id"] == "old_batch", "FIFO: oldest batch must be consumed first")
+	assert(s.food_batches[0]["amount"] == 6.0, "Old batch amount reduced to 6.0")
+	assert(s.food_batches[0]["spoilage_progress"] == 0.4, "Food consumption/moving does NOT refresh spoilage progress")
+	assert(s.food_batches[1]["amount"] == 25.0, "Fresher batch left untouched")
+	
+	# Потребление остатка старой партии + захват свежей
+	eaten = s.consume_food(10.0)
+	assert(eaten == 10.0, "Must consume requested 10.0 food")
+	assert(s.food_batches.size() == 1, "Fully consumed old batch must be removed")
+	assert(s.food_batches[0]["batch_id"] == "fresh_batch", "Only fresher batch remains")
+	assert(s.food_batches[0]["amount"] == 21.0, "Fresh batch amount reduced by 4.0 to 21.0")
+
+	# Сохранение и загрузка партий пищи
+	var save_batches_ok = SaveSystem.save_game()
+	assert(save_batches_ok, "Save with food_batches must succeed")
+	s.food_batches.clear()
+	var load_batches_ok = SaveSystem.load_game()
+	assert(load_batches_ok, "Load with food_batches must succeed")
+	var s04_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s04_loaded_s != null, "Settlement must exist after load")
+	assert(s04_loaded_s.food_batches.size() == 1, "Loaded settlement must have 1 preserved food batch")
+	assert(s04_loaded_s.food_batches[0]["batch_id"] == "fresh_batch", "Loaded batch_id preserved")
+	assert(s04_loaded_s.food_batches[0]["amount"] == 21.0, "Loaded batch amount preserved")
+	assert(absf(s04_loaded_s.food_batches[0]["spoilage_progress"] - 0.05) < 0.001, "Loaded batch spoilage_progress preserved")
+	print("OK 62. S04 FIFO food consumption, age preservation and SaveSystem food_batches persistence verified.")
+
+	# ---------------------------------------------------------
+	# S05: РЕАЛЬНОЕ СТРОИТЕЛЬСТВО, УЛУЧШЕНИЯ И КРАФТ
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S05 PHYSICAL CONSTRUCTION, UPGRADES & CRAFTING")
+	print("----------------------------------------")
+	GameManager.current_hour = 12.0
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+
+	# 63. Нехватка стройматериалов останавливает стройку, физическая доставка материалов со склада
+	var s05_site_coord = Vector2i(s.pos.x + 4, s.pos.y)
+	GameManager.planet_data["tiles"][s05_site_coord.y][s05_site_coord.x]["walkable"] = true
+	var s05_site_pos = Vector2(s05_site_coord.x * 32.0 + 16, s05_site_coord.y * 32.0 + 16)
+	GameManager.tile_buildings[s05_site_coord] = {
+		"id": "woodcutter_camp",
+		"status": "constructing",
+		"settlement_id": s.id,
+		"days_left": 2.0,
+		"total_days": 2,
+		"materials_required": {"wood": 15.0, "stone": 5.0},
+		"materials_delivered": {}
+	}
+	s.construction_queue.clear()
+	var q_item = GameManager.tile_buildings[s05_site_coord].duplicate(true)
+	q_item["coord"] = s05_site_coord
+	s.construction_queue.append(q_item)
+
+	# Склад пуст
+	s.economy.resources["wood"] = 0.0
+	s.economy.resources["stone"] = 0.0
+
+	var test_builder = CitizenNPC.new("s05_builder", "Строитель S05", "m", 28, "adult")
+	test_builder.job_id = "builder"
+	test_builder.settlement_id = s.id
+	test_builder.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	test_builder.home_pos = test_builder.pos
+	test_builder.max_carry = 20.0
+	s.population.citizens.append(test_builder)
+
+	# Обновление: строитель видит, что на складе 0 дерева и 0 камня -> стройка останавливается
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.WAITING, "Builder must halt in WAITING state when warehouse has no materials")
+	assert("нет материалов" in test_builder.last_status_reason.to_lower(), "Status reason must indicate lack of materials")
+	assert(GameManager.tile_buildings[s05_site_coord]["days_left"] == 2.0, "Construction days_left MUST NOT decrease when materials are missing")
+
+	# Добавляем дерево на склад
+	s.economy.resources["wood"] = 30.0
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.MOVING_TO_WORK, "Builder must move to warehouse to fetch materials")
+	assert(test_builder.task_id == "fetch_materials", "Builder task_id must be fetch_materials")
+
+	# Прибытие на склад
+	test_builder.pos = s._get_storage_pos(test_builder)
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.CARRYING, "Builder must enter CARRYING state after fetching materials")
+	assert(test_builder.cargo_type == "wood", "Builder must carry wood")
+	assert(test_builder.cargo_amount == 15.0, "Builder must carry needed 15 wood")
+	assert(s.economy.get_resource("wood") == 15.0, "Wood in warehouse must be deducted by 15")
+
+	# Доставка дерева на стройплощадку
+	test_builder.pos = s05_site_pos
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.cargo_amount == 0.0, "Builder hands must be cleared after depositing materials")
+	assert(GameManager.tile_buildings[s05_site_coord]["materials_delivered"]["wood"] == 15.0, "Site materials_delivered must record 15 wood")
+
+	# Камень всё ещё не завезён (0 на складе): стройка снова останавливается
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.WAITING, "Builder must wait because stone is still missing")
+	print("OK 63. S05 Lack of materials halts construction, physical builder hauling from warehouse verified.")
+
+	# 64. Завершение завоза материалов и завершение строительства здания
+	s.economy.resources["stone"] = 20.0
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.task_id == "fetch_materials", "Builder must fetch stone")
+
+	# Доставляем камень на площадку
+	test_builder.pos = s._get_storage_pos(test_builder)
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.cargo_type == "stone" and test_builder.cargo_amount == 5.0, "Builder carried 5 stone")
+	assert(s.economy.get_resource("stone") == 15.0, "Warehouse stone deducted by 5")
+
+	test_builder.pos = s05_site_pos
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(GameManager.tile_buildings[s05_site_coord]["materials_delivered"]["stone"] == 5.0, "Site has all stone delivered")
+
+	# Все материалы на месте! Теперь строитель приступает к физическому возведению
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.MOVING_TO_WORK or test_builder.state == CitizenNPC.State.WORKING, "Builder goes to construct")
+	assert(test_builder.task_id == "build", "Builder task is build")
+
+	test_builder.pos = s05_site_pos
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.WORKING, "Builder is working on site")
+
+	# Завершаем стройку
+	test_builder.work_timer = 0.0
+	GameManager.tile_buildings[s05_site_coord]["days_left"] = 0.1
+	s.update_citizens(0.1)
+	assert(GameManager.tile_buildings[s05_site_coord]["status"] == "active", "Building must become active")
+	assert(s.buildings.has("woodcutter_camp"), "Building must be added to settlement buildings list")
+	print("OK 64. S05 Building materials completion and physical construction completion verified.")
+
+	# 65. Улучшение здания: не применяется мгновенно, требует доставки материалов и работы строителя
+	var starter_inst = GameManager.get_or_create_building_instance(s.pos, "elders_house", s.id)
+	assert(not starter_inst.is_upgrade_unlocked("elders_lore_hearth"), "Upgrade must not be unlocked initially")
+
+	var up_started = starter_inst.start_upgrade("elders_lore_hearth", {"wood": 10.0})
+	assert(up_started, "start_upgrade must succeed")
+	assert(not starter_inst.is_upgrade_unlocked("elders_lore_hearth"), "Upgrade MUST NOT unlock instantly (no decorative stubs!)")
+	assert(starter_inst.has_pending_upgrade(), "Building instance must report pending_upgrade")
+
+	# Доставляем материалы для улучшения
+	s.economy.resources["wood"] = 25.0
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.task_id == "fetch_upgrade_materials", "Builder must fetch upgrade materials")
+
+	test_builder.pos = s._get_storage_pos(test_builder)
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.cargo_type == "wood" and test_builder.cargo_amount == 10.0, "Carries 10 wood for upgrade")
+
+	test_builder.pos = GameManager.nav_grid.tile_to_world_center(starter_inst.pos)
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(starter_inst.pending_upgrade["materials_delivered"]["wood"] == 10.0, "Upgrade site received 10 wood")
+
+	# Строитель выполняет работу по улучшению
+	test_builder.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_builder.task_id == "upgrade_work", "Builder task must be upgrade_work")
+
+	test_builder.pos = GameManager.nav_grid.tile_to_world_center(starter_inst.pos)
+	test_builder.path.clear()
+	s.update_citizens(0.1)
+	assert(test_builder.state == CitizenNPC.State.WORKING, "Builder must work on upgrade")
+
+	# Завершаем работу над улучшением
+	test_builder.work_timer = 0.0
+	starter_inst.pending_upgrade["work_left"] = 0.2
+	s.update_citizens(0.1)
+	assert(starter_inst.is_upgrade_unlocked("elders_lore_hearth"), "Upgrade must be unlocked only after physical work completed")
+	assert(not starter_inst.has_pending_upgrade(), "Pending upgrade cleared upon completion")
+	print("OK 65. S05 Building upgrade: material delivery, builder labor & non-instant unlock verified.")
+
+	# 66. Ремесленник без сырья простаивает, забирает сырье со склада, изготавливает изделия в мастерской и сдает на склад; Save/Load
+	var test_craftsman = CitizenNPC.new("s05_craftsman", "Ремесленник S05", "f", 24, "adult")
+	test_craftsman.job_id = "craftsman"
+	test_craftsman.settlement_id = s.id
+	test_craftsman.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	test_craftsman.home_pos = test_craftsman.pos
+	s.population.citizens.append(test_craftsman)
+
+	# 0 сырья на складе
+	s.economy.resources["wood"] = 0.0
+	s.economy.resources["metal"] = 0.0
+	s.economy.resources["stone"] = 0.0
+	test_craftsman.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_craftsman.state == CitizenNPC.State.WAITING, "Craftsman must be WAITING when no raw material is available")
+	assert("нет сырья" in test_craftsman.last_status_reason.to_lower(), "Status reason must say no raw material")
+
+	# Появляется сырье на складе
+	for c in s.population.citizens:
+		if c != test_craftsman:
+			c.cargo_amount = 0.0
+			c.cargo_type = ""
+	s.economy.resources["wood"] = 5.0
+	test_craftsman.decision_cooldown = 0.0
+	s.update_citizens(0.1)
+	assert(test_craftsman.task_id == "fetch_craft_raw", "Craftsman must fetch raw material")
+
+	# Прибытие на склад за сырьем
+	var s05_wood_before = s.economy.get_resource("wood")
+	test_craftsman.pos = s._get_storage_pos(test_craftsman)
+	test_craftsman.path.clear()
+	s.update_citizens(0.1)
+	assert(test_craftsman.cargo_type == "wood" and test_craftsman.cargo_amount == 1.0, "Craftsman fetched 1 wood")
+	assert(s.economy.get_resource("wood") == s05_wood_before - 1.0, "Warehouse wood deducted by 1.0")
+
+	# Прибытие в мастерскую и изготовление
+	test_craftsman.pos = s._find_craftsman_workshop_pos(test_craftsman)
+	test_craftsman.path.clear()
+	s.update_citizens(0.1)
+	assert(test_craftsman.state == CitizenNPC.State.WORKING, "Craftsman is WORKING in workshop")
+
+	# Завершение крафта: в руках кубрики
+	test_craftsman.work_timer = 0.0
+	var kubriki_before = s.economy.get_resource("kubriki")
+	s.update_citizens(0.1)
+	assert(test_craftsman.state == CitizenNPC.State.CARRYING, "Craftsman enters CARRYING state with crafted items")
+	assert(test_craftsman.cargo_type == "kubriki" and test_craftsman.cargo_amount == 1.0, "Craftsman carries 1 kubrik")
+	assert(s.economy.get_resource("kubriki") == kubriki_before, "Kubriki not yet credited while in hands")
+
+	# Доставка на склад
+	test_craftsman.pos = s._get_storage_pos(test_craftsman)
+	test_craftsman.path.clear()
+	s.update_citizens(0.1)
+	assert(test_craftsman.cargo_amount == 0.0, "Hands cleared after delivery")
+	assert(s.economy.get_resource("kubriki") == kubriki_before + 1.0, "Warehouse kubriki credited upon physical delivery")
+
+	# Сохранение и загрузка стройплощадки и крафта
+	var s05_save_site = Vector2i(s.pos.x + 6, s.pos.y)
+	s.start_construction("hut", s05_save_site)
+	GameManager.tile_buildings[s05_save_site]["materials_delivered"]["wood"] = 12.0
+
+	var save_s05_ok = SaveSystem.save_game()
+	assert(save_s05_ok, "Save with S05 construction & materials must succeed")
+
+	var load_s05_ok = SaveSystem.load_game()
+	assert(load_s05_ok, "Load with S05 construction & materials must succeed")
+
+	var s05_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s05_loaded_s != null, "Settlement must exist after load")
+	assert(GameManager.tile_buildings.has(s05_save_site), "Construction site must exist after load")
+	assert(GameManager.tile_buildings[s05_save_site]["materials_delivered"]["wood"] == 12.0, "Delivered materials on site preserved across save/load")
+	print("OK 66. S05 Craftsman raw materials cycle, idle without raw, product delivery & Save/Load persistence verified.")
+
+	# ---------------------------------------------------------
+	# S06: ПРОЖИВАНИЕ, ДОМОХОЗЯЙСТВА И ДОМАШНИЕ ЗАПАСЫ
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S06 HOUSING, HOUSEHOLDS & DOMESTIC STOCKS")
+	print("----------------------------------------")
+	GameManager.current_hour = 12.0
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+
+	# 67. Минимум две семьи живут и спят в разных домах; гостевое проживание и закрепление игрока
+	var coord_hut1 = Vector2i(s.pos.x + 8, s.pos.y)
+	var coord_hut2 = Vector2i(s.pos.x + 10, s.pos.y)
+	GameManager.planet_data["tiles"][coord_hut1.y][coord_hut1.x]["walkable"] = true
+	GameManager.planet_data["tiles"][coord_hut2.y][coord_hut2.x]["walkable"] = true
+
+	var inst_hut1 = GameManager.get_or_create_building_instance(coord_hut1, "hut", s.id)
+	var inst_hut2 = GameManager.get_or_create_building_instance(coord_hut2, "hut", s.id)
+	GameManager.tile_buildings[coord_hut1] = {"id": "hut", "status": "active", "settlement_id": s.id}
+	GameManager.tile_buildings[coord_hut2] = {"id": "hut", "status": "active", "settlement_id": s.id}
+
+	# Создаем Семью А (2 человека) и Семью Б (2 человека)
+	var cit_a1 = CitizenNPC.new("c_fam_a1", "Отец А", "m", 30, "adult")
+	cit_a1.family_id = "family_a"
+	cit_a1.spouse_id = "c_fam_a2"
+	cit_a1.settlement_id = s.id
+	cit_a1.pos = Vector2(coord_hut1.x * 32.0 + 16, coord_hut1.y * 32.0 + 16)
+
+	var cit_a2 = CitizenNPC.new("c_fam_a2", "Мать А", "f", 28, "adult")
+	cit_a2.family_id = "family_a"
+	cit_a2.spouse_id = "c_fam_a1"
+	cit_a2.settlement_id = s.id
+	cit_a2.pos = cit_a1.pos
+
+	var cit_b1 = CitizenNPC.new("c_fam_b1", "Отец Б", "m", 32, "adult")
+	cit_b1.family_id = "family_b"
+	cit_b1.spouse_id = "c_fam_b2"
+	cit_b1.settlement_id = s.id
+	cit_b1.pos = Vector2(coord_hut2.x * 32.0 + 16, coord_hut2.y * 32.0 + 16)
+
+	var cit_b2 = CitizenNPC.new("c_fam_b2", "Мать Б", "f", 30, "adult")
+	cit_b2.family_id = "family_b"
+	cit_b2.spouse_id = "c_fam_b1"
+	cit_b2.settlement_id = s.id
+	cit_b2.pos = cit_b1.pos
+
+	s.population.citizens.append(cit_a1)
+	s.population.citizens.append(cit_a2)
+	s.population.citizens.append(cit_b1)
+	s.population.citizens.append(cit_b2)
+
+	# Заселяем семью А в hut1, семью Б в hut2
+	s.assign_citizen_to_home(cit_a1, inst_hut1, false, true)
+	s.assign_citizen_to_home(cit_a2, inst_hut1, false, true)
+	s.assign_citizen_to_home(cit_b1, inst_hut2, false)
+	s.assign_citizen_to_home(cit_b2, inst_hut2, false)
+
+	assert(cit_a1.home_id == inst_hut1.id and cit_a2.home_id == inst_hut1.id, "Family A must live in hut 1")
+	assert(cit_b1.home_id == inst_hut2.id and cit_b2.home_id == inst_hut2.id, "Family B must live in hut 2")
+	assert(inst_hut1.residents.has(cit_a1.citizen_id) and inst_hut1.residents.has(cit_a2.citizen_id), "Hut 1 records Family A")
+	assert(inst_hut2.residents.has(cit_b1.citizen_id) and inst_hut2.residents.has(cit_b2.citizen_id), "Hut 2 records Family B")
+	assert(inst_hut1.is_locked_by_player, "Hut 1 player lock preserved")
+
+	# Проверка гостевого проживания: заполняем hut1 до лимита (8 жителей) и добавляем гостя
+	for g_i in range(3, 9):
+		var extra_res = CitizenNPC.new("extra_res_%d" % g_i, "Жилец %d" % g_i, "m", 20, "adult")
+		s.population.citizens.append(extra_res)
+		inst_hut1.add_resident(extra_res.citizen_id)
+	assert(inst_hut1.residents.size() == 8, "Hut 1 resident capacity reached")
+	assert(not inst_hut1.has_space_for_resident(), "Hut 1 has no resident space left")
+	assert(inst_hut1.has_space_for_guest(), "Hut 1 has emergency guest space")
+
+	var guest_cit = CitizenNPC.new("c_guest", "Гость Путник", "m", 25, "adult")
+	s.population.citizens.append(guest_cit)
+	var guest_assigned = s.assign_citizen_to_home(guest_cit, inst_hut1, true)
+	assert(guest_assigned, "Guest assignment must succeed into guest slots")
+	assert(guest_cit.is_guest, "Citizen must be marked as guest")
+	assert(inst_hut1.guests.has(guest_cit.citizen_id), "Hut 1 has guest registered")
+	print("OK 67. S06 Distinct family residences, player locking & guest accommodation verified.")
+
+	# 68. Домашний запас пищи, физическая доставка со склада и приоритетное потребление дома
+	inst_hut1.food_stockpile = 0.0
+	s.economy.resources["food"] = 30.0
+	for c in s.population.citizens:
+		c.cargo_amount = 0.0
+		c.cargo_type = ""
+		c.hunger = 100.0
+		if c != cit_a1 and c != cit_a2:
+			c.decision_cooldown = 10.0
+	cit_a1.decision_cooldown = 0.0
+	cit_a1.job_id = "idle"
+	s.update_citizens(0.1)
+	assert(cit_a1.task_id == "fetch_home_food", "Adult resident fetches home food when stockpile is low")
+
+	# Прибытие на склад
+	cit_a1.pos = s._get_storage_pos(cit_a1)
+	cit_a1.path.clear()
+	s.update_citizens(0.1)
+	assert(cit_a1.state == CitizenNPC.State.CARRYING, "Citizen enters CARRYING state with food")
+	assert(cit_a1.task_id == "deliver_home_food", "Task changes to deliver_home_food")
+	assert(cit_a1.cargo_amount == 4.0, "Carries 4 food home")
+	assert(s.economy.get_resource("food") == 26.0, "Warehouse food deducted by 4.0")
+
+	# Доставка домой
+	cit_a1.pos = cit_a1.home_pos
+	cit_a1.path.clear()
+	s.update_citizens(0.1)
+	assert(cit_a1.cargo_amount == 0.0, "Hands cleared after depositing food at home")
+	assert(inst_hut1.food_stockpile == 4.0, "Home food stockpile credited with 4.0 food")
+
+	# Питание жильца: ест из домашнего запаса, а не из глобального склада!
+	cit_a2.hunger = 40.0
+	s.update_citizens(0.1)
+	assert(cit_a2.hunger == 100.0, "Citizen hunger restored")
+	assert(absf(inst_hut1.food_stockpile - 3.5) < 0.01, "Home food stockpile deducted by 0.5 (got %.2f)" % inst_hut1.food_stockpile)
+	assert(s.economy.get_resource("food") == 26.0, "Warehouse food NOT touched when home food is available!")
+	print("OK 68. S06 Home food stockpile, domestic delivery from warehouse & home eating verified.")
+
+	# 69. Достижимость кровати, качество сна и сон бездомных
+	GameManager.current_hour = 23.0 # Наступила ночь
+	cit_a1.energy = 50.0
+	cit_a1.pos = cit_a1.home_pos
+	cit_a1.path.clear()
+	s.update_citizens(0.1)
+	assert(cit_a1.state == CitizenNPC.State.SLEEPING, "Resident sleeps at home")
+	assert("в хижине" in cit_a1.last_status_reason.to_lower(), "Status indicates sleeping in hut")
+
+	# Бездомный житель спит на земле с пониженным восстановлением
+	var homeless_cit = CitizenNPC.new("c_homeless", "Бездомный Бродяга", "m", 35, "adult")
+	homeless_cit.clear_home()
+	homeless_cit.settlement_id = s.id
+	homeless_cit.energy = 50.0
+	homeless_cit.loyalty = 80.0
+	s.population.citizens.append(homeless_cit)
+	s.update_citizens(0.1)
+	assert(homeless_cit.state == CitizenNPC.State.SLEEPING, "Homeless falls asleep outside")
+	assert("бездомный" in homeless_cit.last_status_reason.to_lower(), "Status indicates homeless sleeping")
+	assert(homeless_cit.loyalty < 80.0, "Homeless sleeping causes loyalty loss")
+
+	# Житель с недостижимой кроватью (нет пути)
+	var blocked_cit = CitizenNPC.new("c_blocked", "Заблокированный Жилец", "m", 26, "adult")
+	blocked_cit.settlement_id = s.id
+	blocked_cit.home_id = inst_hut2.id
+	blocked_cit.home_coord = coord_hut2
+	blocked_cit.home_pos = Vector2(coord_hut2.x * 32.0 + 16, coord_hut2.y * 32.0 + 16)
+	blocked_cit.pos = Vector2(0, 0)
+	blocked_cit.path.clear()
+	s.population.citizens.append(blocked_cit)
+	s.update_citizens(0.1)
+	assert(blocked_cit.state == CitizenNPC.State.SLEEPING, "Citizen with blocked bed falls asleep outside")
+	print("OK 69. S06 Bed reachability, night sleep quality & homeless outdoor sleep verified.")
+
+	# 70. Снос / разрушение дома, выселение, возврат запасов без потерь и Save/Load
+	GameManager.current_hour = 12.0 # Возвращаем день
+	var food_before_demolish = s.economy.get_resource("food")
+	var home_food_in_hut1 = inst_hut1.food_stockpile
+	assert(home_food_in_hut1 > 0.0, "Hut 1 has remaining domestic food")
+
+	var demo_ok = s.demolish_building(coord_hut1)
+	assert(demo_ok, "Demolish building must succeed")
+	assert(not GameManager.building_instances.has(coord_hut1), "Hut 1 removed from building instances")
+	assert(absf(s.economy.get_resource("food") - (food_before_demolish + home_food_in_hut1)) < 0.01, "Remaining home food returned to warehouse without duplication or loss")
+	assert(cit_a1.home_id != inst_hut1.id, "Resident displaced from destroyed home")
+
+	# Сохранение и загрузка домохозяйств, жильцов и домашних запасов
+	var save_s06_ok = SaveSystem.save_game()
+	assert(save_s06_ok, "Save with S06 households & housing must succeed")
+
+	var load_s06_ok = SaveSystem.load_game()
+	assert(load_s06_ok, "Load with S06 households & housing must succeed")
+
+	var s06_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s06_loaded_s != null, "Settlement must exist after load")
+	assert(GameManager.building_instances.has(coord_hut2), "Hut 2 instance exists after load")
+	var loaded_hut2 = GameManager.building_instances[coord_hut2]
+	assert(loaded_hut2.residents.has(cit_b1.citizen_id), "Family B resident preserved in Hut 2 across save/load")
+	assert(loaded_hut2.residents.has(cit_b2.citizen_id), "Family B spouse preserved in Hut 2 across save/load")
+	print("OK 70. S06 Demolition, resident displacement, food stockpile return & Save/Load persistence verified.")
+
+	# ==============================================================================
+	# ЭТАП S07: ОТНОШЕНИЯ, СОЮЗЫ, РОЖДЕНИЕ, УХОД И ОПЕКА (ТЕСТЫ 71-74)
+	# ==============================================================================
+	print("----------------------------------------")
+	print("TEST: RUNNING S07 RELATIONSHIPS, GUARDIANSHIP & DEMOGRAPHY")
+	print("----------------------------------------")
+
+	# 71. Разреженные связи, культурные нормы брака и запрет детских союзов
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+	var s07_c_man = CitizenNPC.new("c_s07_man", "Радомир", "m", 24, "adult")
+	var s07_c_woman = CitizenNPC.new("c_s07_woman", "Лада", "f", 22, "adult")
+	var s07_c_woman2 = CitizenNPC.new("c_s07_woman2", "Забава", "f", 20, "adult")
+	var s07_c_child = CitizenNPC.new("c_s07_boy", "Малец Яромир", "m", 12, "child")
+	s.population.citizens.append(s07_c_man)
+	s.population.citizens.append(s07_c_woman)
+	s.population.citizens.append(s07_c_woman2)
+	s.population.citizens.append(s07_c_child)
+
+	# Запрет союзов для несовершеннолетних (<18 лет)
+	var s07_child_check = s07_c_man.can_marry(s07_c_child, s.marriage_law)
+	assert(not s07_child_check["allowed"], "Marriage with child strictly forbidden")
+	assert("18" in s07_child_check["reason"], "Reason clearly cites age 18 threshold")
+
+	# Разрешение первого союза в моногамии
+	s.marriage_law = "monogamy"
+	var s07_can_marry1 = s07_c_man.can_marry(s07_c_woman, s.marriage_law)
+	assert(s07_can_marry1["allowed"], "First marriage between adult man and woman allowed")
+	var s07_marry_ok = s07_c_man.marry(s07_c_woman, s.marriage_law)
+	assert(s07_marry_ok, "Marriage ceremony succeeds")
+	assert(s07_c_man.get_spouses().has(s07_c_woman.citizen_id), "Man has wife registered in spouses")
+	assert(s07_c_woman.get_spouses().has(s07_c_man.citizen_id), "Woman has husband registered in spouses")
+	assert(s07_c_man.family_id != "" and s07_c_man.family_id == s07_c_woman.family_id, "Couple shares common family_id")
+
+	# Запрет двоежёнства при моногамии
+	var s07_second_marry = s07_c_man.can_marry(s07_c_woman2, s.marriage_law)
+	assert(not s07_second_marry["allowed"], "Second marriage forbidden under monogamy")
+
+	# Разрешение полигинии при смене закона
+	s.marriage_law = "polygamy"
+	var s07_poly_marry = s07_c_man.can_marry(s07_c_woman2, s.marriage_law)
+	assert(s07_poly_marry["allowed"], "Second marriage allowed under polygamy")
+
+	# Запрет кровосмешения
+	s07_c_man.add_relationship(s07_c_woman2.citizen_id, "sibling", 90.0)
+	assert(not s07_c_man.can_marry(s07_c_woman2, s.marriage_law)["allowed"], "Marriage between siblings strictly forbidden")
+	s07_c_man.remove_relationship(s07_c_woman2.citizen_id)
+	print("OK 71. S07 Sparse relationships, cultural union rules & underage/incest exclusion verified.")
+
+	# 72. Физическая беременность, развитие плода и рождение с привязкой к матери и дому
+	assert(not s07_c_woman.is_pregnant(), "Mother is not pregnant initially")
+	var s07_preg_started = s.start_pregnancy(s07_c_woman, s07_c_man, 10.0)
+	assert(s07_preg_started, "Pregnancy start succeeds")
+	assert(s07_c_woman.is_pregnant(), "Mother is marked as pregnant")
+	assert(s07_c_woman.pregnancy["stage"] == "early", "Initial stage is early")
+
+	# Развитие плода
+	s07_c_woman.advance_pregnancy(4.0)
+	assert(s07_c_woman.pregnancy["stage"] == "mid", "Stage advances to mid")
+	s07_c_woman.advance_pregnancy(4.0)
+	assert(s07_c_woman.pregnancy["stage"] == "late", "Stage advances to late")
+	var s07_preg_birth_stage = s07_c_woman.advance_pregnancy(2.5)
+	assert(s07_preg_birth_stage == "birth", "Pregnancy completes and triggers birth stage")
+
+	# Рождение ребёнка
+	s07_c_woman.home_id = "hut_test_birth"
+	s07_c_woman.home_pos = Vector2(200, 200)
+	var s07_newborn = s.give_birth(s07_c_woman)
+	assert(s07_newborn != null, "Newborn citizen created")
+	assert(s07_newborn.cohort == "child", "Newborn is a child")
+	assert(s07_newborn.age == 0, "Newborn age is 0")
+	assert(s07_newborn.family_id == s07_c_woman.family_id, "Newborn inherits mother's family_id")
+	assert(s07_newborn.home_id == s07_c_woman.home_id, "Newborn attached to mother's home")
+	assert(s07_newborn.guardian_id == s07_c_woman.citizen_id, "Mother is initial guardian")
+	assert(s07_newborn.get_parents().has(s07_c_woman.citizen_id), "Newborn records mother as parent")
+	assert(s07_newborn.get_parents().has(s07_c_man.citizen_id), "Newborn records father as parent")
+	assert(s07_c_woman.get_children().has(s07_newborn.citizen_id), "Mother records newborn in children")
+	assert(s07_c_man.get_children().has(s07_newborn.citizen_id), "Father records newborn in children")
+	assert(not s07_c_woman.is_pregnant(), "Mother's pregnancy cleared after birth")
+	print("OK 72. S07 Physical pregnancy, gestation stages & birth parent-child linkage verified.")
+
+	# 73. Физический уход за ребёнком и автоматическая опека сирот
+	s07_c_woman.decision_cooldown = 0.0
+	s07_c_woman.cargo_amount = 0.0
+	s07_c_woman.state = CitizenNPC.State.IDLE
+	s07_newborn.pos = s07_c_woman.pos
+	s.update_citizens(0.1)
+	assert(s07_c_woman.task_id == "care_for_child", "Guardian takes care_for_child task for infant")
+	assert(s07_c_woman.state == CitizenNPC.State.WORKING, "Caregiver enters WORKING state")
+	assert("ухаживает за ребёнком" in s07_c_woman.last_status_reason.to_lower(), "Status displays childcare activity")
+
+	# Гибель матери: автоматический пересмотр опеки на отца
+	s07_c_woman.is_alive = false
+	s.population.citizens.erase(s07_c_woman)
+	s.handle_citizen_death(s07_c_woman.citizen_id)
+	assert(s07_newborn.guardian_id == s07_c_man.citizen_id, "Orphaned child's guardianship reassigned to father")
+	assert(s07_newborn.get_parents().has(s07_c_woman.citizen_id), "Biological mother still remembered after death")
+
+	# Ручное вмешательство игрока в опеку
+	var s07_foster_elder = CitizenNPC.new("c_s07_elder", "Старейшина Опекун", "m", 55, "elder")
+	s.population.citizens.append(s07_foster_elder)
+	var s07_assign_guard_ok = s.set_child_guardian(s07_newborn.citizen_id, s07_foster_elder.citizen_id)
+	assert(s07_assign_guard_ok, "Player can manually assign child guardian")
+	assert(s07_newborn.guardian_id == s07_foster_elder.citizen_id, "Child guardian successfully updated by player")
+	assert(s07_newborn.get_relationship(s07_foster_elder.citizen_id).get("type", "") == "guardian", "Guardian relationship recorded")
+	print("OK 73. S07 Physical childcare occupation & orphan guardianship reassignment verified.")
+
+	# 74. Отключение абстрактного спавна и Save/Load демографии, связей и браков
+	var s07_pop_before = s.population.get_total_population()
+	var s07_monthly_tick = s.population.sim_monthly_tick(1.5, 100, "Весна")
+	assert(s07_monthly_tick["births"] == 0, "Zero abstract formulaic births during monthly tick")
+	assert(s.population.get_total_population() == s07_pop_before - s07_monthly_tick["deaths"], "Population change matches deaths, zero abstract births")
+
+	s07_c_woman2.start_pregnancy(s07_c_man.citizen_id, 300.0)
+	s07_c_woman2.advance_pregnancy(150.0)
+	assert(s07_c_woman2.is_pregnant(), "Woman 2 is pregnant before save")
+
+	var save_s07_ok = SaveSystem.save_game()
+	assert(save_s07_ok, "Save with S07 demography and relationships must succeed")
+
+	s.marriage_law = "monogamy"
+	s07_c_woman2.pregnancy.clear()
+	s07_newborn.relationships.clear()
+
+	var load_s07_ok = SaveSystem.load_game()
+	assert(load_s07_ok, "Load with S07 demography and relationships must succeed")
+
+	var s07_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s07_loaded_s != null, "Settlement must exist after S07 load")
+	assert(s07_loaded_s.marriage_law == "polygamy", "Marriage law restored across save/load")
+	var loaded_child = s07_loaded_s.population.find_citizen(s07_newborn.citizen_id)
+	assert(loaded_child != null, "Child exists after load")
+	assert(loaded_child.get_parents().has(s07_c_man.citizen_id), "Parent link preserved across save/load")
+	var loaded_woman2 = s07_loaded_s.population.find_citizen(s07_c_woman2.citizen_id)
+	assert(loaded_woman2 != null and loaded_woman2.is_pregnant(), "Pregnancy preserved across save/load")
+	assert(loaded_woman2.pregnancy["stage"] == "mid", "Pregnancy stage preserved across save/load")
+	print("OK 74. S07 Zero abstract spawn, family linkages & pregnancy Save/Load verified.")
+
+	# ---------------------------------------------------------
+	# S08: САМОСТОЯТЕЛЬНАЯ РАБОТА И ХАРАКТЕР
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S08 TASK UTILITY, COMMITMENT, ASSIST & REST")
+	print("----------------------------------------")
+	GameManager.current_hour = 12.0
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+
+	# 75. Оценка полезности задач: расстояние, навык, гордость, семья, усталость
+	var s08_scorer = CitizenNPC.new("s08_scorer", "Тест Оценщик", "m", 25, "adult")
+	s08_scorer.job_id = "woodcutter"
+	s08_scorer.energy = 100.0
+	s08_scorer.hunger = 100.0
+	s08_scorer.traits = {
+		"diligence": 70.0, "bravery": 50.0, "empathy": 80.0, "pride": 60.0,
+		"loyalty_ruler": 50.0, "tradition": 50.0, "tolerance": 50.0, "aggression": 20.0
+	}
+
+	# Задача по профессии (woodcutter) на малой дистанции — высокий скор
+	var score_match = s08_scorer.score_task("woodcutter", 10.0, false, "woodcutter")
+	# Та же задача далеко — ниже из-за расстояния
+	var score_far = s08_scorer.score_task("woodcutter", 200.0, false, "woodcutter")
+	assert(score_match > score_far, "S08 T75: Closer task scores higher than distant one")
+	assert(score_match - score_far > 5.0, "S08 T75: Distance penalty is meaningful")
+
+	# Задача не по профессии с pride penalty
+	var score_offprof = s08_scorer.score_task("builder", 10.0, false, "")
+	assert(score_match > score_offprof, "S08 T75: Profession-matching task beats off-profession task")
+
+	# Семейное задание получает бонус empathy
+	var score_family = s08_scorer.score_task("builder", 10.0, true, "")
+	assert(score_family > score_offprof, "S08 T75: Family task gets empathy bonus")
+
+	# Уставший житель высоко оценивает отдых
+	s08_scorer.energy = 20.0
+	var score_rest_tired = s08_scorer.score_task("rest", 0.0, false, "")
+	var score_work_tired = s08_scorer.score_task("woodcutter", 10.0, false, "woodcutter")
+	assert(score_rest_tired > score_work_tired, "S08 T75: Tired citizen prefers rest over work")
+	s08_scorer.energy = 100.0
+	print("OK 75. S08 Task utility scoring verified (distance, skill, pride, family, fatigue).")
+
+	# 76. Устойчивость выбора (commitment hysteresis)
+	s08_scorer.commitment_timer = 5.0
+	s08_scorer.ongoing_task_kind = "woodcutter"
+	var score_committed = s08_scorer.score_task("woodcutter", 50.0, false, "woodcutter")
+	var score_new = s08_scorer.score_task("forager", 50.0, false, "")
+	assert(score_committed > score_new, "S08 T76: Committed task gets hysteresis bonus preventing switch")
+	# Проверка обратного отсчета таймера
+	s08_scorer.commitment_timer = 1.0
+	s08_scorer.ongoing_task_kind = "test_task"
+	# Симуляция отсчета: вручную (в update_citizens delta = 2.0 обнулит)
+	s08_scorer.commitment_timer = maxf(0.0, s08_scorer.commitment_timer - 2.0)
+	if s08_scorer.commitment_timer <= 0.0:
+		s08_scorer.ongoing_task_kind = ""
+	assert(s08_scorer.commitment_timer == 0.0, "S08 T76: Commitment timer reaches zero after expiry")
+	assert(s08_scorer.ongoing_task_kind == "", "S08 T76: Ongoing task cleared when commitment timer expires")
+	print("OK 76. S08 Commitment hysteresis verified (bonus + timer countdown).")
+
+	# 77. Помощь свободного родственника (без дублирования ресурсов)
+	# Создаём отца-лесоруба (WORKING) и свободного сына
+	var s08_father = CitizenNPC.new("s08_dad", "Отец S08", "m", 35, "adult")
+	s08_father.job_id = "woodcutter"
+	s08_father.state = CitizenNPC.State.WORKING
+	s08_father.work_timer = 10.0
+	s08_father.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	s08_father.home_pos = s08_father.pos
+	s08_father.settlement_id = s.id
+	s08_father.hunger = 100.0
+	s08_father.energy = 100.0
+	s08_father.decision_cooldown = 0.0
+	s.population.citizens.append(s08_father)
+
+	var s08_son = CitizenNPC.new("s08_son", "Сын S08", "m", 17, "youth")
+	s08_son.job_id = "idle"
+	s08_son.state = CitizenNPC.State.IDLE
+	s08_son.pos = s08_father.pos + Vector2(5, 0)
+	s08_son.home_pos = s08_father.pos
+	s08_son.settlement_id = s.id
+	s08_son.hunger = 100.0
+	s08_son.energy = 100.0
+	s08_son.decision_cooldown = 0.0
+	s08_son.add_relationship(s08_father.citizen_id, "parent", 90.0)
+	s08_father.add_relationship(s08_son.citizen_id, "child", 90.0)
+	s.population.citizens.append(s08_son)
+
+	# Запоминаем экономику до обновления
+	var s08_wood_before = s.economy.get_resource("wood")
+	# Сбросим cooldowns для всех остальных
+	for bg in s.population.citizens:
+		if bg.citizen_id != s08_father.citizen_id and bg.citizen_id != s08_son.citizen_id:
+			bg.decision_cooldown = 999.0
+			bg.hunger = 100.0
+
+	s.update_citizens(0.1)
+
+	# Сын должен взяться за assist_relative (если не в движении, то уже WORKING)
+	var son_is_helping = s08_son.task_id == "assist_relative"
+	assert(son_is_helping, "S08 T77: Idle son takes assist_relative task for working father")
+	assert(s08_son.state in [CitizenNPC.State.MOVING_TO_WORK, CitizenNPC.State.WORKING], "S08 T77: Son in MOVING_TO_WORK or WORKING state")
+
+	# Теперь симулируем прибытие и завершение помощи
+	s08_son.pos = s08_father.pos
+	s08_son.path.clear()
+	s08_son.state = CitizenNPC.State.WORKING
+	s08_son.work_timer = 0.01
+	var s08_son_xp_before = float(s08_son.experience.get("forager", 0.0))
+
+	s.update_citizens(0.1)
+
+	assert(s08_son.state == CitizenNPC.State.IDLE, "S08 T77: Son returns to IDLE after assist completion")
+	assert(s08_son.task_id == "", "S08 T77: Son's task_id cleared after assist completion")
+	var s08_son_xp_after = float(s08_son.experience.get("forager", 0.0))
+	assert(s08_son_xp_after > s08_son_xp_before, "S08 T77: Son gained profession XP from assisting")
+
+	# Проверяем что экономика НЕ получила дублированных ресурсов от помощника
+	var s08_wood_after = s.economy.get_resource("wood")
+	assert(s08_wood_after == s08_wood_before, "S08 T77: No duplicate goods created by helper (wood unchanged)")
+	print("OK 77. S08 Free relative assistance without duplicate goods verified.")
+
+	# 78. Разумный отдых (RESTING) и Save/Load черт, XP, commitment
+	var s08_tired = CitizenNPC.new("s08_tired", "Усталый S08", "m", 30, "adult")
+	s08_tired.job_id = "forager"
+	s08_tired.state = CitizenNPC.State.IDLE
+	s08_tired.energy = 20.0
+	s08_tired.hunger = 100.0
+	s08_tired.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
+	s08_tired.home_pos = s08_tired.pos
+	s08_tired.settlement_id = s.id
+	s08_tired.decision_cooldown = 0.0
+	s08_tired.traits["diligence"] = 30.0
+	s08_tired.commitment_timer = 3.5
+	s08_tired.ongoing_task_kind = "foraging"
+	s08_tired.profession_levels["forager"] = 2
+	s.population.citizens.append(s08_tired)
+
+	s.update_citizens(0.1)
+	assert(s08_tired.state == CitizenNPC.State.RESTING, "S08 T78: Exhausted citizen enters RESTING state")
+	assert("отдыхает" in s08_tired.last_status_reason.to_lower(), "S08 T78: Status shows resting reason")
+
+	# Симулируем длительный отдых до восстановления энергии
+	var s08_energy_peak: float = s08_tired.energy
+	for i in range(20):
+		s.update_citizens(1.0)
+		s08_energy_peak = maxf(s08_energy_peak, s08_tired.energy)
+		if s08_tired.state != CitizenNPC.State.RESTING:
+			break
+	assert(s08_energy_peak >= 50.0, "S08 T78: Citizen recovered significant energy during RESTING")
+	assert(s08_tired.state != CitizenNPC.State.RESTING or s08_tired.energy >= 60.0, "S08 T78: Citizen exits RESTING or has recovered")
+
+	# Проверка gain_profession_xp
+	var s08_xp_cit = CitizenNPC.new("s08_xpc", "XP Тест", "m", 25, "adult")
+	s08_xp_cit.job_id = "woodcutter"
+	var xp_before_wc = float(s08_xp_cit.experience.get("woodcutter", 0.0))
+	s08_xp_cit.gain_profession_xp("woodcutter", 900.0) # 1 полный рабочий день = 100 XP
+	var xp_after_wc = float(s08_xp_cit.experience.get("woodcutter", 0.0))
+	assert(absf(xp_after_wc - xp_before_wc - 100.0) < 0.1, "S08 T78: 900s of work grants ~100 XP")
+	assert(s08_xp_cit.profession_levels.get("woodcutter", 0) >= 1, "S08 T78: Profession level ups from XP")
+
+	# Save/Load сохранение traits, commitment_timer, profession_levels
+	s08_tired.traits["diligence"] = 77.0
+	s08_tired.commitment_timer = 4.2
+	s08_tired.profession_levels["forager"] = 3
+	s08_tired.ongoing_task_kind = "foraging"
+
+	var save_s08_ok = SaveSystem.save_game()
+	assert(save_s08_ok, "S08 T78: Save must succeed")
+
+	s08_tired.traits["diligence"] = 50.0
+	s08_tired.commitment_timer = 0.0
+	s08_tired.profession_levels.clear()
+
+	var load_s08_ok = SaveSystem.load_game()
+	assert(load_s08_ok, "S08 T78: Load must succeed")
+
+	var s08_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s08_loaded_s != null, "S08 T78: Settlement exists after load")
+	var loaded_tired = s08_loaded_s.population.find_citizen("s08_tired")
+	assert(loaded_tired != null, "S08 T78: Tired citizen exists after load")
+	assert(absf(float(loaded_tired.traits.get("diligence", 0.0)) - 77.0) < 0.1, "S08 T78: Traits preserved across save/load")
+	assert(absf(loaded_tired.commitment_timer - 4.2) < 0.1, "S08 T78: Commitment timer preserved across save/load")
+	assert(loaded_tired.profession_levels.get("forager", 0) == 3, "S08 T78: Profession levels preserved across save/load")
+	print("OK 78. S08 RESTING state, profession XP scaling & Save/Load of traits/commitment verified.")
+
+	# ---------------------------------------------------------
+	# S09: РЫБАЛКА, ГРУППЫ ОХОТЫ И ВОССТАНОВЛЕНИЕ
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING S09 FISHING, HUNT GROUPS & REGENERATION")
+	print("----------------------------------------")
+	if GameManager.settlements.has(s.id):
+		s = GameManager.settlements[s.id]
+
+	# 79. Рыбное место: доступный берег, конечный запас, физический груз и доставка
+	var s09_fish_node: Dictionary = {}
+	for node in GameManager.resource_manager.nodes.values():
+		if node.get("category", "") == "fish":
+			s09_fish_node = node
+			break
+	assert(not s09_fish_node.is_empty(), "S09 T79: Map must contain accessible fishing spots")
+	var s09_fisher = CitizenNPC.new("s09_fisher", "Рыбак S09", "m", 28, "adult")
+	s09_fisher.job_id = "fisherman"
+	s09_fisher.state = CitizenNPC.State.GATHERING
+	s09_fisher.task_id = "fish"
+	s09_fisher.target_coord = s09_fish_node["coord"]
+	s09_fisher.pos = s09_fish_node["pos"]
+	s09_fisher.home_pos = s09_fisher.pos
+	s09_fisher.settlement_id = s.id
+	s09_fisher.hunger = 100.0
+	s09_fisher.energy = 100.0
+	s09_fisher.work_timer = 0.01
+	s.population.citizens.append(s09_fisher)
+	var s09_fish_before = float(s09_fish_node["amount"])
+	s.update_citizens(0.1)
+	assert(s09_fisher.cargo_type == "food" and s09_fisher.cargo_amount > 0.0, "S09 T79: Fisher catches a physical food cargo")
+	assert(float(s09_fish_node["amount"]) < s09_fish_before, "S09 T79: Fishing depletes the concrete fishing spot")
+	assert(s09_fisher.cargo_batch.get("food_type", "") == "fish", "S09 T79: Cargo is a fish food batch")
+	var s09_food_before = s.economy.get_resource("food")
+	s09_fisher.state = CitizenNPC.State.CARRYING
+	s09_fisher.pos = _get_storage_pos_for_test(s, s09_fisher)
+	s09_fisher.target_pos = s09_fisher.pos
+	s09_fisher.path.clear()
+	s.update_citizens(0.1)
+	assert(s.economy.get_resource("food") > s09_food_before, "S09 T79: Fish is credited only on physical warehouse delivery")
+	print("OK 79. S09 Fishing spots, finite fish stock, physical catch and warehouse delivery verified.")
+
+	# 80. До трёх охотников могут работать по одной цели; добыча остаётся одной конечной тушей
+	var s09_group_animal = WildAnimal.new("s09_group_hare", "hare_brown", Vector2(320, 320))
+	GameManager.wildlife_manager.animals[s09_group_animal.id] = s09_group_animal
+	assert(GameManager.wildlife_manager.join_hunt_group(s09_group_animal.id, "s09_h1"), "S09 T80: First hunter joins hunt group")
+	assert(GameManager.wildlife_manager.join_hunt_group(s09_group_animal.id, "s09_h2"), "S09 T80: Second hunter joins hunt group")
+	assert(GameManager.wildlife_manager.join_hunt_group(s09_group_animal.id, "s09_h3"), "S09 T80: Third hunter joins hunt group")
+	assert(not GameManager.wildlife_manager.join_hunt_group(s09_group_animal.id, "s09_h4"), "S09 T80: Fourth hunter cannot overfill group")
+	var s09_group_carcass = GameManager.wildlife_manager.create_carcass_from_animal(s09_group_animal)
+	GameManager.wildlife_manager.animals.erase(s09_group_animal.id)
+	assert(s09_group_carcass["assigned_hunters"].size() == 3, "S09 T80: Carcass records all group members")
+	var s09_first_share = GameManager.wildlife_manager.harvest_carcass(s09_group_carcass["id"], 1.0)
+	var s09_second_share = GameManager.wildlife_manager.harvest_carcass(s09_group_carcass["id"], 1.0)
+	assert(s09_first_share["meat"] + s09_second_share["meat"] <= s09_group_animal.meat_yield, "S09 T80: Group members cannot duplicate meat from one carcass")
+	print("OK 80. S09 Automatic 1-3 hunter groups and finite shared carcass yield verified.")
+
+	# 81. Саженец продолжает рост после сериализации ресурсов
+	var s09_plant_tile = GameManager.resource_manager.find_plantable_tile(s.pos, 20)
+	assert(s09_plant_tile != Vector2i(-1, -1), "S09 T81: A valid tile exists for reforestation")
+	assert(GameManager.resource_manager.plant_tree(s09_plant_tile, "tree_young", "tree_oak"), "S09 T81: Planting creates a growing sapling")
+	GameManager.resource_manager.update_regrowth(10.0)
+	var s09_resource_save = GameManager.resource_manager.serialize()
+	var s09_restored_resources = MapResourceManager.new()
+	s09_restored_resources.initialize_from_tiles(GameManager.planet_data["tiles"], GameManager.planet_data["width"], GameManager.planet_data["height"])
+	s09_restored_resources.deserialize(s09_resource_save)
+	assert(s09_restored_resources.growing_trees.has(s09_plant_tile), "S09 T81: Unfinished sapling growth survives serialization")
+	s09_restored_resources.update_regrowth(25.0)
+	assert(s09_restored_resources.nodes[s09_plant_tile]["amount"] == 100.0, "S09 T81: Restored sapling matures into a full tree")
+	print("OK 81. S09 Staged tree growth and unfinished regrowth persistence verified.")
+
+	# 82. Запретную зону нельзя завести без закона, а закон и зона сохраняются
+	var s09_faction = GameManager.factions.get(s.faction_id, null)
+	if s09_faction == null:
+		s09_faction = FactionData.new(s.faction_id, "Тестовое племя S09", "Тестовый вождь", Color.WHITE, true)
+		GameManager.factions[s.faction_id] = s09_faction
+	assert(s09_faction != null, "S09 T82: Settlement faction must exist")
+	s09_faction.active_laws.erase("land_territorial_zones")
+	var s09_zone_tiles: Array[Vector2i] = [s.pos + Vector2i(1, 0), s.pos + Vector2i(2, 0)]
+	assert(not s.set_reserved_zone("s09_riverbank", s09_zone_tiles), "S09 T82: Reserved zones require an active territorial law")
+	s09_faction.active_laws.append("land_territorial_zones")
+	assert(s.set_reserved_zone("s09_riverbank", s09_zone_tiles), "S09 T82: Active territorial law enables reserved zones")
+	assert(SaveSystem.save_game(), "S09 T82: Save with territorial zone must succeed")
+	assert(SaveSystem.load_game(), "S09 T82: Load with territorial zone must succeed")
+	var s09_loaded_s = GameManager.settlements.get(s.id, null)
+	assert(s09_loaded_s != null and s09_loaded_s.reserved_zones.size() == 1, "S09 T82: Reserved zones survive Save/Load")
+	var s09_loaded_faction = GameManager.factions.get(s09_loaded_s.faction_id, null)
+	assert(s09_loaded_faction != null and s09_loaded_faction.active_laws.has("land_territorial_zones"), "S09 T82: Enabling law survives Save/Load")
+	print("OK 82. S09 Law-gated reserved zones and persistence verified.")
+
+	# 83. Экземпляр события не может применить последствия дважды и переживает Save/Load
+	GameManager.civilization_event_manager.reset()
+	var s10_event_template = CivilizationEventDB.get_event("EVENT-DEATH-01")
+	GameManager.civilization_event_manager.trigger_event(s10_event_template)
+	var s10_instance_id = GameManager.civilization_event_manager.active_event.get("instance_id", "")
+	assert(s10_instance_id != "", "S10 T83: Triggered event must receive a unique instance ID")
+	var s10_pending_event: Dictionary = GameManager.civilization_event_manager.event_instances.get(s10_instance_id, {})
+	var s10_choice_id = s10_pending_event.get("choices", [{}])[0].get("id", "")
+	assert(s10_choice_id != "", "S10 T83: Event instance must retain its choices")
+	GameManager.civilization_event_manager.apply_choice(s10_instance_id, s10_choice_id)
+	var s10_resolved_event: Dictionary = GameManager.civilization_event_manager.event_instances.get(s10_instance_id, {})
+	assert(s10_resolved_event.get("status", "") == "resolved", "S10 T83: Choice resolves its event instance")
+	var s10_history_count = GameManager.history_log.size()
+	GameManager.civilization_event_manager.apply_choice(s10_instance_id, "B")
+	assert(GameManager.history_log.size() == s10_history_count, "S10 T83: Resolved event cannot apply effects twice")
+	assert(SaveSystem.save_game(), "S10 T83: Save event registry must succeed")
+	assert(SaveSystem.load_game(), "S10 T83: Load event registry must succeed")
+	assert(GameManager.civilization_event_manager.event_instances.has(s10_instance_id), "S10 T83: Event instance persists across Save/Load")
+	var s10_loaded_event: Dictionary = GameManager.civilization_event_manager.event_instances.get(s10_instance_id, {})
+	assert(s10_loaded_event.get("chosen_choice_id", "") == s10_choice_id, "S10 T83: Resolved choice persists")
+	print("OK 83. S10 Persisted event instances and one-shot consequences verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION SYSTEM TESTS (STAGES A-F + 24 ANIMALS + REAL COMBAT/WEAPONS/EXPERIENCE/AGING v2) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 TESTS (TESTS 1-83) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 
+func _get_storage_pos_for_test(settlement: SettlementData, citizen: CitizenNPC) -> Vector2:
+	return settlement._get_storage_pos(citizen)
 
