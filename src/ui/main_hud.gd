@@ -590,7 +590,11 @@ func _update_ui() -> void:
 		var unassigned = pop.get_unemployed_count()
 		var available = pop.get_available_for_tasks_count()
 		
-		pop_label.text = "👥 %d/%d (Своб: %d, Готовы: %d)" % [total_pop, housing_cap, unassigned, available]
+		var is_night = (GameManager.current_hour >= 22.0 or GameManager.current_hour < 6.0)
+		if is_night:
+			pop_label.text = "👥 %d/%d (🌙 Спят, подъём в 06:00)" % [total_pop, housing_cap]
+		else:
+			pop_label.text = "👥 %d/%d (Своб: %d, Готовы: %d)" % [total_pop, housing_cap, unassigned, available]
 		if total_pop > housing_cap:
 			pop_label.tooltip_text = "⚠️ ПЕРЕНАСЕЛЕНИЕ! Не хватает жилья на %d чел.\nЖители: %d | Без профессии: %d | Доступны для задач: %d\n(Правитель исключен из населения)" % [total_pop - housing_cap, total_pop, unassigned, available]
 			pop_label.modulate = Color(1.0, 0.4, 0.4)
@@ -715,7 +719,7 @@ func _setup_cursor_context_menu() -> void:
 	ctx_desc_lbl = Label.new()
 	ctx_desc_lbl.add_theme_font_size_override("font_size", 10)
 	ctx_desc_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.98))
-	ctx_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ctx_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
 	vbox.add_child(ctx_desc_lbl)
 	
 	ctx_progress_bar = ProgressBar.new()
@@ -973,13 +977,30 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 	current_ctx_coord = coord
 	current_ctx_tile_data = tile_data
 	
-	if ctx_action_btn.pressed.is_connected(_open_settlement_panel):
-		ctx_action_btn.pressed.disconnect(_open_settlement_panel)
+	# Полный сброс всех старых подключений кнопки перед настройкой нового меню
+	for conn in ctx_action_btn.pressed.get_connections():
+		ctx_action_btn.pressed.disconnect(conn["callable"])
 	
 	ctx_progress_bar.visible = false
 	ctx_action_btn.disabled = false
+	ctx_action_btn.visible = true
 	
-	# Проверяем, есть ли поселение
+	# 1. Проверяем, есть ли на клетке природный объект (дерево, камень, куст)
+	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
+		var node = GameManager.resource_manager.nodes[coord]
+		var spr_name = node.get("sprite_name", "")
+		var cat = node.get("category", "tree")
+		var info = {
+			"coord": coord,
+			"n_data": {
+				"name": spr_name,
+				"category": cat
+			}
+		}
+		_on_nature_object_selected(info, screen_pos)
+		return
+	
+	# 2. Проверяем, есть ли поселение
 	if tile_data.get("settlement_id", "") != "":
 		var s = GameManager.settlements.get(tile_data["settlement_id"], null)
 		if s:
@@ -995,7 +1016,7 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 			_position_cursor_menu(screen_pos)
 			return
 			
-	# Проверяем здание на клетке
+	# 3. Проверяем здание на клетке
 	if GameManager.tile_buildings.has(coord):
 		var b_data = GameManager.tile_buildings[coord]
 		var b_id = b_data.get("id", "")
@@ -1033,7 +1054,7 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 		_position_cursor_menu(screen_pos)
 		return
 		
-	# Пустая земля / ресурс / вода
+	# 4. Пустая земля / геологический ресурс / вода
 	var biome_info = BiomeDefinitions.get_biome_info(tile_data.get("biome", 0))
 	ctx_title_lbl.text = "🗺 %s" % biome_info["name"]
 	ctx_coords_lbl.text = "Клетка мира (X:%d, Y:%d)" % [coord.x, coord.y]
@@ -1077,9 +1098,11 @@ func _position_cursor_menu(screen_pos: Vector2) -> void:
 	cursor_context_menu.reset_size()
 	var menu_min = cursor_context_menu.get_combined_minimum_size()
 	var menu_w = maxf(260.0, menu_min.x)
-	var menu_h = maxf(120.0, menu_min.y)
-	var target_x = clampf(screen_pos.x + 10.0, 10.0, vp_size.x - menu_w - 10.0)
-	var target_y = clampf(screen_pos.y + 10.0, 64.0, vp_size.y - 70.0 - menu_h - 10.0)
+	var menu_h = maxf(60.0, menu_min.y)
+	var max_x = maxf(10.0, vp_size.x - menu_w - 10.0)
+	var max_y = maxf(64.0, vp_size.y - 70.0 - menu_h - 10.0)
+	var target_x = clampf(screen_pos.x + 10.0, 10.0, max_x)
+	var target_y = clampf(screen_pos.y + 10.0, 64.0, max_y)
 	cursor_context_menu.position = Vector2(target_x, target_y)
 	cursor_context_menu.size = Vector2(menu_w, menu_h)
 	cursor_context_menu.reset_size()

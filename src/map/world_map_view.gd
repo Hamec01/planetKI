@@ -431,12 +431,37 @@ func _unhandled_input(event: InputEvent) -> void:
 					queue_redraw()
 					return
 					
-	# 3. ПКМ ПО КАРТЕ — КОНТЕКСТНОЕ МЕНЮ ДЕЙСТВИЯ (ПОСТРОИТЬ ЗДЕСЬ И Т.Д.)
+	# 3. ПКМ ПО КАРТЕ — КОНТЕКСТНОЕ МЕНЮ ДЕЙСТВИЯ (ПОСТРОИТЬ ЗДЕСЬ, ОХОТА, ОСМОТР)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		var mouse_world = get_global_mouse_position()
+		var mouse_pos = get_viewport().get_mouse_position()
+		
+		# 3.1 Клик ПКМ по дикому животному (фауна) -> открыть карточку зверя с охотой
+		var clicked_animal = _get_animal_near_position(mouse_world)
+		if clicked_animal != null:
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = clicked_animal.id
+			selected_tile_coord = Vector2i(-1, -1)
+			EventBus.animal_selected.emit(clicked_animal, mouse_pos)
+			queue_redraw()
+			return
+			
+		# 3.2 Клик ПКМ по конкретному гражданину (NPC) -> открыть карточку жителя
+		var clicked_citizen = _get_citizen_near_position(mouse_world)
+		if clicked_citizen != null:
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = ""
+			selected_tile_coord = Vector2i(-1, -1)
+			EventBus.citizen_selected.emit(clicked_citizen)
+			queue_redraw()
+			return
+			
+		# 3.3 Клик ПКМ по клетке карты (природный ресурс, здание, свободная земля)
 		if hovered_tile_coord != Vector2i(-1, -1) and planet_data.has("tiles"):
 			selected_tile_coord = hovered_tile_coord
 			var tile = planet_data["tiles"][selected_tile_coord.y][selected_tile_coord.x]
-			var mouse_pos = get_viewport().get_mouse_position()
 			EventBus.tile_right_clicked.emit(selected_tile_coord, tile, mouse_pos)
 			queue_redraw()
 			return
