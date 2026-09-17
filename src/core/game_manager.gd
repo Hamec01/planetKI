@@ -10,11 +10,15 @@ var current_month: int = 1 # 1 - 12
 var current_year: int = 1
 var current_season: String = "Весна"
 
+# Суточное время симуляции
+var current_hour: float = 6.0 # 0.0 .. 24.0 (06:00 утра старт)
+var current_time_period: String = "Утро" # "Утро", "День", "Вечер", "Ночь"
+
 # Скорость времени
 var is_paused: bool = false
 var game_speed: float = 1.0 # 1.0, 2.0, 4.0, 8.0
-var base_tick_interval: float = 0.8 # секунд реального времени на 1 игровой день при 1x
-var tick_accumulator: float = 0.0
+var base_tick_interval: float = 12.0 # секунд реального времени на 1 игровой день при 1x
+var tick_accumulator: float = 3.0 # Смещение на 06:00 (3.0 / 12.0 = 0.25 дня)
 
 # Глобальное состояние игры
 var world_seed: String = "PLN-7A4F-9231-B"
@@ -24,6 +28,13 @@ var epoch_name: String = "Эпоха 1 — Племя"
 const BuildingInstanceScript = preload("res://src/simulation/building_instance.gd")
 const CultureMemoryScript = preload("res://src/simulation/culture_memory.gd")
 const CivilizationEventManagerScript = preload("res://src/events/civilization_event_manager.gd")
+const NPCNavigationScript = preload("res://src/simulation/npc_navigation.gd")
+const MapResourceManagerScript = preload("res://src/simulation/map_resource_manager.gd")
+const WildlifeManagerScript = preload("res://src/simulation/wildlife_manager.gd")
+
+var nav_grid = NPCNavigationScript.new()
+var resource_manager = MapResourceManagerScript.new()
+var wildlife_manager = WildlifeManagerScript.new()
 
 var player_faction_id: String = "player_tribe"
 var player_race: String = "north" # "desert", "savanna", "north"
@@ -54,6 +65,30 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	culture_memory = CultureMemoryScript.new()
 	civilization_event_manager = CivilizationEventManagerScript.new()
+	EventBus.world_generated.connect(_on_world_generated_init_nav)
+
+func _on_world_generated_init_nav(data: Dictionary) -> void:
+	if data.has("tiles"):
+		var w = data.get("width", 160)
+		var h = data.get("height", 160)
+		nav_grid.initialize_grid(data["tiles"], w, h)
+		resource_manager.initialize_from_tiles(data["tiles"], w, h)
+		wildlife_manager.init_wildlife(data, nav_grid)
+
+func get_time_period_for_hour(hour_val: float) -> String:
+	if hour_val >= 6.0 and hour_val < 9.0:
+		return "Утро"
+	elif hour_val >= 9.0 and hour_val < 18.0:
+		return "День"
+	elif hour_val >= 18.0 and hour_val < 22.0:
+		return "Вечер"
+	else:
+		return "Ночь"
+
+func get_formatted_time() -> String:
+	var h = int(floor(current_hour))
+	var m = int(floor((current_hour - h) * 60.0))
+	return "%02d:%02d · %s" % [h, m, current_time_period]
 
 func _process(delta: float) -> void:
 	if not is_game_active or is_paused:
@@ -61,8 +96,19 @@ func _process(delta: float) -> void:
 	
 	tick_accumulator += delta * game_speed
 	var step: float = base_tick_interval
+	
+	resource_manager.update_regrowth(delta * game_speed)
+	# wildlife_manager обновляется в WorldMapView с актуальными позициями угроз соплеменников
+	
+	current_hour = (tick_accumulator / step) * 24.0
+	var new_period = get_time_period_for_hour(current_hour)
+	if new_period != current_time_period:
+		current_time_period = new_period
+		EventBus.time_period_changed.emit(current_time_period)
+		
 	while tick_accumulator >= step:
 		tick_accumulator -= step
+		current_hour = (tick_accumulator / step) * 24.0
 		_advance_day()
 
 func start_new_game(p_seed: String = "") -> void:
@@ -88,7 +134,10 @@ func start_new_game(p_seed: String = "") -> void:
 	tile_buildings.clear()
 	
 	culture_memory = CultureMemoryScript.new()
-	civilization_event_manager = CivilizationEventManagerScript.new()
+	if civilization_event_manager:
+		civilization_event_manager.reset()
+	else:
+		civilization_event_manager = CivilizationEventManagerScript.new()
 	EventManager.reset()
 	
 	# Добавляем стартовую запись в историю

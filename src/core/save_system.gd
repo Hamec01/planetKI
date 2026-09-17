@@ -9,8 +9,28 @@ func save_game() -> bool:
 		"chain_cooldowns": GameManager.civilization_event_manager.chain_cooldowns if GameManager.civilization_event_manager else {}
 	}
 	
+	var s_serialized = {}
+	for s_id in GameManager.settlements:
+		var s = GameManager.settlements[s_id]
+		if s is SettlementData:
+			s_serialized[s_id] = s.serialize()
+		else:
+			s_serialized[s_id] = s
+
+	var factions_data = {}
+	for f_id in GameManager.factions:
+		var f = GameManager.factions[f_id]
+		if f is FactionData:
+			factions_data[f_id] = {
+				"id": f.id,
+				"name": f.name,
+				"leader_name": f.leader_name,
+				"color": [f.color.r, f.color.g, f.color.b, f.color.a],
+				"is_player": f.is_player
+			}
+
 	var save_dict = {
-		"version": "0.2.0",
+		"version": "0.3.0",
 		"world_seed": GameManager.world_seed,
 		"current_day": GameManager.current_day,
 		"current_month": GameManager.current_month,
@@ -18,10 +38,13 @@ func save_game() -> bool:
 		"total_simulation_days": GameManager.total_simulation_days,
 		"current_epoch": GameManager.current_epoch,
 		"epoch_name": GameManager.epoch_name,
+		"current_hour": GameManager.current_hour,
+		"current_time_period": GameManager.current_time_period,
 		"player_faction_id": GameManager.player_faction_id,
 		"history_log": GameManager.history_log,
-		"factions": GameManager.factions,
-		"settlements": GameManager.settlements,
+		"factions_data": factions_data,
+		"settlements_data": s_serialized,
+		"wildlife": GameManager.wildlife_manager.serialize() if GameManager.wildlife_manager else {},
 		"star_system_data": GameManager.star_system_data,
 		"planet_data": GameManager.planet_data,
 		"culture_memory": culture_data,
@@ -46,6 +69,7 @@ func load_game() -> bool:
 		
 	var file = FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if not file:
+		push_error("Не удалось открыть файл для загрузки: " + SAVE_PATH)
 		return false
 		
 	var content = file.get_as_text()
@@ -68,25 +92,55 @@ func load_game() -> bool:
 	GameManager.total_simulation_days = data.get("total_simulation_days", 1)
 	GameManager.current_epoch = data.get("current_epoch", 1)
 	GameManager.epoch_name = data.get("epoch_name", "Эпоха 1 — Племя")
+	GameManager.current_hour = float(data.get("current_hour", 8.0))
+	GameManager.current_time_period = data.get("current_time_period", "Утро")
 	GameManager.player_faction_id = data.get("player_faction_id", "player_tribe")
-	GameManager.history_log = data.get("history_log", [])
-	GameManager.factions = data.get("factions", {})
-	GameManager.settlements = data.get("settlements", {})
+	
+	GameManager.history_log.clear()
+	var raw_log = data.get("history_log", [])
+	if raw_log is Array:
+		for item in raw_log:
+			if item is Dictionary:
+				GameManager.history_log.append(item)
+				
+	if data.has("factions_data"):
+		var fac_dict = data["factions_data"]
+		for f_id in fac_dict:
+			var fd = fac_dict[f_id]
+			if fd is Dictionary:
+				var c_arr = fd.get("color", [1,1,1,1])
+				var col = Color(c_arr[0], c_arr[1], c_arr[2], c_arr[3]) if c_arr.size() == 4 else Color.WHITE
+				var new_f = FactionData.new(f_id, fd.get("name", ""), fd.get("leader_name", ""), col, fd.get("is_player", false))
+				GameManager.factions[f_id] = new_f
+				
 	GameManager.star_system_data = data.get("star_system_data", {})
 	GameManager.planet_data = data.get("planet_data", {})
 	GameManager.current_season = GameManager._get_season_for_month(GameManager.current_month)
+	
+	# Инициализируем карту и сетку навигации ПЕРЕД восстановлением сущностей
+	EventBus.world_generated.emit(GameManager.planet_data)
 	
 	if data.has("culture_memory") and GameManager.culture_memory:
 		GameManager.culture_memory.deserialize(data["culture_memory"])
 		
 	if data.has("civilization_event_manager") and GameManager.civilization_event_manager:
 		var ev_data = data["civilization_event_manager"]
-		GameManager.civilization_event_manager.triggered_events = Array(ev_data.get("triggered_events", []))
+		GameManager.civilization_event_manager.triggered_events.assign(ev_data.get("triggered_events", []))
 		GameManager.civilization_event_manager.chain_cooldowns = ev_data.get("chain_cooldowns", {})
 		
+	if data.has("wildlife") and GameManager.wildlife_manager:
+		GameManager.wildlife_manager.deserialize(data["wildlife"])
+		
+	if data.has("settlements_data"):
+		GameManager.settlements.clear()
+		var s_data_dict = data["settlements_data"]
+		for s_id in s_data_dict:
+			var s_dict = s_data_dict[s_id]
+			var new_s = SettlementData.new(s_id, s_dict.get("name", "Поселение"), s_dict.get("faction_id", "player_tribe"), Vector2i(s_dict.get("pos_x", 0), s_dict.get("pos_y", 0)))
+			new_s.deserialize(s_dict)
+			GameManager.settlements[s_id] = new_s
+
 	GameManager.is_game_active = true
-	
-	EventBus.world_generated.emit(GameManager.planet_data)
 	return true
 
 func has_save_file() -> bool:

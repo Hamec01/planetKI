@@ -60,7 +60,7 @@ func _build_editor_ui() -> void:
 	ui_root.add_child(top_bar)
 	
 	var top_hbox = HBoxContainer.new()
-	top_hbox.theme_override_constants.separation = 10
+	top_hbox.add_theme_constant_override("separation", 10)
 	top_bar.add_child(top_hbox)
 	
 	var title_lbl = Label.new()
@@ -117,7 +117,7 @@ func _build_editor_ui() -> void:
 	ui_root.add_child(sidebar)
 	
 	var side_vbox = VBoxContainer.new()
-	side_vbox.theme_override_constants.separation = 8
+	side_vbox.add_theme_constant_override("separation", 8)
 	sidebar.add_child(side_vbox)
 	
 	# Переключатель режимов: [🎨 Биомы] [🌲 Природа] [⛺ Спавны]
@@ -238,8 +238,8 @@ func _build_editor_ui() -> void:
 	
 	nature_grid = GridContainer.new()
 	nature_grid.columns = 4
-	nature_grid.theme_override_constants.h_separation = 4
-	nature_grid.theme_override_constants.v_separation = 4
+	nature_grid.add_theme_constant_override("h_separation", 4)
+	nature_grid.add_theme_constant_override("v_separation", 4)
 	n_vbox.add_child(nature_grid)
 	
 	# 3. КОНТРОЛЫ СПАВНОВ

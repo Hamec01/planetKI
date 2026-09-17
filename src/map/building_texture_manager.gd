@@ -12,7 +12,7 @@ static func load_all() -> void:
 		"hut", "great_lodge", "hunting_camp", "foraging_post",
 		"granary", "woodcutter_camp", "stone_quarry", "ore_pit",
 		"craft_workshop", "elders_house", "shrine", "fire_square",
-		"palisade", "watchtower", "training_grounds", "fishing_spot",
+		"palisade", "watchtower", "training_grounds", "fishing_spot", "cemetery",
 		"house_1_blue", "house_1_green", "house_1_red", "house_1_yellow",
 		"house_2_blue", "house_2_green", "house_2_red", "house_2_yellow",
 		"castle_blue", "castle_green", "castle_red", "castle_yellow",
@@ -52,6 +52,8 @@ static func load_all() -> void:
 		textures["watchtower"] = textures["tower_blue"]
 	if not textures.has("elders_house") and textures.has("house_2_blue"):
 		textures["elders_house"] = textures["house_2_blue"]
+	if not textures.has("cemetery") and textures.has("shrine"):
+		textures["cemetery"] = textures["shrine"]
 		
 	is_loaded = true
 

@@ -3,6 +3,7 @@ extends PanelContainer
 
 const BuildingInstanceScript = preload("res://src/simulation/building_instance.gd")
 const BuildingSystemScript = preload("res://src/simulation/building_system.gd")
+const EquipmentDB = preload("res://src/combat/equipment_db.gd")
 
 signal building_mode_changed(building_inst: RefCounted, new_mode: String)
 signal building_upgrade_unlocked(building_inst: RefCounted, upgrade_id: String)
@@ -317,8 +318,10 @@ func _render_overview() -> void:
 	var manager_name = "Не назначен"
 	if current_building.manager_id != "":
 		var manager_cit = current_settlement.population.get_citizen_by_id(current_building.manager_id)
-		if not manager_cit.is_empty():
-			manager_name = "%s (%d лет, верность %d%%)" % [manager_cit["name"], manager_cit["age"], int(manager_cit.get("loyalty", 80))]
+		if manager_cit != null:
+			var m_loyalty = int(manager_cit.loyalty) if "loyalty" in manager_cit else 80
+			var m_age = manager_cit.age if "age" in manager_cit else 25
+			manager_name = "%s (%d лет, верность %d%%)" % [manager_cit.name, m_age, m_loyalty]
 			
 	var stats_lbl = Label.new()
 	stats_lbl.text = "👑 Руководитель / Мастер: %s\n⚙️ Текущий режим работы: %s\n👥 Работников: %d чел. • Состояние: %.0f%%" % [
@@ -336,15 +339,26 @@ func _render_workers() -> void:
 		c.queue_free()
 		
 	var pop = current_settlement.population
+	var b_def = BuildingDB.get_building(current_building.type)
+	var max_workers = b_def.get("max_workers", 4)
+	
 	var title = Label.new()
-	title.text = "Назначенные соплеменники:"
+	title.text = "Назначенные соплеменники (%d / %d):" % [current_building.workers.size(), max_workers]
 	title.add_theme_font_size_override("font_size", 12)
 	title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	workers_vbox.add_child(title)
 	
+	if max_workers <= 0:
+		var empty_lbl = Label.new()
+		empty_lbl.text = "В этом типе здания нет рабочих мест."
+		empty_lbl.add_theme_font_size_override("font_size", 11)
+		empty_lbl.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+		workers_vbox.add_child(empty_lbl)
+		return
+	
 	for w_id in current_building.workers:
 		var cit = pop.get_citizen_by_id(w_id)
-		if cit.is_empty():
+		if cit == null:
 			continue
 			
 		var card = PanelContainer.new()
@@ -360,14 +374,16 @@ func _render_workers() -> void:
 		
 		var name_lbl = Label.new()
 		var is_master = (current_building.manager_id == w_id)
-		name_lbl.text = ("👑 " if is_master else "👤 ") + "%s (%d лет)" % [cit["name"], cit["age"]]
+		var c_age = cit.age if "age" in cit else 25
+		name_lbl.text = ("👑 " if is_master else "👤 ") + "%s (%d лет)" % [cit.name, c_age]
 		name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name_lbl.add_theme_font_size_override("font_size", 11)
 		hbox.add_child(name_lbl)
 		
-		var exp_val = cit.get("exp", {}).get(current_building.type, 10)
+		var exp_val = cit.experience.get(current_building.type, 10) if ("experience" in cit and cit.experience is Dictionary) else 10
+		var c_loyalty = int(cit.loyalty) if "loyalty" in cit else 80
 		var stat_lbl = Label.new()
-		stat_lbl.text = "Опыт: %d | Верность: %d%%" % [exp_val, int(cit.get("loyalty", 80))]
+		stat_lbl.text = "Опыт: %d | Верность: %d%%" % [exp_val, c_loyalty]
 		stat_lbl.add_theme_font_size_override("font_size", 10)
 		stat_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 0.95))
 		hbox.add_child(stat_lbl)
@@ -377,7 +393,7 @@ func _render_workers() -> void:
 			make_master_btn.text = "Сделать мастером"
 			make_master_btn.add_theme_font_size_override("font_size", 9)
 			var cur_w_id = w_id
-			var cur_w_name = cit["name"]
+			var cur_w_name = cit.name
 			make_master_btn.pressed.connect(func():
 				current_building.assign_manager(cur_w_id, cur_w_name)
 				refresh_all_tabs()
@@ -390,6 +406,17 @@ func _render_workers() -> void:
 		var remove_w_id = w_id
 		unassign_btn.pressed.connect(func():
 			current_building.remove_worker(remove_w_id)
+			var w_cit = pop.get_citizen_by_id(remove_w_id)
+			if w_cit != null:
+				w_cit.set_job("idle")
+				w_cit.workplace_id = ""
+				w_cit.workplace_coord = Vector2i(-1, -1)
+			current_settlement.sync_assigned_jobs_from_citizens()
+			EventBus.notification_toast.emit(
+				"Работник освобождён",
+				"%s снят с должности и теперь свободен." % (w_cit.name if w_cit else remove_w_id),
+				"info"
+			)
 			refresh_all_tabs()
 		)
 		hbox.add_child(unassign_btn)
@@ -401,19 +428,47 @@ func _render_workers() -> void:
 	var add_hbox = HBoxContainer.new()
 	add_hbox.add_theme_constant_override("separation", 6)
 	
-	var free_count = current_settlement.get_idle_workforce()
+	var idle_citizens = current_settlement.get_idle_citizens()
+	var free_count = idle_citizens.size()
+	var is_full = (current_building.workers.size() >= max_workers)
+	
 	var add_btn = Button.new()
-	add_btn.text = "➕ Назначить свободного жителя (Свободно: %d)" % free_count
-	add_btn.disabled = (free_count <= 0)
+	if is_full:
+		add_btn.text = "Штат укомплектован (%d / %d)" % [current_building.workers.size(), max_workers]
+		add_btn.disabled = true
+	elif free_count <= 0:
+		add_btn.text = "Нет свободных жителей (Свободно: 0)"
+		add_btn.disabled = true
+	else:
+		add_btn.text = "➕ Назначить свободного жителя (Свободно: %d)" % free_count
+		add_btn.disabled = false
+		
 	add_btn.add_theme_font_size_override("font_size", 11)
 	add_btn.pressed.connect(func():
-		# Ищем первого свободного жителя
-		for c in pop.citizens:
-			if not current_building.workers.has(c["id"]) and c["cohort"] in ["adult", "youth", "elder"]:
-				current_building.add_worker(c["id"])
-				if current_building.manager_id == "":
-					current_building.assign_manager(c["id"], c["name"])
-				break
+		var fresh_idles = current_settlement.get_idle_citizens()
+		if fresh_idles.is_empty():
+			EventBus.notification_toast.emit("Нет свободных жителей", "Все взрослые соплеменники уже заняты на других работах!", "warning")
+			refresh_all_tabs()
+			return
+		if current_building.workers.size() >= max_workers:
+			EventBus.notification_toast.emit("Штат полон", "В этом здании достигнут лимит рабочих (%d)!" % max_workers, "warning")
+			refresh_all_tabs()
+			return
+			
+		var free_c = fresh_idles[0]
+		var job_id = BuildingDB.get_job_id_for_building(current_building.type)
+		current_building.add_worker(free_c.citizen_id)
+		free_c.set_job(job_id)
+		free_c.workplace_id = current_building.id
+		free_c.workplace_coord = current_building.pos
+		if current_building.manager_id == "":
+			current_building.assign_manager(free_c.citizen_id, free_c.name)
+		current_settlement.sync_assigned_jobs_from_citizens()
+		EventBus.notification_toast.emit(
+			"Назначен соплеменник",
+			"%s приступил к работе в должности: %s" % [free_c.name, b_def.get("job_name", job_id)],
+			"good"
+		)
 		refresh_all_tabs()
 	)
 	add_hbox.add_child(add_btn)
@@ -547,21 +602,27 @@ func _render_orders() -> void:
 		c.queue_free()
 		
 	var info_lbl = Label.new()
-	info_lbl.text = "Целевые заказы снаряжения и предметов для племени:"
+	info_lbl.text = "Производство оружия, брони и модификаций (EquipmentDB):"
 	info_lbl.add_theme_font_size_override("font_size", 11)
 	info_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	orders_vbox.add_child(info_lbl)
 	
-	var orders = [
-		{"name": "Партия топоров (10 шт)", "desc": "Снабдить всех лесорубов новыми острыми топорами", "cost": {"wood": 10, "metal": 10}},
-		{"name": "Запас наконечников стрел (30 шт)", "desc": "Пополнить боезапас лучников и охотников", "cost": {"metal": 15}},
-		{"name": "Комплект для 5 копейщиков", "desc": "Окованные древки и наконечники для дружины", "cost": {"wood": 15, "metal": 20}}
-	]
+	var econ = current_settlement.economy if current_settlement else null
 	
-	for o in orders:
+	# Перебираем все рецепты из EquipmentDB
+	for item_id in EquipmentDB.RECIPES:
+		var recipe = EquipmentDB.RECIPES[item_id]
+		var cost = recipe.get("cost", {})
+		var can_afford = econ.can_afford(cost) if econ else false
+		var req_upgrade = recipe.get("upgrade_req", "")
+		var is_unlocked = true
+		if req_upgrade != "" and current_building:
+			is_unlocked = current_building.is_upgrade_unlocked(req_upgrade)
+			
 		var card = PanelContainer.new()
 		var sbox = StyleBoxFlat.new()
-		sbox.bg_color = Color(0.12, 0.15, 0.22, 0.9)
+		sbox.bg_color = Color(0.12, 0.15, 0.22, 0.9) if is_unlocked else Color(0.10, 0.11, 0.15, 0.7)
+		sbox.border_color = Color(0.85, 0.65, 0.25, 0.8) if can_afford and is_unlocked else Color(0.4, 0.3, 0.3, 0.5)
 		sbox.set_border_width_all(1)
 		sbox.set_corner_radius_all(6)
 		sbox.set_content_margin_all(6)
@@ -575,26 +636,38 @@ func _render_orders() -> void:
 		vbox.add_theme_constant_override("separation", 2)
 		
 		var name_lbl = Label.new()
-		name_lbl.text = o["name"]
+		name_lbl.text = recipe["name"] + (" (Требует улучшение)" if not is_unlocked else "")
 		name_lbl.add_theme_font_size_override("font_size", 11)
-		name_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+		name_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5) if is_unlocked else Color(0.6, 0.6, 0.6))
 		vbox.add_child(name_lbl)
 		
-		var desc_lbl = Label.new()
-		desc_lbl.text = o["desc"]
-		desc_lbl.add_theme_font_size_override("font_size", 9)
-		desc_lbl.add_theme_color_override("font_color", Color(0.8, 0.86, 0.94))
-		vbox.add_child(desc_lbl)
+		var cost_strs = []
+		for r in cost:
+			cost_strs.append("%s: %d" % [r, cost[r]])
+		var cost_lbl = Label.new()
+		cost_lbl.text = "Материалы: " + ", ".join(cost_strs) + " | Труд: %.2f раб. дня" % float(recipe.get("work_days", 1.0))
+		cost_lbl.add_theme_font_size_override("font_size", 9)
+		cost_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4) if can_afford and is_unlocked else Color(0.9, 0.4, 0.4))
+		vbox.add_child(cost_lbl)
 		
 		hbox.add_child(vbox)
 		
 		var btn = Button.new()
-		btn.text = "🔨 Заказать"
-		btn.custom_minimum_size = Vector2(85, 28)
+		btn.text = "🔨 Изготовить"
+		btn.disabled = not can_afford or not is_unlocked
+		btn.custom_minimum_size = Vector2(95, 28)
 		btn.add_theme_font_size_override("font_size", 10)
+		var target_item_id = item_id
+		var item_name = recipe["name"]
 		btn.pressed.connect(func():
-			current_building.add_history_entry(GameManager.current_year, "Запущен заказ: %s" % o["name"])
-			refresh_all_tabs()
+			if econ and econ.deduct_cost(cost):
+				# Реальное зачисление предмета в арсенал поселения
+				if "equipment_stockpile" in current_settlement:
+					current_settlement.equipment_stockpile[target_item_id] = current_settlement.equipment_stockpile.get(target_item_id, 0) + 1
+				current_building.add_history_entry(GameManager.current_year, "Изготовлено снаряжение: %s" % item_name)
+				if EventBus:
+					EventBus.notification_toast.emit("Оружейный заказ", "Изготовлен предмет: %s (отправлен на склад)" % item_name, "good")
+				refresh_all_tabs()
 		)
 		hbox.add_child(btn)
 		

@@ -42,6 +42,7 @@ var ctx_action_btn: Button
 var ctx_secondary_btn: Button
 var current_ctx_coord: Vector2i = Vector2i(-1, -1)
 var current_ctx_tile_data: Dictionary = {}
+var active_inspected_nature_coord: Vector2i = Vector2i(-1, -1)
 
 signal tab_opened(tab_name: String, extra_data: Variant)
 
@@ -51,6 +52,9 @@ func _ready() -> void:
 	EventBus.game_speed_changed.connect(_on_speed_changed)
 	EventBus.tile_selected.connect(_on_tile_selected)
 	EventBus.tile_right_clicked.connect(_on_tile_right_clicked)
+	EventBus.nature_object_selected.connect(_on_nature_object_selected)
+	EventBus.animal_selected.connect(_on_animal_selected)
+	EventBus.selection_cleared.connect(_on_selection_cleared)
 	EventBus.settlement_selected.connect(_on_settlement_context_selected)
 	EventBus.notification_toast.connect(_on_notification_toast)
 	
@@ -107,10 +111,9 @@ func _setup_rts_build_menu() -> void:
 		civilization_event_modal = CivilizationEventModalScript.new()
 		civilization_event_modal.name = "CivilizationEventModal"
 		add_child(civilization_event_modal)
-		if GameManager.civilization_event_manager:
-			GameManager.civilization_event_manager.event_triggered.connect(func(ev):
-				civilization_event_modal.open_event(ev)
-			)
+		EventBus.civilization_event_triggered.connect(func(ev):
+			civilization_event_modal.open_event(ev)
+		)
 			
 	if traditions_modal == null:
 		traditions_modal = TraditionsRegistryModalScript.new()
@@ -641,8 +644,226 @@ func _on_tile_right_clicked(coord: Vector2i, tile_data: Dictionary, screen_pos: 
 	_open_cursor_context_menu(coord, tile_data, screen_pos)
 
 func _on_tile_selected(coord: Vector2i, tile_data: Dictionary) -> void:
-	var mouse_pos = get_viewport().get_mouse_position()
-	_open_cursor_context_menu(coord, tile_data, mouse_pos)
+	# Открываем меню только если это здание или центр поселения (не пустая клетка!)
+	if GameManager.tile_buildings.has(coord) or tile_data.get("settlement_id", "") != "":
+		var mouse_pos = get_viewport().get_mouse_position()
+		_open_cursor_context_menu(coord, tile_data, mouse_pos)
+	else:
+		cursor_context_menu.visible = false
+
+func _on_selection_cleared() -> void:
+	cursor_context_menu.visible = false
+	active_inspected_nature_coord = Vector2i(-1, -1)
+
+func _process(_delta: float) -> void:
+	if cursor_context_menu and cursor_context_menu.visible and active_inspected_nature_coord != Vector2i(-1, -1):
+		_refresh_nature_context_live()
+
+func _refresh_nature_context_live() -> void:
+	if not GameManager.resource_manager or not GameManager.resource_manager.nodes.has(active_inspected_nature_coord):
+		return
+	var node = GameManager.resource_manager.nodes[active_inspected_nature_coord]
+	var res_amt = float(node.get("amount", 0.0))
+	var max_amt = float(node.get("max_amount", 100.0))
+	var is_depleted = node.get("depleted", false) or res_amt <= 0.0
+	var res_type = node.get("type", "wood")
+	var unit_name = "дров" if res_type == "wood" else ("ед. пищи" if res_type in ["berries", "mushrooms"] else "камня")
+	
+	ctx_progress_bar.max_value = max_amt
+	ctx_progress_bar.value = res_amt
+	
+	if is_depleted:
+		ctx_desc_lbl.text = "Ресурс полностью выработан.\nДерево срублено под корень." if res_type == "wood" else "Ресурс полностью собран."
+		ctx_action_btn.visible = false
+		ctx_progress_bar.value = 0
+	else:
+		var status_text = "Готово к заготовке"
+		var res_by = node.get("reserved_by", "")
+		if res_by != "":
+			var worker_name = res_by
+			var pl_s = GameManager.settlements.get("player_tribe_settlement", null)
+			if pl_s and pl_s.population:
+				for c in pl_s.population.citizens:
+					if c.citizen_id == res_by:
+						worker_name = c.name + " (" + c.job_id + ")"
+						break
+			status_text = "Добывается: " + worker_name
+		ctx_desc_lbl.text = "Запас ресурса: %d / %d %s\nСтатус: %s" % [int(res_amt), int(max_amt), unit_name, status_text]
+
+func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
+	var coord: Vector2i = info.get("coord", Vector2i(-1, -1))
+	active_inspected_nature_coord = coord
+	var n_data: Dictionary = info.get("n_data", {})
+	var sprite_name = n_data.get("name", "")
+	var cat = n_data.get("category", "")
+	
+	# Сброс старых подключений кнопки
+	for conn in ctx_action_btn.pressed.get_connections():
+		ctx_action_btn.pressed.disconnect(conn["callable"])
+		
+	# Получаем или ищем ресурсный узел
+	var node: Dictionary = {}
+	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
+		node = GameManager.resource_manager.nodes[coord]
+	elif MapResourceManager.RESOURCE_NATURE_CONFIG.has(sprite_name):
+		var cfg = MapResourceManager.RESOURCE_NATURE_CONFIG[sprite_name]
+		node = {
+			"type": cfg["type"],
+			"category": cfg["category"],
+			"name": cfg["name"],
+			"amount": cfg["amount"],
+			"max_amount": cfg["amount"],
+			"reserved_by": "",
+			"depleted": false
+		}
+		
+	var has_res = not node.is_empty() and not node.get("depleted", false)
+	var res_type = node.get("type", "wood") if has_res else ""
+	var res_amt = float(node.get("amount", 0.0))
+	var max_amt = float(node.get("max_amount", 100.0))
+	var res_name = node.get("name", n_data.get("name", "Природный объект"))
+	
+	# 1. Иконка ресурса
+	if has_res:
+		ctx_icon_rect.texture = ItemTextureManager.get_icon(res_type)
+	else:
+		ctx_icon_rect.texture = n_data.get("tex", null)
+		
+	# 2. Название
+	var prefix = "🌲 " if cat == "tree" else ("🍄 " if res_type == "mushrooms" else ("🍓 " if res_type == "berries" else ("🪨 " if cat == "rock" else "🌿 ")))
+	ctx_title_lbl.text = prefix + res_name
+	
+	# 3. Подзаголовок
+	if has_res:
+		var cat_names = {
+			"wood": "Лесной ресурс • 100 дров в дереве",
+			"food": "Сбор пищи • Ягоды и грибы",
+			"stone": "Каменная порода • Каменоломня",
+			"metal": "Металлическая руда"
+		}
+		ctx_coords_lbl.text = cat_names.get(node.get("category", "wood"), "Природный ресурс")
+	else:
+		ctx_coords_lbl.text = "Растительность и декорации"
+		
+	# 4. Шкала запаса и описание
+	if has_res:
+		ctx_progress_bar.visible = true
+		ctx_progress_bar.max_value = max_amt
+		ctx_progress_bar.value = res_amt
+		
+		var unit_name = "дров" if res_type == "wood" else ("ед. пищи" if res_type in ["berries", "mushrooms"] else "камня")
+		var status_text = "Готово к заготовке"
+		var res_by = node.get("reserved_by", "")
+		if res_by != "":
+			var worker_name = res_by
+			var pl_s = GameManager.settlements.get("player_tribe_settlement", null)
+			if pl_s and pl_s.population:
+				for c in pl_s.population.citizens:
+					if c.citizen_id == res_by:
+						worker_name = c.name + " (" + c.job_id + ")"
+						break
+			status_text = "Добывается: " + worker_name
+			
+		var desc = "Запас ресурса: %d / %d %s\nСтатус: %s" % [int(res_amt), int(max_amt), unit_name, status_text]
+		if sprite_name in ["tree_young", "tree_spruce_young"]:
+			desc += "\n🌱 Молодой саженец. Растет во взрослое дерево (100 дров)."
+		ctx_desc_lbl.text = desc
+		
+		# Кнопка действия
+		ctx_action_btn.visible = true
+		ctx_action_btn.disabled = false
+		if cat == "tree":
+			ctx_action_btn.text = "🪓 Вырубить дерево (Приоритет)"
+			ctx_action_btn.pressed.connect(func():
+				EventBus.order_harvest_resource.emit(coord, "wood")
+			)
+		elif res_type in ["berries", "mushrooms"]:
+			ctx_action_btn.text = "🧺 Собрать урожай (Приоритет)"
+			ctx_action_btn.pressed.connect(func():
+				EventBus.order_harvest_resource.emit(coord, "food")
+			)
+		elif cat == "rock":
+			ctx_action_btn.text = "⛏ Добыть камень (Приоритет)"
+			ctx_action_btn.pressed.connect(func():
+				EventBus.order_harvest_resource.emit(coord, "stone")
+			)
+		else:
+			ctx_action_btn.visible = false
+	else:
+		ctx_progress_bar.visible = false
+		ctx_desc_lbl.text = "Природный элемент ландшафта."
+		ctx_action_btn.visible = false
+		
+	_position_cursor_menu(screen_pos)
+
+func _on_animal_selected(animal: RefCounted, screen_pos: Vector2) -> void:
+	active_inspected_nature_coord = Vector2i(-1, -1)
+	if animal == null or not animal.is_alive():
+		cursor_context_menu.visible = false
+		return
+		
+	# Сброс старых подключений кнопки
+	for conn in ctx_action_btn.pressed.get_connections():
+		ctx_action_btn.pressed.disconnect(conn["callable"])
+		
+	var cfg = WildAnimal.SPECIES_CONFIG.get(animal.type_id, {})
+	var species_names = {
+		"wolf_grey": "Серый волк", "wolf_dark": "Тёмный волк", "wolf_pup": "Волчонок",
+		"hare_brown": "Бурый заяц", "hare_white": "Белый заяц", "hare_leveret": "Зайчонок",
+		"deer_stag": "Благородный олень", "deer_doe": "Олениха", "deer_fawn": "Оленёнок",
+		"moose_bull": "Сохатый лось", "moose_cow": "Лосиха", "moose_calf": "Лосёнок",
+		"bear_brown": "Бурый медведь", "bear_dark": "Тёмный медведь", "bear_cub": "Медвежонок",
+		"boar_male": "Секач (кабан)", "boar_female": "Кабаниха", "boar_piglet": "Поросёнок",
+		"fox_adult": "Рыжая лиса", "fox_kit": "Лисёнок",
+		"lynx_adult": "Лесная рысь",
+		"badger_adult": "Барсук",
+		"duck_drake": "Селезень", "duck_female": "Дикая утка", "duck_duckling": "Утёнок"
+	}
+	var display_name = species_names.get(animal.type_id, animal.species.capitalize())
+	
+	ctx_icon_rect.texture = animal.get_texture()
+	var prefix = "🐺 " if animal.species == "wolf" else ("🐻 " if animal.species == "bear" else ("🦌 " if animal.species in ["deer", "moose"] else ("🐗 " if animal.species == "boar" else ("🦆 " if animal.species == "duck" else "🐾 "))))
+	ctx_title_lbl.text = prefix + display_name
+	
+	var behavior_desc = "Дикая фауна"
+	var bh = cfg.get("behavior", "")
+	if bh in ["predator", "territorial", "stealth_predator"]:
+		behavior_desc = "⚠️ Опасный хищник! Нападает на людей."
+	elif bh in ["defensive", "mother_aggressive"]:
+		behavior_desc = "🛡 Защищает потомство и территорию."
+	elif bh == "waterfowl":
+		behavior_desc = "🌊 Водоплавающая птица. Спасается на воде."
+	else:
+		behavior_desc = "🌿 Пугливое травоядное животное."
+	ctx_coords_lbl.text = behavior_desc
+	
+	ctx_progress_bar.visible = true
+	ctx_progress_bar.max_value = animal.max_health
+	ctx_progress_bar.value = animal.health
+	
+	var mat_name = "Шкура" if animal.extra_material == "hide" else ("Мех" if animal.extra_material == "fur" else ("Перья" if animal.extra_material == "feathers" else "Мелкая шкурка"))
+	var drops = "Мясо x%d, %s x%d" % [int(animal.meat_yield), mat_name, animal.extra_material_count] if animal.extra_material_count > 0 else "Мясо x%d" % int(animal.meat_yield)
+	
+	var state_text = "Пасётся"
+	match animal.state:
+		WildAnimal.State.FLEEING: state_text = "Убегает от опасности"
+		WildAnimal.State.DEFENDING: state_text = "Атакует в ближнем бою!"
+		WildAnimal.State.SWIMMING: state_text = "Плавает по воде"
+		WildAnimal.State.FOLLOWING: state_text = "Следует за матерью"
+		WildAnimal.State.RESTING: state_text = "Отдыхает"
+		
+	ctx_desc_lbl.text = "Здоровье: %d / %d HP\nСостояние: %s\nДобыча при охоте: %s" % [
+		int(animal.health), int(animal.max_health), state_text, drops
+	]
+	
+	ctx_action_btn.visible = true
+	ctx_action_btn.disabled = false
+	ctx_action_btn.text = "🏹 Направить охотников"
+	ctx_action_btn.pressed.connect(func():
+		EventBus.notification_toast.emit("Охота", "Охотники поселения выследят эту цель.", "good")
+	)
+	
+	_position_cursor_menu(screen_pos)
 
 func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_pos: Vector2) -> void:
 	current_ctx_coord = coord

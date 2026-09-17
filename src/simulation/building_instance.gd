@@ -40,6 +40,7 @@ func _init_default_mode() -> void:
 		"shrine": active_mode = "rituals"
 		"hunting_camp": active_mode = "plains"
 		"training_grounds": active_mode = "drills"
+		"woodcutter_camp": active_mode = "logging"
 		_: active_mode = "default"
 
 func add_history_entry(year: int, text: String) -> void:

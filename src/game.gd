@@ -52,6 +52,7 @@ func start_game(seed_str: String) -> void:
 	)
 	GameManager.settlements[player_settlement.id] = player_settlement
 	player_settlement.init_starter_buildings_on_map()
+	player_settlement.init_citizens_on_map()
 	
 	# Изначально у игрока 10 мирных жителей, 0 генералов и 0 армий
 	player_f.generals.clear()
@@ -75,21 +76,31 @@ func start_game(seed_str: String) -> void:
 		)
 		GameManager.settlements[ai_s.id] = ai_s
 		ai_s.init_starter_buildings_on_map()
+		ai_s.init_citizens_on_map()
 		
 	# 5. Оповещаем карту и центрируем камеру на стартовой стоянке игрока
 	EventBus.world_generated.emit(world_data)
 	map_camera.focus_on_tile(player_settlement.pos, WorldMapView.TILE_SIZE)
 	
 	_setup_army_command_panel()
+	_setup_citizen_detail_panel()
 
 const ArmyCommandPanelScript = preload("res://src/ui/army_command_panel.gd")
+const CitizenDetailPanelScript = preload("res://src/ui/citizen_detail_panel.gd")
 var army_command_panel: Control = null
+var citizen_detail_panel: Control = null
 
 func _setup_army_command_panel() -> void:
 	if army_command_panel == null:
 		army_command_panel = ArmyCommandPanelScript.new()
 		army_command_panel.name = "ArmyCommandPanel"
 		$UI.add_child(army_command_panel)
+
+func _setup_citizen_detail_panel() -> void:
+	if citizen_detail_panel == null:
+		citizen_detail_panel = CitizenDetailPanelScript.new()
+		citizen_detail_panel.name = "CitizenDetailPanel"
+		$UI.add_child(citizen_detail_panel)
 
 func _on_day_passed(_day: int, _month: int, _year: int) -> void:
 	var season = GameManager.current_season

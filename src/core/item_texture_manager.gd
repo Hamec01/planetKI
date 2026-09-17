@@ -43,8 +43,13 @@ static func _resolve_path(name: String) -> String:
 		"spear", "spearmen": return "res://tiles/pike_weapon_01.png"
 		"flail": return "res://tiles/flail_01.png"
 		"bomb": return "res://tiles/bomb_01.png"
+		"carcass", "meat_raw": return "res://Assets/nature_clean/carcass.png"
 		"meat", "beef", "game": return "res://tiles/beef_01.png"
 		"fish", "cod": return "res://tiles/codfish_01.png"
+		"hide", "leather": return "res://Assets/items/hide.png"
+		"small_hide", "pelt": return "res://Assets/items/small_hide.png"
+		"fur": return "res://Assets/items/fur.png"
+		"feathers", "feather": return "res://tiles/feathers_01.png"
 		"chest": return "res://tiles/chest_closed_01.png"
 		"apple": return "res://tiles/apple_red_01.png"
 		_:

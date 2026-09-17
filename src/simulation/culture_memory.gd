@@ -110,7 +110,11 @@ func unlock_building(building_id: String) -> void:
 
 func is_building_unlocked(building_id: String) -> bool:
 	# Базовые здания 1-й эпохи доступны всегда, специальные требуют события
-	var base_buildings = ["elders_house", "hunting_camp", "granary", "carpenter_workshop", "stone_quarry", "forge", "training_grounds"]
+	var base_buildings = [
+		"hut", "great_lodge", "woodcutter_camp", "foraging_post", "fishing_spot",
+		"primitive_field", "granary", "hunting_camp", "stone_quarry", "ore_pit",
+		"training_grounds", "palisade", "watchtower", "elders_house", "carpenter_workshop", "forge"
+	]
 	if building_id in base_buildings:
 		return true
 	return unlocked_special_buildings.has(building_id)
@@ -221,9 +225,9 @@ func serialize() -> Dictionary:
 func deserialize(data: Dictionary) -> void:
 	exclusive_groups = data.get("exclusive_groups", exclusive_groups)
 	religion_data = data.get("religion_data", religion_data)
-	unlocked_special_buildings = Array(data.get("unlocked_special_buildings", []))
-	discovered_practices = Array(data.get("discovered_practices", []))
-	civilization_chronicle = data.get("civilization_chronicle", [])
+	unlocked_special_buildings.assign(data.get("unlocked_special_buildings", []))
+	discovered_practices.assign(data.get("discovered_practices", []))
+	civilization_chronicle.assign(data.get("civilization_chronicle", []))
 	tribe_folk_name = data.get("tribe_folk_name", "Люди Рассвета")
 	
 	entries.clear()

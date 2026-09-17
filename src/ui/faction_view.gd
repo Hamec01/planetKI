@@ -143,19 +143,65 @@ func _refresh_religion(_f: FactionData) -> void:
 	for child in relig_select_box.get_children():
 		child.queue_free()
 	
-	# Вместо кнопок выбора — информация о священных постройках
+	# Священные постройки: реальный статус (открыто / строится / построено)
+	var has_any_unlocked = false
+	
 	if culture.is_building_unlocked("shrine"):
+		has_any_unlocked = true
 		var info_lbl = Label.new()
-		info_lbl.text = "🏛 Святилище духов / Алтарь — построено."
+		var st = _get_building_build_status("shrine")
+		if st == "built":
+			info_lbl.text = "🏛 Святилище духов / Алтарь — построено."
+			info_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5))
+		elif st == "constructing":
+			info_lbl.text = "🏛 Святилище духов / Алтарь — строится..."
+			info_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+		else:
+			info_lbl.text = "🏛 Святилище духов / Алтарь — открыто для постройки в меню [B]."
+			info_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
 		info_lbl.add_theme_font_size_override("font_size", 11)
-		info_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
 		relig_select_box.add_child(info_lbl)
+		
 	if culture.is_building_unlocked("cemetery"):
+		has_any_unlocked = true
 		var info_lbl = Label.new()
-		info_lbl.text = "🕯️ Кладбище — построено."
+		var st = _get_building_build_status("cemetery")
+		if st == "built":
+			info_lbl.text = "🕯️ Кладбище (Могильник) — построено."
+			info_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5))
+		elif st == "constructing":
+			info_lbl.text = "🕯️ Кладбище (Могильник) — строится..."
+			info_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+		else:
+			info_lbl.text = "🕯️ Кладбище (Могильник) — открыто для постройки в меню [B]."
+			info_lbl.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
 		info_lbl.add_theme_font_size_override("font_size", 11)
-		info_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
 		relig_select_box.add_child(info_lbl)
+		
+	if not has_any_unlocked:
+		var empty_lbl = Label.new()
+		empty_lbl.text = "Священные постройки и могильники открываются по мере выбора обычаев племени."
+		empty_lbl.add_theme_font_size_override("font_size", 11)
+		empty_lbl.add_theme_color_override("font_color", Color(0.65, 0.7, 0.8))
+		relig_select_box.add_child(empty_lbl)
+
+func _get_building_build_status(b_id: String) -> String:
+	var is_constructing = false
+	if GameManager and GameManager.tile_buildings:
+		for b in GameManager.tile_buildings.values():
+			if b is Dictionary and b.get("id", "") == b_id:
+				if b.get("status", "") == "active":
+					return "built"
+				elif b.get("status", "") == "constructing":
+					is_constructing = true
+	if is_constructing:
+		return "constructing"
+	var p_id = GameManager.player_faction_id if GameManager else "player_tribe"
+	var s_id = p_id + "_settlement"
+	if GameManager and GameManager.settlements.has(s_id):
+		if GameManager.settlements[s_id].buildings.has(b_id):
+			return "built"
+	return "unbuilt"
 
 func _refresh_tech(f: FactionData) -> void:
 	if f.current_research_tech != "":

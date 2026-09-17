@@ -219,8 +219,38 @@ const BUILDINGS: Dictionary = {
 		"job_name": "Воин-наставник",
 		"military_spirit_bonus": 10.0,
 		"description": "Обучение юношей метанию копий, стрельбе из лука и рукопашному бою."
+	},
+	"cemetery": {
+		"id": "cemetery",
+		"name": "Кладбище (Могильник)",
+		"epoch": 1,
+		"category": "society",
+		"cost": {"wood": 20, "stone": 15},
+		"build_days": 12,
+		"housing": 0,
+		"max_workers": 2,
+		"job_name": "Хранитель предков",
+		"loyalty_bonus": 5.0,
+		"stability_bonus": 5.0,
+		"description": "Священное место захоронения умерших соплеменников. Укрепляет почитание предков, порядок и покой племени."
 	}
 }
 
 static func get_building(id: String) -> Dictionary:
 	return BUILDINGS.get(id, {})
+
+static func get_job_id_for_building(b_type: String) -> String:
+	match b_type:
+		"hunting_camp": return "hunter"
+		"foraging_post": return "forager"
+		"fishing_spot": return "fisherman"
+		"primitive_field": return "farmer"
+		"woodcutter_camp": return "woodcutter"
+		"stone_quarry": return "quarryman"
+		"ore_pit": return "miner"
+		"craft_workshop", "carpenter_workshop", "pottery_workshop", "forge": return "craftsman"
+		"elders_house": return "elder"
+		"shrine", "cemetery": return "priest"
+		"watchtower": return "guard"
+		"training_grounds": return "warrior"
+		_: return "idle"

@@ -52,6 +52,11 @@ const BUILDING_MODES: Dictionary = {
 		{"id": "formation", "name": "🛡 Отработка строя", "desc": "Слаженность в рядах дружины (+защита в бою)"},
 		{"id": "endurance", "name": "🏃 Марш-броски и выносливость", "desc": "Повышает скорость передвижения отрядов по карте"},
 		{"id": "spartans", "name": "⚔️ Жестокие спарринги", "desc": "Быстро растит ветеранов ценой легких травм"}
+	],
+	"woodcutter_camp": [
+		{"id": "logging", "name": "🪓 Сплошная заготовка", "desc": "Лесорубы валят взрослые деревья для максимального сбора древесины (1 дерево = 100 дров)"},
+		{"id": "reforestation", "name": "🌱 Лесопосадка и уход", "desc": "Лесорубы и лесники сеют саженцы деревьев на вырубках и пустых полях, восстанавливая лес"},
+		{"id": "selective", "name": "🌲 Выборочная санитарная рубка", "desc": "Рубка только сухих и старых деревьев с бережным сохранением лесного массива"}
 	]
 }
 
@@ -296,6 +301,21 @@ const UPGRADES: Dictionary = {
 		"category": "command", "unlock_type": "ordinary",
 		"cost": {"wood": 40, "stone": 20}, "prerequisites": ["training_targets"],
 		"effects": {"unlock_general_appointment": true}
+	},
+	# 9. ЛАГЕРЬ ЛЕСОРУБОВ
+	"woodcutter_forestry": {
+		"id": "woodcutter_forestry", "building_type": "woodcutter_camp",
+		"name": "Лесоводство и питомник саженцев", "desc": "Открывает функцию сеять лес! Лесорубы высаживают саженцы деревьев на вырубках, и они снова вырастают.",
+		"category": "ecology", "unlock_type": "ordinary",
+		"cost": {"wood": 30, "stone": 10}, "prerequisites": [],
+		"effects": {"can_plant_trees": true}
+	},
+	"woodcutter_iron_axes": {
+		"id": "woodcutter_iron_axes", "building_type": "woodcutter_camp",
+		"name": "Закалённые топоры лесорубов", "desc": "Ускоряет рубку деревьев на 30% и увеличивает скорость заготовки дров.",
+		"category": "tools", "unlock_type": "ordinary",
+		"cost": {"wood": 20, "metal": 10}, "prerequisites": [],
+		"effects": {"woodcutting_speed": 0.30}
 	}
 }
 

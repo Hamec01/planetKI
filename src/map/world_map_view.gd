@@ -6,6 +6,9 @@ const TILE_SIZE: float = 32.0
 var planet_data: Dictionary = {}
 var hovered_tile_coord: Vector2i = Vector2i(-1, -1)
 var selected_tile_coord: Vector2i = Vector2i(-1, -1)
+var selected_nature_coord: Vector2i = Vector2i(-1, -1)
+var selected_nature_info: Dictionary = {}
+var selected_animal_id: String = ""
 
 var current_map_mode: String = "normal"
 var anim_time: float = 0.0
@@ -24,6 +27,10 @@ var arrows: Array[Dictionary] = [] # {from: Vector2, to: Vector2, t: float, spee
 var damage_floats: Array[Dictionary] = [] # {pos: Vector2, text: String, color: Color, life: float}
 var combat_sparks: Array[Dictionary] = [] # {pos: Vector2, life: float, color: Color}
 
+var tex_hare = preload("res://Assets/nature_clean/animal_hare.png")
+var tex_deer = preload("res://Assets/nature_clean/animal_deer.png")
+var tex_carcass = preload("res://Assets/nature_clean/carcass.png")
+
 func _ready() -> void:
 	TileTextureManager.load_all_textures()
 	BuildingTextureManager.load_all_textures()
@@ -40,7 +47,6 @@ func _ready() -> void:
 
 func _on_world_generated(data: Dictionary) -> void:
 	planet_data = data
-	_sync_population_villagers()
 	queue_redraw()
 
 func _on_map_mode_changed(mode_name: String) -> void:
@@ -118,129 +124,86 @@ func _find_nearest_enemy_army(army: ArmyData) -> ArmyData:
 	return best_a
 
 # ==============================================================================
-# 1:1 СИНХРОНИЗАЦИЯ НАСЕЛЕНИЯ С КАРТОЙ
+# ЖИТЕЛИ (NPC) — ПОЛУЧЕНИЕ ВЫБРАННОГО ГРАЖДАНИНА ПО КЛИКУ
 # ==============================================================================
-func _sync_population_villagers() -> void:
-	var player_s: SettlementData = GameManager.settlements.get("player_tribe_settlement", null)
-	if player_s == null:
-		return
-		
-	var target_count = player_s.population.get_total_population()
-	var center_pos = Vector2(player_s.pos.x * TILE_SIZE + 16, player_s.pos.y * TILE_SIZE + 16)
-	
-	# Создаем пул ролей на основе реальных assigned_jobs
-	var role_pool: Array[String] = []
-	for job_id in player_s.assigned_jobs:
-		var count = player_s.assigned_jobs[job_id]
-		for _k in range(count):
-			role_pool.append(job_id)
-			
-	while role_pool.size() < target_count:
-		role_pool.append("villager")
-	if role_pool.size() > target_count:
-		role_pool.resize(target_count)
-		
-	# Синхронизируем размер массива
-	while ambient_villagers.size() < target_count:
-		var idx = ambient_villagers.size()
-		var job = role_pool[idx] if idx < role_pool.size() else "villager"
-		ambient_villagers.append({
-			"pos": center_pos + Vector2(randf_range(-14, 14), randf_range(-14, 14)),
-			"home_pos": center_pos,
-			"target_pos": center_pos + Vector2(randf_range(-40, 40), randf_range(-40, 40)),
-			"speed": randf_range(16.0, 24.0),
-			"state": 0, # 0 = walk to target, 1 = work, 2 = return
-			"work_timer": randf_range(1.5, 4.0),
-			"cargo": _get_cargo_for_job(job),
-			"carrying": false,
-			"type": job,
-			"seed": idx * 19 + randi() % 100,
-			"tex": CharacterTextureManager.get_character_for_job(job, idx)
-		})
-		
-	while ambient_villagers.size() > target_count:
-		ambient_villagers.pop_back()
-		
-	# Обновляем роли существующих жителей
-	for i in range(ambient_villagers.size()):
-		var v = ambient_villagers[i]
-		var job = role_pool[i] if i < role_pool.size() else "villager"
-		if v["type"] != job:
-			v["type"] = job
-			v["cargo"] = _get_cargo_for_job(job)
-			v["tex"] = CharacterTextureManager.get_character_for_job(job, v.get("seed", 0))
+func _get_citizen_near_position(m_pos: Vector2, max_dist: float = 20.0) -> CitizenNPC:
+	var player_s = GameManager.settlements.get("player_tribe_settlement", null)
+	if not player_s or not player_s.population:
+		return null
+	var best_c: CitizenNPC = null
+	var best_dist = max_dist
+	for c in player_s.population.citizens:
+		if c.state == CitizenNPC.State.SLEEPING and c.home_id != "":
+			continue
+		var d = c.pos.distance_to(m_pos)
+		if d < best_dist:
+			best_dist = d
+			best_c = c
+	return best_c
 
-func _get_cargo_for_job(job: String) -> String:
-	match job:
-		"woodcutter": return "wood"
-		"quarryman", "miner": return "stone"
-		"hunter": return "game"
-		"forager", "farmer": return "food"
-		"craftsman": return "kubriki"
-		"builder": return "stone"
-		_: return ""
+func _get_animal_near_position(m_pos: Vector2, max_dist: float = 24.0) -> WildAnimal:
+	if not GameManager.wildlife_manager:
+		return null
+	var best_a: WildAnimal = null
+	var best_dist = max_dist
+	for animal in GameManager.wildlife_manager.animals.values():
+		if not animal.is_alive():
+			continue
+		var d = animal.pos.distance_to(m_pos)
+		if d < best_dist:
+			best_dist = d
+			best_a = animal
+	return best_a
 
-func _find_job_target_position(v: Dictionary, player_s: SettlementData) -> Vector2:
-	var center = Vector2(player_s.pos.x * TILE_SIZE + 16, player_s.pos.y * TILE_SIZE + 16)
-	var job = v.get("type", "villager")
-	
+func _get_nature_object_at_position(m_pos: Vector2) -> Dictionary:
 	if not planet_data.has("tiles"):
-		return center
-	var tiles = planet_data["tiles"]
+		return {}
+	var center_t = Vector2i(int(floor(m_pos.x / TILE_SIZE)), int(floor(m_pos.y / TILE_SIZE)))
+	var candidates: Array[Dictionary] = []
 	
-	# Строители бегут к реальной стройплощадке на суше!
-	if job == "builder":
-		for c in GameManager.tile_buildings:
-			var b_data = GameManager.tile_buildings[c]
-			if b_data.get("status", "") == "constructing":
-				return Vector2(c.x * TILE_SIZE + 16 + randf_range(-6, 6), c.y * TILE_SIZE + 16 + randf_range(-6, 6))
+	for dy in range(2, -3, -1):
+		for dx in range(-1, 2):
+			var ct = center_t + Vector2i(dx, dy)
+			if ct.x < 0 or ct.x >= planet_data["width"] or ct.y < 0 or ct.y >= planet_data["height"]:
+				continue
+			var tile = planet_data["tiles"][ct.y][ct.x]
+			if tile.get("settlement_id", "") != "" or GameManager.tile_buildings.has(ct):
+				continue
+			var custom_nat = tile.get("nature_object", "")
+			var n_data = TileTextureManager.get_nature_data(tile["biome"], ct, tile.get("resource", null), custom_nat)
+			if n_data.is_empty() or n_data.get("tex", null) == null:
+				continue
 				
-	# Лесорубы идут к природным деревьям на суше
-	if job == "woodcutter":
-		var candidates: Array[Vector2i] = []
-		for dy in range(-4, 5):
-			for dx in range(-4, 5):
-				var tx = player_s.pos.x + dx
-				var ty = player_s.pos.y + dy
-				if ty >= 0 and ty < tiles.size() and tx >= 0 and tx < tiles[0].size():
-					var t = tiles[ty][tx]
-					if not t.get("is_water", false) and t["biome"] in [BiomeDefinitions.BiomeType.DECIDUOUS_FOREST, BiomeDefinitions.BiomeType.PINE_TAIGA, BiomeDefinitions.BiomeType.JUNGLE]:
-						candidates.append(Vector2i(tx, ty))
-		if not candidates.is_empty():
-			var chosen = candidates[randi() % candidates.size()]
-			return Vector2(chosen.x * TILE_SIZE + 16 + randf_range(-6, 6), chosen.y * TILE_SIZE + 16 + randf_range(-6, 6))
-						
-	# Шахтеры идут к горам / камням на суше
-	if job == "miner" or job == "quarryman":
-		var candidates: Array[Vector2i] = []
-		for dy in range(-4, 5):
-			for dx in range(-4, 5):
-				var tx = player_s.pos.x + dx
-				var ty = player_s.pos.y + dy
-				if ty >= 0 and ty < tiles.size() and tx >= 0 and tx < tiles[0].size():
-					var t = tiles[ty][tx]
-					if not t.get("is_water", false) and t["biome"] in [BiomeDefinitions.BiomeType.MOUNTAINS, BiomeDefinitions.BiomeType.HILLS]:
-						candidates.append(Vector2i(tx, ty))
-		if not candidates.is_empty():
-			var chosen = candidates[randi() % candidates.size()]
-			return Vector2(chosen.x * TILE_SIZE + 16 + randf_range(-6, 6), chosen.y * TILE_SIZE + 16 + randf_range(-6, 6))
-						
-	# Поиск сухих клеток вокруг стоянки для остальных жителей (собиратели, фермеры, охотники)
-	var dry_candidates: Array[Vector2i] = []
-	for dy in range(-3, 4):
-		for dx in range(-3, 4):
-			var tx = player_s.pos.x + dx
-			var ty = player_s.pos.y + dy
-			if ty >= 0 and ty < tiles.size() and tx >= 0 and tx < tiles[0].size():
-				var t = tiles[ty][tx]
-				if not t.get("is_water", false):
-					dry_candidates.append(Vector2i(tx, ty))
-					
-	if not dry_candidates.is_empty():
-		var chosen = dry_candidates[randi() % dry_candidates.size()]
-		return Vector2(chosen.x * TILE_SIZE + 16 + randf_range(-6, 6), chosen.y * TILE_SIZE + 16 + randf_range(-6, 6))
-		
-	return center
+			var c = Vector2(ct.x * TILE_SIZE + 16.0, ct.y * TILE_SIZE + 16.0)
+			var n_tex: Texture2D = n_data["tex"]
+			var orig_size = n_tex.get_size()
+			var aspect = orig_size.x / maxf(1.0, orig_size.y)
+			var target_h: float = n_data.get("scale_h", 20.0)
+			var target_w: float = target_h * aspect
+			var foot_y = c.y + 11.0
+			var n_rect = Rect2(c.x - target_w * 0.5, foot_y - target_h, target_w, target_h)
+			
+			var hit_rect = n_rect.grow(5.0)
+			if hit_rect.has_point(m_pos):
+				var node_data = {}
+				if GameManager.resource_manager and GameManager.resource_manager.nodes.has(ct):
+					node_data = GameManager.resource_manager.nodes[ct]
+				candidates.append({
+					"coord": ct,
+					"tile": tile,
+					"n_data": n_data,
+					"rect": n_rect,
+					"foot_y": foot_y,
+					"center": c,
+					"target_w": target_w,
+					"target_h": target_h,
+					"node": node_data
+				})
+				
+	if candidates.is_empty():
+		return {}
+	candidates.sort_custom(func(a, b): return a["foot_y"] > b["foot_y"])
+	return candidates[0]
 
 # ==============================================================================
 # ГЛАВНЫЙ ЦИКЛ ОБНОВЛЕНИЯ
@@ -249,42 +212,20 @@ func _process(delta: float) -> void:
 	anim_time += delta
 	redraw_timer += delta
 	
-	# 1. Синхронизация 1:1 жителей
-	if fmod(anim_time, 1.0) < delta:
-		_sync_population_villagers()
-		
-	var player_s: SettlementData = GameManager.settlements.get("player_tribe_settlement", null)
-	if player_s:
-		# Обновление движения жителей (строго по суше!)
-		for v in ambient_villagers:
-			if v["state"] == 0: # Идёт к работе
-				var dir = (v["target_pos"] - v["pos"]).normalized()
-				v["pos"] += dir * v["speed"] * delta
-				if v["pos"].distance_to(v["target_pos"]) < 4.0:
-					v["state"] = 1
-					v["work_timer"] = randf_range(2.0, 4.5)
-					v["carrying"] = (v["cargo"] != "")
-			elif v["state"] == 1: # Работает на месте
-				v["work_timer"] -= delta
-				if v["work_timer"] <= 0.0:
-					v["state"] = 2
-			elif v["state"] == 2: # Несет ресурсы домой
-				var dir = (v["home_pos"] - v["pos"]).normalized()
-				v["pos"] += dir * v["speed"] * delta
-				if v["pos"].distance_to(v["home_pos"]) < 4.0:
-					v["state"] = 0
-					v["carrying"] = false
-					v["target_pos"] = _find_job_target_position(v, player_s)
-					
-			# Защита от захода в воду
-			if planet_data.has("tiles"):
-				var cur_tx = int(floor(v["pos"].x / TILE_SIZE))
-				var cur_ty = int(floor(v["pos"].y / TILE_SIZE))
-				var tiles = planet_data["tiles"]
-				if cur_ty >= 0 and cur_ty < tiles.size() and cur_tx >= 0 and cur_tx < tiles[0].size():
-					if tiles[cur_ty][cur_tx].get("is_water", false):
-						v["pos"] = v["home_pos"]
-						v["target_pos"] = _find_job_target_position(v, player_s)
+	# 1. Обновление реальной симуляции NPC жителей в поселениях и фауны
+	if not GameManager.is_paused:
+		var sim_delta = delta * GameManager.game_speed
+		var threat_positions: Array = []
+		for s_id in GameManager.settlements:
+			var s: SettlementData = GameManager.settlements[s_id]
+			s.update_citizens(sim_delta)
+			if s.population:
+				for c in s.population.citizens:
+					if c.health > 0:
+						threat_positions.append({"pos": c.pos, "citizen": c})
+						
+		if GameManager.wildlife_manager:
+			GameManager.wildlife_manager.update(sim_delta, GameManager.nav_grid, threat_positions)
 					
 	# 2. Обновление перемещения армий на карте
 	for f_id in GameManager.factions:
@@ -535,28 +476,83 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 					
-	# 4. ОБЫЧНЫЙ ВЫБОР ОБЪЕКТА / ТАЙЛА / АРМИИ (ЛКМ)
+	# 4. ОБЫЧНЫЙ ВЫБОР ОБЪЕКТА (СПРАЙТА) / АРМИИ / ЖИТЕЛЯ (ЛКМ)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var mouse_world = get_global_mouse_position()
+		
+		# 4.1 Клик по конкретному гражданину (NPC)
+		var clicked_citizen = _get_citizen_near_position(mouse_world)
+		if clicked_citizen != null:
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = ""
+			selected_tile_coord = Vector2i(-1, -1)
+			EventBus.citizen_selected.emit(clicked_citizen)
+			queue_redraw()
+			return
+
+		# 4.2 Клик по дикому животному (фауна)
+		var clicked_animal = _get_animal_near_position(mouse_world)
+		if clicked_animal != null:
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = clicked_animal.id
+			selected_tile_coord = Vector2i(-1, -1)
+			var mouse_pos = get_viewport().get_mouse_position()
+			EventBus.animal_selected.emit(clicked_animal, mouse_pos)
+			queue_redraw()
+			return
+			
+		# 4.3 Клик по армии
 		if hovered_tile_coord != Vector2i(-1, -1) and planet_data.has("tiles"):
-			# Проверяем, кликнули ли мы по армии
 			var clicked_army = _get_army_at_tile(hovered_tile_coord)
 			if clicked_army != null:
 				selected_army = clicked_army
+				selected_nature_coord = Vector2i(-1, -1)
+				selected_nature_info = {}
+				selected_animal_id = ""
+				selected_tile_coord = Vector2i(-1, -1)
 				EventBus.army_selected.emit(clicked_army)
 				queue_redraw()
 				return
-				
-			selected_tile_coord = hovered_tile_coord
-			var tile = planet_data["tiles"][selected_tile_coord.y][selected_tile_coord.x]
+
+		# 4.4 Клик по природному объекту (дерево, гриб, камень, куст)
+		var clicked_nature = _get_nature_object_at_position(mouse_world)
+		if not clicked_nature.is_empty():
+			selected_nature_coord = clicked_nature["coord"]
+			selected_nature_info = clicked_nature
+			selected_animal_id = ""
+			selected_tile_coord = Vector2i(-1, -1)
 			var mouse_pos = get_viewport().get_mouse_position()
-			EventBus.tile_selected.emit(selected_tile_coord, tile)
-			EventBus.tile_right_clicked.emit(selected_tile_coord, tile, mouse_pos)
-			
-			if tile["settlement_id"] != "":
-				var s_data = GameManager.settlements.get(tile["settlement_id"], null)
-				if s_data:
-					EventBus.settlement_selected.emit(s_data)
+			EventBus.nature_object_selected.emit(clicked_nature, mouse_pos)
 			queue_redraw()
+			return
+
+		# 4.5 Клик по зданию или центру поселения
+		var tile_under = Vector2i(int(floor(mouse_world.x / TILE_SIZE)), int(floor(mouse_world.y / TILE_SIZE)))
+		if planet_data.has("tiles") and tile_under.x >= 0 and tile_under.x < planet_data["width"] and tile_under.y >= 0 and tile_under.y < planet_data["height"]:
+			var tile = planet_data["tiles"][tile_under.y][tile_under.x]
+			if GameManager.tile_buildings.has(tile_under) or tile.get("settlement_id", "") != "":
+				selected_tile_coord = tile_under
+				selected_nature_coord = Vector2i(-1, -1)
+				selected_nature_info = {}
+				selected_animal_id = ""
+				var mouse_pos = get_viewport().get_mouse_position()
+				EventBus.tile_selected.emit(selected_tile_coord, tile)
+				if tile["settlement_id"] != "":
+					var s_data = GameManager.settlements.get(tile["settlement_id"], null)
+					if s_data:
+						EventBus.settlement_selected.emit(s_data)
+				queue_redraw()
+				return
+
+		# 4.6 Клик по пустой земле (трава, вода, песок) — СБРОС ВЫБОРА!
+		selected_nature_coord = Vector2i(-1, -1)
+		selected_nature_info = {}
+		selected_animal_id = ""
+		selected_tile_coord = Vector2i(-1, -1)
+		EventBus.selection_cleared.emit()
+		queue_redraw()
 
 func _get_army_at_tile(coord: Vector2i) -> ArmyData:
 	for f_id in GameManager.factions:
@@ -705,8 +701,11 @@ func _draw() -> void:
 		var s_rect = Rect2(s.pos.x * TILE_SIZE, s.pos.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
 		_draw_settlement_hub(s_rect, s)
 		
-	# 4. 1:1 Жители (микро-человечки 10x10)
-	_draw_ambient_villagers()
+	# 4. 1:1 Граждане поселения (живая симуляция NPC)
+	_draw_citizens()
+
+	# 4.1 Дикие животные и туши на карте (Этап C)
+	_draw_wildlife()
 
 	# 5. Дружины и армии (RTS на карте)
 	_draw_armies_and_combat()
@@ -717,14 +716,14 @@ func _draw() -> void:
 	# 7. ПОДСВЕТКА И ПРИЗРАК ПРИ СТРОИТЕЛЬСТВЕ НА КАРТЕ
 	if placement_building_id != "" and hovered_tile_coord != Vector2i(-1, -1):
 		_draw_building_placement_preview()
-	elif hovered_tile_coord != Vector2i(-1, -1):
-		var h_rect = Rect2(hovered_tile_coord.x * TILE_SIZE, hovered_tile_coord.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-		draw_rect(h_rect, Color(1.0, 1.0, 1.0, 0.4), false, 1.5)
 		
-	# 8. Выбранный тайл
-	if selected_tile_coord != Vector2i(-1, -1):
-		var s_rect = Rect2(selected_tile_coord.x * TILE_SIZE, selected_tile_coord.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-		draw_rect(s_rect, Color(1.0, 0.85, 0.2, 0.9), false, 2.5)
+	# 8. ПОДСВЕТКА ВЫБРАННОГО ПРИРОДНОГО СПРАЙТА (ДЕРЕВО / КАМЕНЬ / ГРИБ / КУСТ)
+	if selected_nature_coord != Vector2i(-1, -1) and not selected_nature_info.is_empty():
+		_draw_selected_nature_highlight()
+		
+	# 9. ПОДСВЕТКА ВЫБРАННОГО ДИКОГО ЖИВОТНОГО
+	if selected_animal_id != "":
+		_draw_selected_animal_highlight()
 
 # --- ОТРИСОВКА РЕЖИМА СТРОИТЕЛЬСТВА НА КАРТЕ ---
 func _draw_building_placement_preview() -> void:
@@ -758,6 +757,72 @@ func _draw_building_placement_preview() -> void:
 	draw_rect(tip_rect, Color(0.08, 0.1, 0.15, 0.95))
 	draw_rect(tip_rect, grid_color, false, 1.2)
 	draw_string(font, tip_pos + Vector2(-text_w * 0.5 + 8, 5), tip_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color.WHITE)
+
+# --- ОТРИСОВКА ВЫДЕЛЕНИЯ ПРИРОДНОГО СПРАЙТА (ДЕРЕВО / КАМЕНЬ / ГРИБЫ) ---
+func _draw_selected_nature_highlight() -> void:
+	var info = selected_nature_info
+	var c: Vector2 = info.get("center", Vector2.ZERO)
+	var foot_y: float = info.get("foot_y", c.y + 11.0)
+	var target_w: float = info.get("target_w", 24.0)
+	var target_h: float = info.get("target_h", 24.0)
+	var coord: Vector2i = info.get("coord", Vector2i(-1, -1))
+	
+	# Получаем актуальные данные ресурса (включая остаток)
+	var node = {}
+	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
+		node = GameManager.resource_manager.nodes[coord]
+	elif info.has("node") and not info["node"].is_empty():
+		node = info["node"]
+		
+	# 1. Плавное пульсирующее кольцо у основания объекта
+	var pulse = 1.0 + sin(anim_time * 4.5) * 0.08
+	var sel_rad = maxf(9.0, target_w * 0.38) * pulse
+	var base_pos = Vector2(c.x, foot_y - 2.0)
+	
+	draw_circle(base_pos, sel_rad, Color(0.2, 0.9, 0.45, 0.22))
+	draw_arc(base_pos, sel_rad, 0.0, TAU, 28, Color(0.35, 1.0, 0.55, 0.95), 1.8)
+	
+	# 2. Информационный парящий бейдж над макушкой объекта: "🌲 100 / 100"
+	var font = ThemeDB.fallback_font
+	var res_amt = float(node.get("amount", 100.0)) if not node.is_empty() else 100.0
+	var max_amt = float(node.get("max_amount", 100.0)) if not node.is_empty() else 100.0
+	var res_type = node.get("type", "wood") if not node.is_empty() else "wood"
+	
+	var icon_sym = "🌲"
+	if res_type in ["berries", "mushrooms"]:
+		icon_sym = "🍄" if res_type == "mushrooms" else "🍓"
+	elif res_type in ["stone", "metal"]:
+		icon_sym = "🪨" if res_type == "stone" else "⛏"
+		
+	var label_txt = "%s %d / %d" % [icon_sym, int(res_amt), int(max_amt)]
+	var txt_w = label_txt.length() * 6.5 + 16.0
+	var badge_pos = Vector2(c.x, foot_y - target_h - 18.0)
+	var badge_rect = Rect2(badge_pos.x - txt_w * 0.5, badge_pos.y - 8.0, txt_w, 18.0)
+	
+	# Тень, плашка и рамка бейджа
+	draw_circle(Vector2(c.x, foot_y - target_h - 9.0), 3.0, Color(0.35, 1.0, 0.55, 0.9))
+	draw_rect(badge_rect, Color(0.08, 0.12, 0.16, 0.94))
+	draw_rect(badge_rect, Color(0.35, 1.0, 0.55, 0.9), false, 1.2)
+	
+	# Мини-индикатор заполненности ресурса в бейдже
+	var fill_pct = clampf(res_amt / maxf(1.0, max_amt), 0.0, 1.0)
+	var bar_y = badge_rect.end.y - 2.0
+	draw_line(Vector2(badge_rect.position.x + 2, bar_y), Vector2(badge_rect.position.x + 2 + (txt_w - 4) * fill_pct, bar_y), Color(0.35, 1.0, 0.55, 0.95), 2.0)
+	
+	draw_string(font, badge_pos + Vector2(-txt_w * 0.5 + 8, 4), label_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color.WHITE)
+
+# --- ОТРИСОВКА ВЫДЕЛЕНИЯ ДИКОГО ЖИВОТНОГО ---
+func _draw_selected_animal_highlight() -> void:
+	if not GameManager.wildlife_manager:
+		return
+	var animal = GameManager.wildlife_manager.animals.get(selected_animal_id, null)
+	if animal == null or not animal.is_alive():
+		return
+	var p = animal.pos
+	var pulse = 1.0 + sin(anim_time * 5.0) * 0.08
+	var r = 11.0 * pulse * animal.get_scale()
+	draw_circle(p + Vector2(0, 1.5), r, Color(1.0, 0.85, 0.3, 0.20))
+	draw_arc(p + Vector2(0, 1.5), r, 0.0, TAU, 24, Color(1.0, 0.88, 0.35, 0.95), 1.8)
 
 # --- ОТРИСОВКА ЗДАНИЙ ---
 func _draw_visible_settlement_buildings() -> void:
@@ -838,37 +903,172 @@ func _draw_settlement_hub(rect: Rect2, s: SettlementData) -> void:
 		var font = ThemeDB.fallback_font
 		draw_string(font, title_pos + Vector2(-text_w * 0.5 + 7, 4), full_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.92, 0.7))
 
-# --- ОТРИСОВКА 1:1 ЖИТЕЛЕЙ ---
-func _draw_ambient_villagers() -> void:
-	for v in ambient_villagers:
-		var p = v["pos"]
-		var char_tex = v.get("tex", null)
-		if char_tex == null:
-			char_tex = CharacterTextureManager.get_character_for_job(v["type"], v.get("seed", 0))
-			v["tex"] = char_tex
+# --- ОТРИСОВКА 1:1 ЖИТЕЛЕЙ (NPC) ---
+func _draw_citizens() -> void:
+	var font = ThemeDB.fallback_font
+	
+	for s_id in GameManager.settlements:
+		var s: SettlementData = GameManager.settlements[s_id]
+		if not s.population:
+			continue
 			
-		var char_size = Vector2(10.0, 10.0)
-		var bob = sin(anim_time * 9.0 + v.get("seed", 0)) * 0.7 if v["state"] != 1 else 0.0
-		var char_rect = Rect2(p.x - char_size.x * 0.5, p.y - char_size.y + 2.0 + bob, char_size.x, char_size.y)
-		
-		# Тень
-		draw_circle(p + Vector2(0, 1.5), 2.2, Color(0, 0, 0, 0.35))
-		
-		if char_tex:
-			draw_texture_rect(char_tex, char_rect, false)
-		else:
-			draw_circle(p, 1.8, Color(0.9, 0.8, 0.7))
-			draw_circle(p + Vector2(0, 2.0), 2.0, Color(0.35, 0.45, 0.6))
+		for c in s.population.citizens:
+			# Если житель спит в доме — скрываем со двора
+			if c.state == CitizenNPC.State.SLEEPING and c.home_id != "":
+				continue
+				
+			var p = c.pos
+			var char_tex = c.get_texture()
+			var char_size = Vector2(12.0, 12.0)
 			
-		# Значок переносимого груза
-		if v["carrying"]:
-			var cargo_icon = ItemTextureManager.get_icon(v["cargo"])
-			var icon_pos = p + Vector2(-3.5, -char_size.y - 5.0 + bob)
-			draw_circle(icon_pos + Vector2(3.5, 3.5), 4.2, Color(0.08, 0.1, 0.15, 0.90))
-			if cargo_icon:
-				draw_texture_rect(cargo_icon, Rect2(icon_pos + Vector2(0.5, 0.5), Vector2(6.0, 6.0)), false)
+			var is_moving = (c.state in [CitizenNPC.State.MOVING_TO_WORK, CitizenNPC.State.CARRYING, CitizenNPC.State.GOING_HOME, CitizenNPC.State.FLEEING] or not c.path.is_empty())
+			var is_working = (c.state in [CitizenNPC.State.WORKING, CitizenNPC.State.GATHERING, CitizenNPC.State.BUTCHERING])
+			
+			var bob = sin(anim_time * 10.0 + float(c.seed_val % 100)) * 0.8 if is_moving else 0.0
+			var char_rect = Rect2(p.x - char_size.x * 0.5, p.y - char_size.y + 2.0 + bob, char_size.x, char_size.y)
+			
+			# Тень под ногами
+			draw_circle(p + Vector2(0, 1.5), 2.5, Color(0, 0, 0, 0.35))
+			
+			if char_tex:
+				draw_texture_rect(char_tex, char_rect, false)
 			else:
-				draw_circle(icon_pos + Vector2(3.5, 3.5), 2.0, Color(0.9, 0.7, 0.2))
+				draw_circle(p, 2.0, Color(0.9, 0.8, 0.7))
+				draw_circle(p + Vector2(0, 2.0), 2.2, Color(0.35, 0.45, 0.6))
+
+			# Визуальные движения инструмента при работе и оружие стражи
+			if is_working:
+				var swing = sin(anim_time * 8.0) * 4.0
+				if c.job_id == "woodcutter":
+					draw_line(p + Vector2(4, -6), p + Vector2(7 + swing, -10 - swing * 0.5), Color(0.65, 0.45, 0.25), 1.6)
+					draw_circle(p + Vector2(7 + swing, -10 - swing * 0.5), 2.2, Color(0.75, 0.8, 0.85))
+				elif c.job_id in ["quarryman", "miner"]:
+					draw_line(p + Vector2(4, -6), p + Vector2(7 - swing, -9 + swing * 0.5), Color(0.6, 0.4, 0.2), 1.6)
+					draw_circle(p + Vector2(7 - swing, -9 + swing * 0.5), 2.0, Color(0.85, 0.75, 0.4))
+				elif c.job_id == "builder":
+					draw_line(p + Vector2(4, -5), p + Vector2(7, -8 + swing * 0.6), Color(0.6, 0.4, 0.2), 1.5)
+			elif c.job_id in ["guard", "warrior"]:
+				draw_line(p + Vector2(5.0, 1.0), p + Vector2(5.0, -char_size.y - 4.0), Color(0.55, 0.38, 0.2), 1.5)
+				draw_line(p + Vector2(5.0, -char_size.y - 4.0), p + Vector2(5.0, -char_size.y - 7.0), Color(0.8, 0.85, 0.9), 2.0)
+				
+			# Индикатор сна под открытым небом
+			if c.state == CitizenNPC.State.SLEEPING:
+				draw_string(font, p + Vector2(-6, -char_size.y - 2), "zZ", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.6, 0.8, 1.0, 0.85))
+				
+			# Значок переносимого груза
+			if c.cargo_type != "" and c.cargo_amount > 0:
+				var cargo_icon = ItemTextureManager.get_icon(c.cargo_type)
+				var icon_pos = p + Vector2(-4.0, -char_size.y - 6.0 + bob)
+				draw_circle(icon_pos + Vector2(4.0, 4.0), 5.0, Color(0.08, 0.1, 0.15, 0.92))
+				if cargo_icon:
+					draw_texture_rect(cargo_icon, Rect2(icon_pos + Vector2(0.5, 0.5), Vector2(7.0, 7.0)), false)
+				else:
+					draw_circle(icon_pos + Vector2(4.0, 4.0), 2.5, Color(0.9, 0.7, 0.2))
+					
+			# Речевое облачко при общении
+			if c.speech_timer > 0.0 and c.speech_bubble != "":
+				var txt_size = font.get_string_size(c.speech_bubble, HORIZONTAL_ALIGNMENT_LEFT, -1, 9)
+				var b_rect = Rect2(p.x - txt_size.x * 0.5 - 4, p.y - char_size.y - 18.0, txt_size.x + 8, 13)
+				draw_rect(b_rect, Color(0.1, 0.12, 0.16, 0.92), true)
+				draw_rect(b_rect, Color(0.7, 0.85, 1.0, 0.85), false, 1.0)
+				draw_string(font, Vector2(b_rect.position.x + 4, b_rect.position.y + 10), c.speech_bubble, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 1.0, 0.9))
+				
+			# Визуальная анимация рубки дерева со щепками
+			if c.job_id == "woodcutter" and c.state == CitizenNPC.State.WORKING:
+				var chop_phase = sin(anim_time * 12.0)
+				var axe_dir = 1.0 if c.facing_dir.x >= 0 else -1.0
+				var axe_blade = p + Vector2(6.0 * axe_dir, -6.0 + chop_phase * 4.0)
+				draw_line(p + Vector2(2 * axe_dir, -4), axe_blade, Color(0.5, 0.35, 0.2), 2.0)
+				draw_circle(axe_blade, 2.2, Color(0.75, 0.8, 0.85))
+				if chop_phase > 0.3:
+					for chip_i in range(3):
+						var chip_off = Vector2(sin(anim_time * 10.0 + chip_i) * 8.0, -8.0 - cos(anim_time * 10.0 + chip_i) * 5.0)
+						draw_circle(axe_blade + chip_off, 1.2, Color(0.85, 0.7, 0.4, 0.9))
+
+			# Полоска здоровья над раненым жителем
+			if c.health < c.max_health:
+				var hp_pct = clampf(c.health / c.max_health, 0.0, 1.0)
+				var bar_w = 12.0
+				var bar_pos = p + Vector2(-bar_w * 0.5, -char_size.y - 5.0)
+				draw_rect(Rect2(bar_pos.x, bar_pos.y, bar_w, 2.0), Color(0.1, 0.1, 0.1, 0.8))
+				draw_rect(Rect2(bar_pos.x, bar_pos.y, bar_w * hp_pct, 2.0), Color(0.9, 0.2, 0.2, 0.95))
+
+			# Видимый момент атаки охотника (выстрел стрелы / бросок копья)
+			if c.state == CitizenNPC.State.ATTACKING and c.target_id != "" and GameManager.wildlife_manager:
+				if GameManager.wildlife_manager.animals.has(c.target_id):
+					var anim_target = GameManager.wildlife_manager.animals[c.target_id]
+					var to_t = anim_target.pos - p
+					var dist = to_t.length()
+					if dist > 4.0:
+						var dir = to_t.normalized()
+						var shot_pct = 1.0 - clampf(c.work_timer / 1.2, 0.0, 1.0)
+						var arrow_p = p + dir * (dist * shot_pct)
+						draw_line(arrow_p - dir * 5.0, arrow_p, Color(1.0, 0.88, 0.35, 0.95), 1.6)
+
+# --- ОТРИСОВКА ДИКИХ ЖИВОТНЫХ И ТУШ (24 ВИДА) ---
+func _draw_wildlife() -> void:
+	if not GameManager.wildlife_manager:
+		return
+		
+	# 1. Туши на земле
+	for c in GameManager.wildlife_manager.carcasses.values():
+		var p = c["pos"]
+		draw_circle(p + Vector2(0, 1.0), 4.0, Color(0, 0, 0, 0.35))
+		if tex_carcass:
+			var c_size = 14.0 if c.get("max_meat", 3.0) > 10.0 else 10.0
+			draw_texture_rect(tex_carcass, Rect2(p.x - c_size * 0.5, p.y - c_size * 0.5, c_size, c_size), false)
+		else:
+			draw_circle(p, 3.5, Color(0.65, 0.25, 0.2))
+			
+	# 2. 24 вида диких животных
+	for animal in GameManager.wildlife_manager.animals.values():
+		if not animal.is_alive():
+			continue
+		var p = animal.pos
+		var is_moving = (animal.state in [WildAnimal.State.FLEEING, WildAnimal.State.GRAZING, WildAnimal.State.FOLLOWING, WildAnimal.State.SWIMMING, WildAnimal.State.DEFENDING])
+		var bob = sin(animal.wobble_timer) * 0.8 if is_moving else 0.0
+		
+		# Эффект ряби на воде для плавающих уток
+		if animal.state == WildAnimal.State.SWIMMING:
+			draw_arc(p + Vector2(0, 2.0), 6.0 + sin(anim_time * 4.0) * 1.5, 0, TAU, 12, Color(0.6, 0.85, 1.0, 0.4), 1.0)
+		else:
+			var shadow_r = 5.0 * animal.get_scale()
+			draw_circle(p + Vector2(0, 1.5), shadow_r, Color(0, 0, 0, 0.26))
+			
+		var a_tex = animal.get_texture()
+		var a_scale = animal.get_scale()
+		var base_dim = 16.0
+		if animal.species in ["moose", "bear"]:
+			base_dim = 22.0
+		elif animal.species in ["deer", "boar", "wolf"]:
+			base_dim = 18.0
+		elif animal.species in ["fox", "lynx", "badger"]:
+			base_dim = 15.0
+		else:
+			base_dim = 13.0
+			
+		var a_size = Vector2(base_dim, base_dim) * a_scale
+		
+		# Отражение по горизонтали в зависимости от facing_dir
+		var flipped = (animal.facing_dir.x < 0.0)
+		var a_rect: Rect2
+		if flipped:
+			a_rect = Rect2(p.x + a_size.x * 0.5, p.y - a_size.y + 2.0 + bob, -a_size.x, a_size.y)
+		else:
+			a_rect = Rect2(p.x - a_size.x * 0.5, p.y - a_size.y + 2.0 + bob, a_size.x, a_size.y)
+			
+		if a_tex:
+			draw_texture_rect(a_tex, a_rect, false)
+		else:
+			draw_circle(p, 3.0, Color(0.8, 0.6, 0.4))
+			
+		# Полоска здоровья при ранении
+		if animal.health < animal.max_health:
+			var hp_pct = clampf(animal.health / animal.max_health, 0.0, 1.0)
+			var bar_w = 14.0 * a_scale
+			var bar_pos = p + Vector2(-bar_w * 0.5, -a_size.y - 3.0)
+			draw_rect(Rect2(bar_pos.x, bar_pos.y, bar_w, 2.0), Color(0.2, 0.2, 0.2, 0.8))
+			draw_rect(Rect2(bar_pos.x, bar_pos.y, bar_w * hp_pct, 2.0), Color(0.9, 0.2, 0.2, 0.95))
 
 # --- ОТРИСОВКА RTS АРМИЙ, ГЕНЕРАЛОВ И СТРОЯ ---
 func _draw_armies_and_combat() -> void:

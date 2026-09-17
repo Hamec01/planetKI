@@ -1,7 +1,8 @@
 class_name TileTextureManager
 extends RefCounted
 
-const BiomeType = BiomeDefinitions.BiomeType
+const BiomeDefinitionsScript = preload("res://src/world/biome_definitions.gd")
+const BiomeType = BiomeDefinitionsScript.BiomeType
 
 static var base_textures: Dictionary = {}
 static var overlay_textures: Dictionary = {} # "biome_folder/mask_name" -> Texture2D
@@ -163,104 +164,115 @@ static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant 
 		var roll = rand_idx % 100
 		
 		match biome:
-		# 1. ЗИМА (СТРОГО ТОЛЬКО ЗИМНИЕ ОБЪЕКТЫ И СНЕГ)
-		BiomeType.SNOW_PEAKS:
-			if roll < 50:
-				var pool = ["rock_snow_boulder", "tree_spruce_snow", "tree_dead"]
-				picked_name = pool[rand_idx % pool.size()]
+			# 1. ЗИМА (СТРОГО ТОЛЬКО ЗИМНИЕ ОБЪЕКТЫ И СНЕГ)
+			BiomeType.SNOW_PEAKS:
+				if roll < 50:
+					var pool = ["rock_snow_boulder", "tree_spruce_snow", "tree_dead"]
+					picked_name = pool[rand_idx % pool.size()]
+					
+			BiomeType.TUNDRA:
+				if roll < 60:
+					var pool = ["tree_spruce_snow", "tree_pine_snow", "tree_bare", "tree_dead", "bush_dry_thorny", "rock_snow_boulder"]
+					picked_name = pool[rand_idx % pool.size()]
+					
+			# 2. ХВОЙНЫЙ ЛЕС (ТАЙГА) — Густой настоящий лес
+			BiomeType.PINE_TAIGA:
+				if roll < 72:
+					# 72% деревья
+					var trees = ["tree_spruce", "tree_spruce_blue", "tree_pine", "tree_spruce_young"]
+					picked_name = trees[rand_idx % trees.size()]
+				elif roll < 84:
+					# 12% лесной подлесок
+					var under = ["stump_mossy", "log_fallen", "mushrooms_brown", "plant_dense_fern"]
+					picked_name = under[rand_idx % under.size()]
+					
+			# 3. ШИРОКОЛИСТВЕННЫЙ ЛЕС — Густой лиственный лес
+			BiomeType.DECIDUOUS_FOREST:
+				if roll < 70:
+					# 70% деревья
+					var trees = ["tree_oak", "tree_birch", "tree_maple_green", "tree_poplar", "tree_autumn_red", "tree_birch_yellow"]
+					picked_name = trees[rand_idx % trees.size()]
+				elif roll < 85:
+					# 15% грибы, ягоды и лесные растения
+					var under = ["bush_berries_red", "bush_berries_blue", "mushrooms_brown", "mushrooms_flyagaric", "plant_dense_fern"]
+					picked_name = under[rand_idx % under.size()]
+					
+			# 4. ДЖУНГЛИ
+			BiomeType.JUNGLE:
+				if roll < 70:
+					var trees = ["tree_willow", "tree_maple_green", "plant_broadleaf"]
+					picked_name = trees[rand_idx % trees.size()]
+				elif roll < 85:
+					var under = ["plant_dense_fern", "bush_round_green", "bush_berries_red"]
+					picked_name = under[rand_idx % under.size()]
+					
+			# 5. ЦВЕТУЩИЙ ЛУГ
+			BiomeType.MEADOW:
+				if roll < 45:
+					# Цветы и луговая трава
+					var flowers = ["flowers_white", "flowers_yellow", "flowers_purple", "flowers_poppies", "grass_tall_meadow", "bush_flowers", "bush_berry_low"]
+					picked_name = flowers[rand_idx % flowers.size()]
+				elif roll < 52:
+					picked_name = "tree_young"
+					
+			# 6. РАВНИНЫ (Свободные поля с редкими кустиками)
+			BiomeType.PLAINS:
+				if roll < 16:
+					var p_grass = ["grass_dense", "grass_tuft_low", "bush_round_green", "bush_light"]
+					picked_name = p_grass[rand_idx % p_grass.size()]
+				elif roll < 20:
+					picked_name = "tree_young"
+					
+			# 7. САВАННА
+			BiomeType.SAVANNA:
+				if roll < 30:
+					var dry = ["grass_dry_yellow", "grass_steppe_orange", "tumbleweed", "bush_dry_thorny", "rock_red_stone"]
+					picked_name = dry[rand_idx % dry.size()]
+				elif roll < 40:
+					picked_name = "tree_autumn_red"
+					
+			# 8. ПУСТЫНЯ
+			BiomeType.DESERT:
+				if roll < 18:
+					var desert_p = ["cactus_branched", "cactus_round", "tumbleweed", "rock_limestone"]
+					picked_name = desert_p[rand_idx % desert_p.size()]
+					
+			# 9. БОЛОТО
+			BiomeType.SWAMP:
+				if roll < 50:
+					var swamp_p = ["reeds", "cattails", "marsh_grass", "marsh_broadleaf", "stump_mossy", "tree_willow"]
+					picked_name = swamp_p[rand_idx % swamp_p.size()]
+					
+			# 10. ХОЛМЫ И ГОРЫ
+			BiomeType.HILLS:
+				if roll < 45:
+					var hills_p = ["rock_round_boulder", "rock_small_pebbles", "rock_mossy", "bush_dark", "grass_thin"]
+					picked_name = hills_p[rand_idx % hills_p.size()]
+					
+			BiomeType.MOUNTAINS:
+				if roll < 65:
+					var rocks = ["rock_cliff_group", "rock_flat_slabs", "rock_round_boulder", "rock_small_pebbles"]
+					picked_name = rocks[rand_idx % rocks.size()]
+					
+			_:
+				return {}
 				
-		BiomeType.TUNDRA:
-			if roll < 60:
-				var pool = ["tree_spruce_snow", "tree_pine_snow", "tree_bare", "tree_dead", "bush_dry_thorny", "rock_snow_boulder"]
-				picked_name = pool[rand_idx % pool.size()]
-				
-		# 2. ХВОЙНЫЙ ЛЕС (ТАЙГА) — Густой настоящий лес
-		BiomeType.PINE_TAIGA:
-			if roll < 72:
-				# 72% деревья
-				var trees = ["tree_spruce", "tree_spruce_blue", "tree_pine", "tree_spruce_young"]
-				picked_name = trees[rand_idx % trees.size()]
-			elif roll < 84:
-				# 12% лесной подлесок
-				var under = ["stump_mossy", "log_fallen", "mushrooms_brown", "plant_dense_fern"]
-				picked_name = under[rand_idx % under.size()]
-				
-		# 3. ШИРОКОЛИСТВЕННЫЙ ЛЕС — Густой лиственный лес
-		BiomeType.DECIDUOUS_FOREST:
-			if roll < 70:
-				# 70% деревья
-				var trees = ["tree_oak", "tree_birch", "tree_maple_green", "tree_poplar", "tree_autumn_red", "tree_birch_yellow"]
-				picked_name = trees[rand_idx % trees.size()]
-			elif roll < 85:
-				# 15% грибы, ягоды и лесные растения
-				var under = ["bush_berries_red", "bush_berries_blue", "mushrooms_brown", "mushrooms_flyagaric", "plant_dense_fern"]
-				picked_name = under[rand_idx % under.size()]
-				
-		# 4. ДЖУНГЛИ
-		BiomeType.JUNGLE:
-			if roll < 70:
-				var trees = ["tree_willow", "tree_maple_green", "plant_broadleaf"]
-				picked_name = trees[rand_idx % trees.size()]
-			elif roll < 85:
-				var under = ["plant_dense_fern", "bush_round_green", "bush_berries_red"]
-				picked_name = under[rand_idx % under.size()]
-				
-		# 5. ЦВЕТУЩИЙ ЛУГ
-		BiomeType.MEADOW:
-			if roll < 45:
-				# Цветы и луговая трава
-				var flowers = ["flowers_white", "flowers_yellow", "flowers_purple", "flowers_poppies", "grass_tall_meadow", "bush_flowers", "bush_berry_low"]
-				picked_name = flowers[rand_idx % flowers.size()]
-			elif roll < 52:
-				picked_name = "tree_young"
-				
-		# 6. РАВНИНЫ (Свободные поля с редкими кустиками)
-		BiomeType.PLAINS:
-			if roll < 16:
-				var p_grass = ["grass_dense", "grass_tuft_low", "bush_round_green", "bush_light"]
-				picked_name = p_grass[rand_idx % p_grass.size()]
-			elif roll < 20:
-				picked_name = "tree_young"
-				
-		# 7. САВАННА
-		BiomeType.SAVANNA:
-			if roll < 30:
-				var dry = ["grass_dry_yellow", "grass_steppe_orange", "tumbleweed", "bush_dry_thorny", "rock_red_stone"]
-				picked_name = dry[rand_idx % dry.size()]
-			elif roll < 40:
-				picked_name = "tree_autumn_red"
-				
-		# 8. ПУСТЫНЯ
-		BiomeType.DESERT:
-			if roll < 18:
-				var desert_p = ["cactus_branched", "cactus_round", "tumbleweed", "rock_limestone"]
-				picked_name = desert_p[rand_idx % desert_p.size()]
-				
-		# 9. БОЛОТО
-		BiomeType.SWAMP:
-			if roll < 50:
-				var swamp_p = ["reeds", "cattails", "marsh_grass", "marsh_broadleaf", "stump_mossy", "tree_willow"]
-				picked_name = swamp_p[rand_idx % swamp_p.size()]
-				
-		# 10. ХОЛМЫ И ГОРЫ
-		BiomeType.HILLS:
-			if roll < 45:
-				var hills_p = ["rock_round_boulder", "rock_small_pebbles", "rock_mossy", "bush_dark", "grass_thin"]
-				picked_name = hills_p[rand_idx % hills_p.size()]
-				
-		BiomeType.MOUNTAINS:
-			if roll < 65:
-				var rocks = ["rock_cliff_group", "rock_flat_slabs", "rock_round_boulder", "rock_small_pebbles"]
-				picked_name = rocks[rand_idx % rocks.size()]
-				
-		_:
+		if picked_name == "":
 			return {}
-			
-	if picked_name == "":
-		return {}
 		
 	# Обработка срубленных/добытых ресурсов (если ресурс исчерпан)
-	if tile_resource != null and tile_resource is Dictionary:
+	var main_loop = Engine.get_main_loop()
+	var gm = null
+	if main_loop and main_loop is SceneTree and (main_loop as SceneTree).root:
+		gm = (main_loop as SceneTree).root.get_node_or_null("GameManager")
+	if gm and gm.resource_manager and gm.resource_manager.nodes.has(coord):
+		var r_node = gm.resource_manager.nodes[coord]
+		if r_node.get("depleted", false):
+			var dep_sprite = r_node.get("depleted_sprite", "")
+			if dep_sprite == "none" or dep_sprite == "":
+				return {}
+			picked_name = dep_sprite
+	elif tile_resource != null and tile_resource is Dictionary:
 		var amount = tile_resource.get("amount", 100)
 		if amount <= 0:
 			var res_type = tile_resource.get("type", "")

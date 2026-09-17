@@ -14,8 +14,11 @@ var event_queue: Array[Dictionary] = []
 signal event_triggered(event_data: Dictionary)
 signal choice_applied(event_id: String, choice_id: String)
 
-func _init() -> void:
-	pass
+func reset() -> void:
+	triggered_events.clear()
+	chain_cooldowns.clear()
+	active_event.clear()
+	event_queue.clear()
 
 # Ежедневная проверка условий запуска фундаментальных событий
 func process_daily_triggers(current_day: int, total_days: int, settlement: RefCounted) -> void:
@@ -81,6 +84,8 @@ func trigger_event(ev: Dictionary) -> void:
 		chain_cooldowns[chain_id] = 10 # 10 дней кулдаун на следующую ступень цепочки
 		
 	event_triggered.emit(ev)
+	if EventBus:
+		EventBus.civilization_event_triggered.emit(ev)
 
 func apply_choice(ev_id: String, choice_id: String, extra_data: Dictionary = {}) -> void:
 	var ev = CivilizationEventDB.get_event(ev_id)
