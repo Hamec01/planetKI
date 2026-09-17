@@ -73,9 +73,25 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 	var chosen_event = eligible[0]
 	trigger_event(chosen_event)
 
-func _check_event_conditions(conds: Dictionary, total_days: int, _settlement: RefCounted) -> bool:
-	var min_days = conds.get("min_days", 0)
-	if total_days < min_days:
+func _check_event_conditions(conds: Dictionary, total_days: int, settlement: RefCounted) -> bool:
+	if conds.is_empty():
+		return true
+	if conds.has("min_days") and total_days < int(conds["min_days"]):
+		return false
+	if settlement != null:
+		if conds.has("min_population") and "population" in settlement and settlement.population.get_total_population() < int(conds["min_population"]):
+			return false
+		if conds.has("min_wood") and "economy" in settlement and settlement.economy.get_resource("wood") < float(conds["min_wood"]):
+			return false
+		if conds.has("min_food") and "economy" in settlement and settlement.economy.get_resource("food") < float(conds["min_food"]):
+			return false
+		if conds.has("min_stone") and "economy" in settlement and settlement.economy.get_resource("stone") < float(conds["min_stone"]):
+			return false
+		if conds.has("min_iron") and "economy" in settlement and settlement.economy.get_resource("iron") < float(conds["min_iron"]):
+			return false
+		if conds.has("required_building") and "buildings" in settlement and not settlement.buildings.has(conds["required_building"]):
+			return false
+	elif conds.has("min_iron") or conds.has("required_building"):
 		return false
 	return true
 

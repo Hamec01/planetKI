@@ -22,10 +22,15 @@ func _process(_delta: float) -> void:
 	if visible:
 		_refresh_if_changed()
 
-func open_registry() -> void:
+func open_registry(tab_idx: int = 0) -> void:
 	visible = true
+	if tab_container and tab_idx >= 0 and tab_idx < tab_container.get_tab_count():
+		tab_container.current_tab = tab_idx
 	last_revision = ""
 	_refresh_if_changed()
+
+func open_tab(tab_idx: int) -> void:
+	open_registry(tab_idx)
 
 func _build_ui() -> void:
 	var style = StyleBoxFlat.new()

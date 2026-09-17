@@ -602,8 +602,67 @@ func _render_orders() -> void:
 	for c in orders_vbox.get_children():
 		c.queue_free()
 		
+	# 1. Очередь активных заказов
+	if current_building and not current_building.production_queue.is_empty():
+		var q_title = Label.new()
+		q_title.text = "Текущая очередь производства (%d заказов):" % current_building.production_queue.size()
+		q_title.add_theme_font_size_override("font_size", 11)
+		q_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+		orders_vbox.add_child(q_title)
+		
+		for ord_item in current_building.production_queue:
+			var q_card = PanelContainer.new()
+			var q_sbox = StyleBoxFlat.new()
+			q_sbox.bg_color = Color(0.14, 0.18, 0.25, 0.95)
+			q_sbox.border_color = Color(0.35, 0.7, 0.95, 0.8)
+			q_sbox.set_border_width_all(1)
+			q_sbox.set_corner_radius_all(5)
+			q_sbox.set_content_margin_all(5)
+			q_card.add_theme_stylebox_override("panel", q_sbox)
+			
+			var q_hbox = HBoxContainer.new()
+			q_hbox.add_theme_constant_override("separation", 6)
+			
+			var q_vbox = VBoxContainer.new()
+			q_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			
+			var q_name = Label.new()
+			var progress_pct = (ord_item.get("work_progress", 0.0) / maxf(ord_item.get("work_required", 1.0), 1.0)) * 100.0
+			q_name.text = "⚙️ %s (Прогресс: %d%%)" % [ord_item.get("name", ord_item.get("item_id", "")), int(progress_pct)]
+			q_name.add_theme_font_size_override("font_size", 10)
+			q_name.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+			q_vbox.add_child(q_name)
+			
+			var q_bar = ProgressBar.new()
+			q_bar.max_value = maxf(ord_item.get("work_required", 1.0), 1.0)
+			q_bar.value = ord_item.get("work_progress", 0.0)
+			q_bar.show_percentage = false
+			q_bar.custom_minimum_size = Vector2(100, 8)
+			q_vbox.add_child(q_bar)
+			
+			q_hbox.add_child(q_vbox)
+			
+			var cancel_btn = Button.new()
+			cancel_btn.text = "❌"
+			cancel_btn.tooltip_text = "Отменить заказ и вернуть неиспользованные материалы"
+			cancel_btn.custom_minimum_size = Vector2(28, 24)
+			var cur_ord_id = ord_item.get("order_id", "")
+			cancel_btn.pressed.connect(func():
+				if current_building.cancel_production_order(cur_ord_id, current_settlement):
+					if EventBus:
+						EventBus.notification_toast.emit("Заказ отменён", "Заказ отменён, материалы возвращены.", "info")
+					refresh_all_tabs()
+			)
+			q_hbox.add_child(cancel_btn)
+			
+			q_card.add_child(q_hbox)
+			orders_vbox.add_child(q_card)
+			
+		var sep = HSeparator.new()
+		orders_vbox.add_child(sep)
+
 	var info_lbl = Label.new()
-	info_lbl.text = "Производство оружия, брони и модификаций (EquipmentDB):"
+	info_lbl.text = "Доступные рецепты производства (EquipmentDB):"
 	info_lbl.add_theme_font_size_override("font_size", 11)
 	info_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	orders_vbox.add_child(info_lbl)
@@ -654,21 +713,19 @@ func _render_orders() -> void:
 		hbox.add_child(vbox)
 		
 		var btn = Button.new()
-		btn.text = "🔨 Изготовить"
-		btn.disabled = not can_afford or not is_unlocked
+		btn.text = "🔨 Заказать"
+		btn.disabled = not is_unlocked
 		btn.custom_minimum_size = Vector2(95, 28)
 		btn.add_theme_font_size_override("font_size", 10)
 		var target_item_id = item_id
 		var item_name = recipe["name"]
 		btn.pressed.connect(func():
-			if econ and econ.deduct_cost(cost):
-				# Реальное зачисление предмета в арсенал поселения
-				if "equipment_stockpile" in current_settlement:
-					current_settlement.equipment_stockpile[target_item_id] = current_settlement.equipment_stockpile.get(target_item_id, 0) + 1
-				current_building.add_history_entry(GameManager.current_year, "Изготовлено снаряжение: %s" % item_name)
-				if EventBus:
-					EventBus.notification_toast.emit("Оружейный заказ", "Изготовлен предмет: %s (отправлен на склад)" % item_name, "good")
-				refresh_all_tabs()
+			if current_building:
+				var ord_res = current_building.add_production_order(target_item_id, 1)
+				if ord_res.get("success", false):
+					if EventBus:
+						EventBus.notification_toast.emit("Заказ добавлен", "Заказ на %s добавлен в очередь мастерской." % item_name, "info")
+					refresh_all_tabs()
 		)
 		hbox.add_child(btn)
 		

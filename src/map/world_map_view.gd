@@ -553,10 +553,6 @@ func _can_place_building_at(coord: Vector2i, b_id: String) -> Dictionary:
 	if coord == player_s.pos:
 		return {"valid": false, "reason": "❌ Центр поселения"}
 		
-	var dist = float(abs(coord.x - player_s.pos.x) + abs(coord.y - player_s.pos.y))
-	if dist > 8.0:
-		return {"valid": false, "reason": "❌ Слишком далеко от стоянки (макс 8 клеток)"}
-		
 	if not player_s.economy.can_afford(b_info["cost"]):
 		return {"valid": false, "reason": "❌ Не хватает ресурсов для стройки"}
 		
@@ -1064,13 +1060,14 @@ func _draw_armies_and_combat() -> void:
 				draw_circle(p, 18.0 * pulse, Color(0.2, 0.8, 1.0, 0.25))
 				draw_circle(p, 18.0 * pulse, Color(0.2, 0.8, 1.0, 0.9), false, 2.0)
 				
-			# Отрисовка строя мини-воинов вокруг генерала (3-5 фигурок)
+			# Отрисовка строя мини-воинов вокруг генерала (по числу реальных воинов)
 			var formation_offsets = [
 				Vector2(-10, 4), Vector2(10, 4), Vector2(-6, 9), Vector2(6, 9),
 				Vector2(-12, -4), Vector2(12, -4), Vector2(0, 10)
 			]
 			
-			for k in range(formation_offsets.size()):
+			var soldier_count = mini(formation_offsets.size(), a.get_total_soldiers())
+			for k in range(soldier_count):
 				var f_off = formation_offsets[k]
 				var soldier_pos = p + f_off
 				var s_type = "warrior" if k % 3 == 0 else ("spearman" if k % 3 == 1 else "archer")

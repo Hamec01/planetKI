@@ -59,6 +59,10 @@ func _init_housing_capacity() -> void:
 		max_residents = 4
 		max_guests = 2
 		food_stockpile_max = 12.0
+	elif type == "granary":
+		max_residents = 0
+		max_guests = 0
+		food_stockpile_max = 100.0
 	else:
 		max_residents = 0
 		max_guests = 0
@@ -179,6 +183,90 @@ func remove_guest(citizen_id: String) -> void:
 func remove_occupant(citizen_id: String) -> void:
 	residents.erase(citizen_id)
 	guests.erase(citizen_id)
+
+func add_production_order(item_id: String, count: int = 1, maintain_stock: int = 0) -> Dictionary:
+	var recipe = EquipmentDB.RECIPES.get(item_id, {})
+	if recipe.is_empty():
+		return {"success": false, "reason": "Неизвестный рецепт"}
+		
+	var order_id = "ord_" + item_id + "_" + str(Time.get_ticks_msec()) + "_" + str(randi() % 1000)
+	var work_sec = float(recipe.get("work_days", 1.0)) * 120.0 # 120 сек работы мастера на партию
+	var new_order = {
+		"order_id": order_id,
+		"item_id": item_id,
+		"name": recipe.get("name", item_id),
+		"count": count,
+		"maintain_stock": maintain_stock,
+		"work_required": work_sec,
+		"work_progress": 0.0,
+		"cost": recipe.get("cost", {}).duplicate(),
+		"materials_delivered": {},
+		"status": "pending"
+	}
+	production_queue.append(new_order)
+	add_history_entry(GameManager.current_year if GameManager else 1, "Заказано производство: %s (%d шт.)" % [recipe.get("name", item_id), count])
+	return {"success": true, "order": new_order}
+
+func cancel_production_order(order_id: String, settlement: RefCounted = null) -> bool:
+	for i in range(production_queue.size()):
+		var o = production_queue[i]
+		if o.get("order_id", "") == order_id:
+			if settlement and "economy" in settlement:
+				for r in o.get("materials_delivered", {}):
+					settlement.economy.add_resource(r, float(o["materials_delivered"][r]))
+			production_queue.remove_at(i)
+			return true
+	return false
+
+func process_production_tick(delta: float, worker_count: int, settlement: RefCounted) -> Array[Dictionary]:
+	var completed: Array[Dictionary] = []
+	if production_queue.is_empty() or worker_count <= 0 or settlement == null:
+		return completed
+		
+	var current_order = production_queue[0]
+	var cost = current_order.get("cost", {})
+	var deliv = current_order.get("materials_delivered", {})
+	
+	# Проверка доставки материалов
+	var needs_materials = false
+	for r in cost:
+		var req_amt = float(cost[r])
+		var del_amt = float(deliv.get(r, 0.0))
+		if del_amt < req_amt:
+			needs_materials = true
+			if settlement.economy.get_resource(r) >= (req_amt - del_amt):
+				var take = req_amt - del_amt
+				settlement.economy.resources[r] = maxf(0.0, settlement.economy.resources[r] - take)
+				deliv[r] = del_amt + take
+				current_order["materials_delivered"] = deliv
+				needs_materials = false
+			break
+			
+	if needs_materials:
+		current_order["status"] = "waiting_materials"
+		return completed
+		
+	current_order["status"] = "in_progress"
+	var labor_speed = float(worker_count)
+	current_order["work_progress"] = float(current_order.get("work_progress", 0.0)) + delta * labor_speed
+	
+	var target_work = float(current_order.get("work_required", 60.0))
+	if current_order["work_progress"] >= target_work:
+		var item_id = current_order["item_id"]
+		var item_name = current_order["name"]
+		if "equipment_stockpile" in settlement:
+			settlement.equipment_stockpile[item_id] = settlement.equipment_stockpile.get(item_id, 0) + 1
+		completed.append(current_order)
+		add_history_entry(GameManager.current_year if GameManager else 1, "Завершено изготовление: %s" % item_name)
+		
+		current_order["count"] = int(current_order.get("count", 1)) - 1
+		if current_order["count"] <= 0:
+			production_queue.remove_at(0)
+		else:
+			current_order["work_progress"] = 0.0
+			current_order["materials_delivered"] = {}
+			
+	return completed
 
 func store_food(amount: float) -> float:
 	var space = maxf(0.0, food_stockpile_max - food_stockpile)

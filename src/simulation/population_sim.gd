@@ -16,7 +16,7 @@ var happiness_index: float = 80.0 # 0 - 100
 
 # Индивидуальный список граждан племени (1 гражданин = 1 NPC)
 var citizens: Array[CitizenNPC] = []
-var next_citizen_num: int = 11
+var next_citizen_num: int = 12
 
 func find_citizen(c_id: String) -> CitizenNPC:
 	for c in citizens:
@@ -32,24 +32,24 @@ func _init_starter_citizens() -> void:
 	var race = GameManager.player_race if "player_race" in GameManager else "north"
 	
 	var starter_data = [
-		{"id": "cit_1", "name": "Старейшина Мирослав", "gender": "m", "age": 52, "cohort": "elder", "job": "elder", "exp": {"sage": 40, "woodcutter": 10}},
-		{"id": "cit_2", "name": "Брок", "gender": "m", "age": 28, "cohort": "adult", "job": "woodcutter", "exp": {"woodcutter": 25, "hunter": 15}},
-		{"id": "cit_3", "name": "Ратибор", "gender": "m", "age": 24, "cohort": "adult", "job": "hunter", "exp": {"hunter": 30, "builder": 10}},
-		{"id": "cit_4", "name": "Ярополк", "gender": "m", "age": 31, "cohort": "adult", "job": "builder", "exp": {"builder": 20, "quarryman": 15}},
-		{"id": "cit_5", "name": "Светозар", "gender": "m", "age": 22, "cohort": "adult", "job": "woodcutter", "exp": {"woodcutter": 15, "forager": 10}},
-		{"id": "cit_6", "name": "Велена", "gender": "f", "age": 26, "cohort": "adult", "job": "forager", "exp": {"forager": 35, "craftsman": 10}},
-		{"id": "cit_7", "name": "Дарина", "gender": "f", "age": 23, "cohort": "adult", "job": "forager", "exp": {"forager": 25, "priest": 10}},
-		{"id": "cit_8", "name": "Лада", "gender": "f", "age": 29, "cohort": "adult", "job": "idle", "exp": {"forager": 20, "craftsman": 20}},
-		{"id": "cit_9", "name": "Забава", "gender": "f", "age": 21, "cohort": "adult", "job": "idle", "exp": {"forager": 15, "farmer": 15}},
-		{"id": "cit_10", "name": "Радомир", "gender": "m", "age": 16, "cohort": "youth", "job": "idle", "exp": {"hunter": 10, "forager": 10}}
+		{"id": "cit_1", "name": "Старейшина Мирослав", "gender": "m", "age": 52, "cohort": "elder", "job": "elder", "exp": {"sage": 40, "woodcutter": 10}, "ruler": true},
+		{"id": "cit_2", "name": "Брок", "gender": "m", "age": 28, "cohort": "adult", "job": "woodcutter", "exp": {"woodcutter": 25, "hunter": 15}, "ruler": false},
+		{"id": "cit_3", "name": "Ратибор", "gender": "m", "age": 24, "cohort": "adult", "job": "hunter", "exp": {"hunter": 30, "builder": 10}, "ruler": false},
+		{"id": "cit_4", "name": "Ярополк", "gender": "m", "age": 31, "cohort": "adult", "job": "builder", "exp": {"builder": 20, "quarryman": 15}, "ruler": false},
+		{"id": "cit_5", "name": "Светозар", "gender": "m", "age": 22, "cohort": "adult", "job": "woodcutter", "exp": {"woodcutter": 15, "forager": 10}, "ruler": false},
+		{"id": "cit_6", "name": "Велена", "gender": "f", "age": 26, "cohort": "adult", "job": "forager", "exp": {"forager": 35, "craftsman": 10}, "ruler": false},
+		{"id": "cit_7", "name": "Дарина", "gender": "f", "age": 23, "cohort": "adult", "job": "forager", "exp": {"forager": 25, "priest": 10}, "ruler": false},
+		{"id": "cit_8", "name": "Лада", "gender": "f", "age": 29, "cohort": "adult", "job": "idle", "exp": {"forager": 20, "craftsman": 20}, "ruler": false},
+		{"id": "cit_9", "name": "Забава", "gender": "f", "age": 21, "cohort": "adult", "job": "idle", "exp": {"forager": 15, "farmer": 15}, "ruler": false},
+		{"id": "cit_10", "name": "Радомир", "gender": "m", "age": 16, "cohort": "youth", "job": "idle", "exp": {"hunter": 10, "forager": 10}, "ruler": false},
+		{"id": "cit_11", "name": "Богдан", "gender": "m", "age": 25, "cohort": "adult", "job": "idle", "exp": {"quarryman": 15, "woodcutter": 10}, "ruler": false}
 	]
 	
 	for s in starter_data:
 		var c = CitizenNPCScript.new(s["id"], s["name"], s["gender"], s["age"], s["cohort"], race)
 		c.job_id = s["job"]
 		c.experience = s["exp"].duplicate()
-		if s["id"] == "cit_1":
-			c.is_ruler = true
+		c.is_ruler = s.get("ruler", false)
 		citizens.append(c)
 		
 	sync_cohorts()
@@ -63,6 +63,8 @@ func sync_cohorts() -> void:
 	old_folk = 0
 	
 	for c in citizens:
+		if c.is_ruler:
+			continue
 		if c.age <= 13:
 			c.cohort = "child"
 			children += 1
@@ -102,21 +104,82 @@ func add_citizen_exp(c_id: String, job_key: String, amount: int = 1) -> void:
 			break
 
 func get_total_population() -> int:
-	return citizens.size()
+	var count = 0
+	for c in citizens:
+		if not c.is_ruler and c.health > 0:
+			count += 1
+	return count
+
+func get_unemployed_count() -> int:
+	var count = 0
+	for c in citizens:
+		if not c.is_ruler and c.cohort != "child" and c.health > 0:
+			if c.job_id == "idle" or c.job_id == "":
+				count += 1
+	return count
+
+func get_available_for_tasks_count() -> int:
+	var count = 0
+	for c in citizens:
+		if not c.is_ruler and c.cohort != "child" and c.health > 0:
+			if c.state in [CitizenNPCScript.State.IDLE, CitizenNPCScript.State.WAITING]:
+				count += 1
+	return count
 
 func get_workforce_total() -> int:
 	var count = 0
 	for c in citizens:
-		if c.cohort in ["adult", "youth", "elder"]:
+		if not c.is_ruler and c.cohort in ["adult", "youth", "elder"] and c.health > 0:
 			count += 1
 	return count
 
 func get_mobilization_pool() -> int:
 	var count = 0
 	for c in citizens:
-		if c.cohort in ["adult", "youth"] and c.gender == "m":
+		if not c.is_ruler and c.cohort in ["adult", "youth"] and c.gender == "m" and c.health > 0:
 			count += 1
 	return count
+
+func get_population_reconciliation() -> Dictionary:
+	var total_living = 0
+	var ruler_count = 0
+	var unemployed = 0
+	var available = 0
+	var sleeping_indoor = 0
+	var active_on_map = 0
+	var guests = 0
+	var children_count = 0
+	
+	for c in citizens:
+		if c.is_ruler:
+			ruler_count += 1
+			continue
+		if c.health <= 0:
+			continue
+		total_living += 1
+		if c.cohort == "child":
+			children_count += 1
+		if c.is_guest:
+			guests += 1
+		if c.job_id == "idle" or c.job_id == "":
+			unemployed += 1
+		if c.state in [CitizenNPCScript.State.IDLE, CitizenNPCScript.State.WAITING] and c.cohort != "child":
+			available += 1
+		if c.state == CitizenNPCScript.State.SLEEPING and c.home_id != "":
+			sleeping_indoor += 1
+		else:
+			active_on_map += 1
+			
+	return {
+		"total_citizens": total_living,
+		"ruler_count": ruler_count,
+		"unemployed": unemployed,
+		"available_for_tasks": available,
+		"active_on_map": active_on_map,
+		"sleeping_indoor": sleeping_indoor,
+		"guests": guests,
+		"children": children_count
+	}
 
 func add_newborn(parent_settlement_id: String = "", spawn_pos: Vector2 = Vector2.ZERO, mother_id: String = "", father_id: String = "", family_id_val: String = "") -> CitizenNPC:
 	var race = GameManager.player_race if "player_race" in GameManager else "north"
@@ -234,7 +297,7 @@ func serialize() -> Dictionary:
 	}
 
 func deserialize(data: Dictionary) -> void:
-	next_citizen_num = data.get("next_citizen_num", 11)
+	next_citizen_num = data.get("next_citizen_num", 12)
 	citizens.clear()
 	var cit_arr = data.get("citizens", [])
 	for c_data in cit_arr:

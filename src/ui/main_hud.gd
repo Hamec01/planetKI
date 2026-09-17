@@ -71,6 +71,7 @@ func _ready() -> void:
 		$TileInfoPanel.visible = false
 	
 	_setup_top_bar_icons()
+	_setup_top_left_notification_badges()
 	_setup_bottom_rts_dock_bar()
 	_setup_toast_system()
 	_setup_map_mode_selector()
@@ -98,6 +99,57 @@ var event_registry_panel: Control = null
 var traditions_modal: Control = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
+
+var notification_badges_container: HBoxContainer = null
+var badge_decisions_btn: Button = null
+var badge_incidents_btn: Button = null
+var badge_chronicle_btn: Button = null
+
+func _setup_top_left_notification_badges() -> void:
+	if notification_badges_container != null:
+		return
+	notification_badges_container = HBoxContainer.new()
+	notification_badges_container.name = "TopLeftNotificationBadges"
+	notification_badges_container.anchors_preset = Control.PRESET_TOP_LEFT
+	notification_badges_container.offset_left = 16.0
+	notification_badges_container.offset_top = 44.0
+	notification_badges_container.offset_right = 320.0
+	notification_badges_container.offset_bottom = 72.0
+	notification_badges_container.add_theme_constant_override("separation", 6)
+	add_child(notification_badges_container)
+	
+	badge_decisions_btn = _create_badge_button("👑 Решения", "Решения правителя (ожидают выбора)", func():
+		if event_registry_panel:
+			event_registry_panel.open_tab(0)
+	)
+	badge_incidents_btn = _create_badge_button("⚠️ Угрозы", "Актуальные происшествия и простои", func():
+		if event_registry_panel:
+			event_registry_panel.open_tab(1)
+	)
+	badge_chronicle_btn = _create_badge_button("📖 Летопись", "Хроника завершенных событий", func():
+		if event_registry_panel:
+			event_registry_panel.open_tab(2)
+	)
+	
+	notification_badges_container.add_child(badge_decisions_btn)
+	notification_badges_container.add_child(badge_incidents_btn)
+	notification_badges_container.add_child(badge_chronicle_btn)
+
+func _create_badge_button(default_text: String, tip: String, on_click: Callable) -> Button:
+	var btn = Button.new()
+	btn.text = default_text
+	btn.tooltip_text = tip
+	btn.custom_minimum_size = Vector2(0, 24)
+	btn.add_theme_font_size_override("font_size", 10)
+	var sbox = StyleBoxFlat.new()
+	sbox.bg_color = Color(0.1, 0.14, 0.22, 0.92)
+	sbox.border_color = Color(0.7, 0.6, 0.3, 0.8)
+	sbox.set_border_width_all(1)
+	sbox.set_corner_radius_all(4)
+	sbox.set_content_margin_all(4)
+	btn.add_theme_stylebox_override("normal", sbox)
+	btn.pressed.connect(on_click)
+	return btn
 
 func _setup_rts_build_menu() -> void:
 	if rts_build_menu == null:
@@ -535,18 +587,49 @@ func _update_ui() -> void:
 		var pop = s.population
 		var total_pop = pop.get_total_population()
 		var housing_cap = s.get_housing_capacity()
-		var unassigned = s.get_idle_workforce()
+		var unassigned = pop.get_unemployed_count()
+		var available = pop.get_available_for_tasks_count()
 		
-		pop_label.text = "👥 %d/%d (Своб: %d)" % [total_pop, housing_cap, unassigned]
+		pop_label.text = "👥 %d/%d (Своб: %d, Готовы: %d)" % [total_pop, housing_cap, unassigned, available]
 		if total_pop > housing_cap:
-			pop_label.tooltip_text = "⚠️ ПЕРЕНАСЕЛЕНИЕ! Не хватает жилья на %d чел.\nПостройте новые хижины." % [total_pop - housing_cap]
+			pop_label.tooltip_text = "⚠️ ПЕРЕНАСЕЛЕНИЕ! Не хватает жилья на %d чел.\nЖители: %d | Без профессии: %d | Доступны для задач: %d\n(Правитель исключен из населения)" % [total_pop - housing_cap, total_pop, unassigned, available]
 			pop_label.modulate = Color(1.0, 0.4, 0.4)
 		else:
-			pop_label.tooltip_text = "Дети: %d, Юноши: %d, Взрослые: %d, Старейшины: %d" % [pop.children, pop.youth, pop.adults_m + pop.adults_f, pop.elders]
+			pop_label.tooltip_text = "Жители: %d | Без профессии: %d | Доступны для задач: %d\nВместимость жилья: %d\nДети: %d, Юноши: %d, Взрослые: %d, Старики: %d\n(Правитель исключен из населения)" % [total_pop, unassigned, available, housing_cap, pop.children, pop.youth, pop.adults_m + pop.adults_f, pop.elders]
 			pop_label.modulate = Color.WHITE
 			
 		loyalty_label.text = "Лояльность: %d%%" % int(econ.loyalty)
 		stability_label.text = "Порядок: %d%%" % int(econ.stability)
+		
+	_update_event_badges()
+
+func _update_event_badges() -> void:
+	var manager = GameManager.civilization_event_manager
+	var pending_decisions = 0
+	var pending_incidents = 0
+	var total_chronicle = 0
+	if manager:
+		for ev in manager.event_instances.values():
+			if not ev is Dictionary:
+				continue
+			var status = ev.get("status", "pending")
+			var is_incident = ev.get("type", "") == "incident" or ev.get("category", "") == "Происшествия"
+			if status == "pending":
+				if is_incident:
+					pending_incidents += 1
+				else:
+					pending_decisions += 1
+			elif status == "resolved":
+				total_chronicle += 1
+				
+	if badge_decisions_btn:
+		badge_decisions_btn.text = "👑 Решения (%d)" % pending_decisions
+		badge_decisions_btn.modulate = Color(1.3, 1.1, 0.6) if pending_decisions > 0 else Color(0.8, 0.8, 0.8, 0.7)
+	if badge_incidents_btn:
+		badge_incidents_btn.text = "⚠️ Угрозы (%d)" % pending_incidents
+		badge_incidents_btn.modulate = Color(1.4, 0.4, 0.4) if pending_incidents > 0 else Color(0.8, 0.8, 0.8, 0.7)
+	if badge_chronicle_btn:
+		badge_chronicle_btn.text = "📖 Летопись (%d)" % total_chronicle
 
 func _format_tooltip(res_name: String, total: float, net: float, sources: Dictionary) -> String:
 	var lines = ["📊 %s (Запас: %d):" % [res_name, int(total)]]

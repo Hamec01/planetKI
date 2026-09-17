@@ -4,9 +4,12 @@ const SEASONS: Array[String] = ["Весна", "Лето", "Осень", "Зим�
 const DAYS_PER_MONTH: int = 30
 const MONTHS_PER_YEAR: int = 12
 
-# Временные масштабы симуляции (PlanetKI Living Settlement TZ v2)
-const DAY_CYCLE_DURATION: float = 900.0   # 15 реальных минут на 1 сутки при 1x
-const NPC_YEAR_DURATION: float = 1800.0    # 30 реальных минут на 1 биографический год при 1x (2 суток = 1 год)
+# Временные масштабы симуляции (PlanetKI Living Settlement Stage 1 TZ)
+const DAY_CYCLE_DURATION: float = 300.0   # 5 реальных минут на 1 сутки при 1x (210с день / 90с ночь)
+const DAYLIGHT_SECONDS: float = 210.0
+const NIGHT_SECONDS: float = 90.0
+const NPC_YEAR_DURATION: float = 1800.0    # 30 реальных минут на 1 биографический год при 1x (6 суток = 1 год)
+const INITIAL_FOOD_DAYS: int = 5
 
 # Текущее время симуляции
 var current_day: int = 1
@@ -23,8 +26,8 @@ var is_paused: bool = false
 var user_paused: bool = false
 var modal_pause_count: int = 0
 var game_speed: float = 1.0 # 1.0, 2.0, 4.0, 8.0
-var base_tick_interval: float = 900.0 # 900 секунд реального времени на 1 игровой день при 1x
-var tick_accumulator: float = 225.0 # Смещение на 06:00 (225 / 900 = 0.25 дня)
+var base_tick_interval: float = 300.0 # 300 секунд реального времени на 1 игровой день при 1x
+var tick_accumulator: float = 75.0 # Смещение на 06:00 (75 / 300 = 0.25 дня)
 var sim_time_total: float = 0.0 # Общее симуляционное время в секундах
 
 # Глобальное состояние игры
@@ -97,11 +100,11 @@ func _on_world_generated_init_nav(data: Dictionary) -> void:
 		wildlife_manager.init_wildlife(data, nav_grid)
 
 func get_time_period_for_hour(hour_val: float) -> String:
-	if hour_val >= 6.0 and hour_val < 9.0:
+	if hour_val >= 5.0 and hour_val < 9.0:
 		return "Утро"
 	elif hour_val >= 9.0 and hour_val < 18.0:
 		return "День"
-	elif hour_val >= 18.0 and hour_val < 22.0:
+	elif hour_val >= 18.0 and hour_val < 21.8:
 		return "Вечер"
 	else:
 		return "Ночь"

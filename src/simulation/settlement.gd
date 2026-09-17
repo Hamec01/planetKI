@@ -41,6 +41,8 @@ var food_batches: Array[Dictionary] = []
 var _next_batch_id: int = 1
 var marriage_law: String = "monogamy" # "monogamy", "polygamy", "free_union"
 var reserved_zones: Array[Dictionary] = []
+var active_relocations: Dictionary = {}
+var equipment_stockpile: Dictionary = {}
 
 func can_manage_reserved_zones() -> bool:
 	var faction = GameManager.factions.get(faction_id, null) if GameManager else null
@@ -402,6 +404,78 @@ func auto_assign_housing() -> void:
 		c.clear_home()
 		c.last_status_reason = "Бездомный (нет свободного крова)"
 
+func get_demolition_preview(coord: Vector2i) -> Dictionary:
+	var b_inst: BuildingInstance = GameManager.building_instances.get(coord, null) if GameManager else null
+	var b_data: Dictionary = GameManager.tile_buildings.get(coord, {}) if GameManager else {}
+	if b_inst == null and b_data.is_empty():
+		return {"valid": false, "reason": "Нет здания на клетке"}
+		
+	var b_type = b_inst.type if b_inst else b_data.get("id", "")
+	var b_info = BuildingDB.get_building(b_type)
+	var b_name = b_info.get("name", b_type)
+	
+	var affected_names: Array[String] = []
+	var res_count = 0
+	var guest_count = 0
+	var food_amt = 0.0
+	var is_res = false
+	if b_inst:
+		is_res = b_inst.is_residential()
+		res_count = b_inst.residents.size()
+		guest_count = b_inst.guests.size()
+		food_amt = b_inst.food_stockpile
+		for c_id in b_inst.residents:
+			var c = population.find_citizen(c_id) if population else null
+			if c:
+				affected_names.append(c.name)
+		for c_id in b_inst.guests:
+			var c = population.find_citizen(c_id) if population else null
+			if c:
+				affected_names.append(c.name + " (гость)")
+				
+	# Расчет возврата материалов (75% от стоимости)
+	var salvage: Dictionary = {}
+	for res_key in b_info.get("cost", {}):
+		salvage[res_key] = float(b_info["cost"][res_key]) * 0.75
+		
+	var total_pop = population.get_total_population() if population else 0
+	var cur_cap = get_housing_capacity()
+	var b_cap = b_inst.max_residents if b_inst else 0
+	var remaining_free_cap = maxi(0, (cur_cap - b_cap) - total_pop)
+	
+	return {
+		"valid": true,
+		"building_type": b_type,
+		"building_name": b_name,
+		"is_residential": is_res,
+		"residents_count": res_count,
+		"guests_count": guest_count,
+		"affected_citizens": affected_names,
+		"food_stockpile": food_amt,
+		"salvage_materials": salvage,
+		"free_housing_capacity": remaining_free_cap
+	}
+
+func demolish_building_with_salvage(coord: Vector2i, confirmed: bool = true) -> Dictionary:
+	if not confirmed:
+		return {"success": false, "reason": "Действие не подтверждено"}
+	var preview = get_demolition_preview(coord)
+	if not preview.get("valid", false):
+		return {"success": false, "reason": preview.get("reason", "Не удалось снести")}
+		
+	# Зачисление спасенных материалов
+	var salvage = preview.get("salvage_materials", {})
+	for res in salvage:
+		economy.add_resource(res, float(salvage[res]))
+		
+	var ok = demolish_building(coord)
+	if ok:
+		var is_pl = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe")
+		if is_pl:
+			EventBus.resources_updated.emit(faction_id, economy.resources)
+		return {"success": true, "salvage": salvage, "preview": preview}
+	return {"success": false, "reason": "Ошибка при сносе"}
+
 func demolish_building(coord: Vector2i) -> bool:
 	var b_inst: BuildingInstance = null
 	if GameManager.building_instances.has(coord):
@@ -438,6 +512,60 @@ func demolish_building(coord: Vector2i) -> bool:
 		
 	auto_assign_housing()
 	return true
+
+func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dictionary:
+	var b_inst: BuildingInstance = GameManager.building_instances.get(source_coord, null) if GameManager else null
+	var b_data: Dictionary = GameManager.tile_buildings.get(source_coord, {}) if GameManager else {}
+	if b_inst == null and b_data.is_empty():
+		return {"success": false, "reason": "❌ Исходное здание не найдено"}
+		
+	if GameManager.tile_buildings.has(target_coord) or (GameManager.planet_data.has("tiles") and GameManager.planet_data["tiles"][target_coord.y][target_coord.x].get("is_water", false)):
+		return {"success": false, "reason": "❌ Нельзя перенести на занятую клетку или воду"}
+		
+	var b_type = b_inst.type if b_inst else b_data.get("id", "")
+	var rel_id = "reloc_" + str(source_coord.x) + "_" + str(source_coord.y) + "_to_" + str(target_coord.x) + "_" + str(target_coord.y)
+	
+	var saved_residents: Array[String] = []
+	if b_inst:
+		saved_residents = b_inst.residents.duplicate()
+		for c_id in saved_residents:
+			var c = population.find_citizen(c_id) if population else null
+			if c:
+				c.last_status_reason = "Временное жилье (дом переносится)"
+				
+	# Завершаем работу исходного здания и переносим на целевую точку
+	if b_inst:
+		GameManager.building_instances.erase(source_coord)
+	GameManager.tile_buildings.erase(source_coord)
+	
+	# Создаем новый экземпляр на целевой точке
+	var new_inst = GameManager.get_or_create_building_instance(target_coord, b_type, id)
+	new_inst.residents = saved_residents.duplicate()
+	
+	# Обновляем привязки жителей
+	for c_id in saved_residents:
+		var c = population.find_citizen(c_id) if population else null
+		if c:
+			c.home_id = new_inst.instance_id
+			c.home_coord = target_coord
+			c.home_pos = Vector2(target_coord.x * 32.0 + 16.0, target_coord.y * 32.0 + 16.0)
+			
+	GameManager.tile_buildings[target_coord] = {
+		"id": b_type,
+		"status": "active",
+		"settlement_id": id,
+		"instance_id": new_inst.instance_id
+	}
+	
+	active_relocations[rel_id] = {
+		"relocation_id": rel_id,
+		"source_coord": source_coord,
+		"target_coord": target_coord,
+		"building_type": b_type,
+		"status": "completed"
+	}
+	
+	return {"success": true, "relocation_id": rel_id}
 
 # --- СЕМЬЯ, СОЮЗЫ, РОЖДЕНИЕ И ОПЕКА (S07) ---
 func start_pregnancy(mother: CitizenNPC, father: CitizenNPC = null, gestation_sec: float = 450.0) -> bool:
@@ -2559,6 +2687,8 @@ func serialize() -> Dictionary:
 		"next_batch_id": _next_batch_id,
 		"marriage_law": marriage_law,
 		"reserved_zones": reserved_zones.duplicate(true),
+		"active_relocations": active_relocations.duplicate(true),
+		"equipment_stockpile": equipment_stockpile.duplicate(),
 		"construction_queue": queue_serialized,
 		"population": population.serialize() if population else {}
 	}
@@ -2572,6 +2702,7 @@ func deserialize(data: Dictionary) -> void:
 	assigned_jobs = data.get("assigned_jobs", {}).duplicate()
 	if data.has("economy"):
 		economy.resources = data["economy"].duplicate()
+	equipment_stockpile = data.get("equipment_stockpile", {}).duplicate()
 	if data.has("food_batches"):
 		food_batches.clear()
 		for b in data["food_batches"]:
@@ -2583,6 +2714,7 @@ func deserialize(data: Dictionary) -> void:
 	for zone in data.get("reserved_zones", []):
 		if zone is Dictionary:
 			reserved_zones.append(zone.duplicate(true))
+	active_relocations = data.get("active_relocations", {}).duplicate(true)
 	if data.has("construction_queue"):
 		construction_queue.clear()
 		for q in data["construction_queue"]:
