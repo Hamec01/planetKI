@@ -747,6 +747,16 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		"materials_delivered": {},
 		"settlement_id": id
 	}
+	
+	# Немедленно пробуждаем свободных рабочих и строителей для начала работ
+	if population:
+		for c in population.citizens:
+			if c.cohort in ["youth", "adult", "elder"] and (c.job_id in ["builder", "idle"] or c.job_id == ""):
+				if c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.TALKING]:
+					c.state = CitizenNPC.State.IDLE
+					c.decision_cooldown = 0.0
+					c.action_timer = 0.0
+					
 	return true
 
 func move_queue_item(from_idx: int, to_idx: int) -> void:
@@ -1002,6 +1012,10 @@ func update_citizens(delta: float) -> void:
 			c.commitment_timer = maxf(0.0, c.commitment_timer - delta)
 			if c.commitment_timer <= 0.0:
 				c.ongoing_task_kind = ""
+				
+		# 2c. Кулдаун на социальное общение (защита от застревания в разговорах)
+		if c.social_cooldown > 0.0:
+			c.social_cooldown = maxf(0.0, c.social_cooldown - delta)
 
 		# Реакция на непосредственную опасность (ТЗ п.5, 14, 21 Этап F)
 		var threat_nearby = false
@@ -1150,6 +1164,8 @@ func update_citizens(delta: float) -> void:
 				c.state = CitizenNPC.State.IDLE
 				c.talk_partner_id = ""
 				c.last_status_reason = "Закончил разговор"
+				c.decision_cooldown = randf_range(1.0, 2.0)
+				c.social_cooldown = randf_range(20.0, 40.0)
 			continue
 			
 		# Разумный отдых (RESTING) у костра или дома (S08)
@@ -1315,7 +1331,7 @@ func update_citizens(delta: float) -> void:
 						if GameManager.task_service and c.task_instance_id != "":
 							GameManager.task_service.set_arrived(c.task_instance_id)
 							GameManager.task_service.start_task(c.task_instance_id)
-					elif c.job_id == "builder":
+					elif c.job_id == "builder" or c.task_id in ["fetch_materials", "fetch_upgrade_materials", "build", "upgrade_work"]:
 						if c.task_id == "fetch_materials":
 							var constr_coord = c.target_coord
 							var take_res = ""
@@ -1324,12 +1340,18 @@ func update_citizens(delta: float) -> void:
 								var b = GameManager.tile_buildings[constr_coord]
 								var req = b.get("materials_required", {})
 								var deliv = b.get("materials_delivered", {})
-								for r in req:
-									var needed = float(req[r]) - float(deliv.get(r, 0.0))
-									if needed > 0.0 and economy.get_resource(r) > 0.0:
-										take_res = r
-										take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
-										break
+								if c.target_id != "" and req.has(c.target_id):
+									var needed = float(req[c.target_id]) - float(deliv.get(c.target_id, 0.0))
+									if needed > 0.0 and economy.get_resource(c.target_id) > 0.0:
+										take_res = c.target_id
+										take_amt = minf(needed, minf(c.max_carry, economy.get_resource(c.target_id)))
+								if take_res == "":
+									for r in req:
+										var needed = float(req[r]) - float(deliv.get(r, 0.0))
+										if needed > 0.0 and economy.get_resource(r) > 0.0:
+											take_res = r
+											take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
+											break
 							if take_res != "" and take_amt > 0.0:
 								economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - take_amt)
 								var is_pl = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "test_s")
@@ -1358,12 +1380,18 @@ func update_citizens(delta: float) -> void:
 								if b_inst and b_inst.has_pending_upgrade():
 									var req = b_inst.pending_upgrade.get("materials_required", {})
 									var deliv = b_inst.pending_upgrade.get("materials_delivered", {})
-									for r in req:
-										var needed = float(req[r]) - float(deliv.get(r, 0.0))
-										if needed > 0.0 and economy.get_resource(r) > 0.0:
-											take_res = r
-											take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
-											break
+									if c.target_id != "" and req.has(c.target_id):
+										var needed = float(req[c.target_id]) - float(deliv.get(c.target_id, 0.0))
+										if needed > 0.0 and economy.get_resource(c.target_id) > 0.0:
+											take_res = c.target_id
+											take_amt = minf(needed, minf(c.max_carry, economy.get_resource(c.target_id)))
+									if take_res == "":
+										for r in req:
+											var needed = float(req[r]) - float(deliv.get(r, 0.0))
+											if needed > 0.0 and economy.get_resource(r) > 0.0:
+												take_res = r
+												take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
+												break
 							if take_res != "" and take_amt > 0.0:
 								economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - take_amt)
 								var is_pl = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "test_s")
@@ -1674,7 +1702,7 @@ func update_citizens(delta: float) -> void:
 					c.last_status_reason = "Несёт %d %s на склад" % [int(c.cargo_amount), c.cargo_type]
 					if GameManager.task_service and c.task_instance_id != "":
 						GameManager.task_service.set_delivering(c.task_instance_id)
-				elif c.job_id == "builder":
+				elif c.job_id == "builder" or c.task_id in ["build", "upgrade_work"]:
 					if c.task_id == "upgrade_work":
 						if GameManager.building_instances.has(c.target_coord):
 							var b_inst = GameManager.building_instances[c.target_coord]
@@ -1873,6 +1901,8 @@ func update_citizens(delta: float) -> void:
 					continue
 					
 				var f_node = GameManager.resource_manager.find_available_node(pos, "food", 14, c.citizen_id)
+				if f_node.is_empty() and GameManager.resource_manager:
+					f_node = GameManager.resource_manager.find_available_node(pos, "food", 36, c.citizen_id)
 				if not f_node.is_empty():
 					var f_path = GameManager.nav_grid.find_path(c.pos, f_node["pos"]) if GameManager.nav_grid else []
 					if f_path.is_empty():
@@ -2071,6 +2101,8 @@ func update_citizens(delta: float) -> void:
 				var tree = chosen_tree
 				if tree.is_empty() and GameManager.resource_manager:
 					tree = GameManager.resource_manager.find_available_node(pos, "wood", 24, c.citizen_id)
+					if tree.is_empty():
+						tree = GameManager.resource_manager.find_available_node(pos, "wood", 48, c.citizen_id)
 				if not tree.is_empty():
 					var t_path = GameManager.nav_grid.find_path(c.pos, tree["pos"]) if GameManager.nav_grid else []
 					if t_path.is_empty():
@@ -2125,6 +2157,8 @@ func update_citizens(delta: float) -> void:
 						GameManager.task_service.set_delivering(c.task_instance_id)
 					continue
 				var rock = GameManager.resource_manager.find_available_node(pos, "stone", 16, c.citizen_id)
+				if rock.is_empty() and GameManager.resource_manager:
+					rock = GameManager.resource_manager.find_available_node(pos, "stone", 36, c.citizen_id)
 				if not rock.is_empty():
 					var r_path = GameManager.nav_grid.find_path(c.pos, rock["pos"]) if GameManager.nav_grid else []
 					if r_path.is_empty():
@@ -2167,6 +2201,8 @@ func update_citizens(delta: float) -> void:
 						GameManager.task_service.set_delivering(c.task_instance_id)
 					continue
 				var ore = GameManager.resource_manager.find_available_node(pos, "metal", 20, c.citizen_id)
+				if ore.is_empty() and GameManager.resource_manager:
+					ore = GameManager.resource_manager.find_available_node(pos, "metal", 40, c.citizen_id)
 				if not ore.is_empty():
 					var o_path = GameManager.nav_grid.find_path(c.pos, ore["pos"]) if GameManager.nav_grid else []
 					if o_path.is_empty():
@@ -2199,168 +2235,7 @@ func update_citizens(delta: float) -> void:
 
 			# 6. Особая логика для Строителя (S05: реальная доставка материалов, стройка и улучшения)
 			if c.job_id == "builder" and c.cohort in ["youth", "adult", "elder"]:
-				# 1. Если уже держит груз стройматериалов в руках — несёт на площадку
-				if c.cargo_amount > 0.0:
-					if c.task_id == "haul_to_site" and c.target_coord != Vector2i(-1, -1):
-						c.state = CitizenNPC.State.CARRYING
-						c.target_pos = GameManager.nav_grid.tile_to_world_center(c.target_coord)
-						c.path = GameManager.nav_grid.find_path(c.pos, c.target_pos)
-						c.path_index = 0
-						c.last_status_reason = "Несёт %d %s на стройплощадку" % [int(c.cargo_amount), c.cargo_type]
-						continue
-					elif c.task_id == "haul_to_upgrade" and c.target_coord != Vector2i(-1, -1):
-						c.state = CitizenNPC.State.CARRYING
-						c.target_pos = GameManager.nav_grid.tile_to_world_center(c.target_coord)
-						c.path = GameManager.nav_grid.find_path(c.pos, c.target_pos)
-						c.path_index = 0
-						c.last_status_reason = "Несёт %d %s для улучшения здания" % [int(c.cargo_amount), c.cargo_type]
-						continue
-				
-				# 2. Поиск активной стройки здания (из очереди строительства поселения)
-				var constr_coord = Vector2i(-1, -1)
-				var constr_b: Dictionary = {}
-				for item in construction_queue:
-					var q_c = item.get("coord", Vector2i(-1, -1))
-					if q_c != Vector2i(-1, -1) and GameManager.tile_buildings.has(q_c):
-						var b = GameManager.tile_buildings[q_c]
-						if b.get("status", "") == "constructing":
-							constr_coord = q_c
-							constr_b = b
-							break
-				
-				if constr_coord != Vector2i(-1, -1):
-					# Проверяем нехватку стройматериалов на площадке
-					var missing_r = ""
-					var missing_amt = 0.0
-					var req = constr_b.get("materials_required", {})
-					var deliv = constr_b.get("materials_delivered", {})
-					for r in req:
-						var needed = float(req[r]) - float(deliv.get(r, 0.0))
-						if needed > 0.0:
-							missing_r = r
-							missing_amt = needed
-							break
-					
-					if missing_r != "":
-						# Требуется доставка материалов со склада
-						var storage_p = _get_storage_pos(c)
-						var in_storage = economy.get_resource(missing_r)
-						if in_storage >= 1.0:
-							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
-							if p_path.is_empty():
-								c.state = CitizenNPC.State.WAITING
-								c.last_status_reason = "Нет пути на склад"
-								c.decision_cooldown = 2.0
-								continue
-							c.target_pos = storage_p
-							c.target_coord = constr_coord
-							c.task_id = "fetch_materials"
-							c.path = p_path
-							c.path_index = 0
-							c.state = CitizenNPC.State.MOVING_TO_WORK
-							c.last_status_reason = "Идёт на склад за стройматериалами (%s)" % missing_r
-							c.decision_cooldown = 0.8
-							if GameManager.task_service:
-								var tid = GameManager.task_service.create_task("haul_materials", constr_b.get("id", ""), constr_coord, storage_p)
-								GameManager.task_service.assign_actor(tid, c.citizen_id)
-								c.task_instance_id = tid
-							continue
-						else:
-							# Нехватка материалов на складе останавливает стройку!
-							c.state = CitizenNPC.State.WAITING
-							c.last_status_reason = "Стройка остановлена: нет материалов на складе (%s)" % missing_r
-							c.decision_cooldown = randf_range(2.0, 4.0)
-							if GameManager.task_service and c.task_instance_id != "":
-								GameManager.task_service.fail_task(c.task_instance_id, "Нехватка материалов", true)
-								c.task_instance_id = ""
-							continue
-					else:
-						# Все материалы доставлены: физическая работа на стройплощадке
-						var site_p = GameManager.nav_grid.tile_to_world_center(constr_coord)
-						var s_path = GameManager.nav_grid.find_path(c.pos, site_p) if GameManager.nav_grid else []
-						if s_path.is_empty():
-							c.state = CitizenNPC.State.WAITING
-							c.last_status_reason = "Нет пути к стройплощадке"
-							c.decision_cooldown = 2.0
-							continue
-						c.target_coord = constr_coord
-						c.target_pos = site_p
-						c.task_id = "build"
-						c.path = s_path
-						c.path_index = 0
-						c.state = CitizenNPC.State.MOVING_TO_WORK
-						c.last_status_reason = "Идёт строить: %s" % constr_b.get("id", "")
-						c.decision_cooldown = 0.8
-						if GameManager.task_service:
-							var tid = GameManager.task_service.create_task("build", constr_b.get("id", ""), constr_coord, site_p)
-							GameManager.task_service.assign_actor(tid, c.citizen_id)
-							c.task_instance_id = tid
-						continue
-				
-				# 3. Поиск активного улучшения здания (если нет новых строек)
-				var up_coord = Vector2i(-1, -1)
-				var up_inst: BuildingInstance = null
-				for b_inst in GameManager.building_instances.values():
-					if b_inst and b_inst.has_pending_upgrade():
-						up_coord = b_inst.pos
-						up_inst = b_inst
-						break
-				if up_coord != Vector2i(-1, -1) and up_inst != null:
-					var up = up_inst.pending_upgrade
-					var missing_r = ""
-					var req = up.get("materials_required", {})
-					var deliv = up.get("materials_delivered", {})
-					for r in req:
-						var needed = float(req[r]) - float(deliv.get(r, 0.0))
-						if needed > 0.0:
-							missing_r = r
-							break
-					if missing_r != "":
-						var storage_p = _get_storage_pos(c)
-						var in_storage = economy.get_resource(missing_r)
-						if in_storage >= 1.0:
-							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
-							if p_path.is_empty():
-								c.state = CitizenNPC.State.WAITING
-								c.last_status_reason = "Нет пути на склад"
-								c.decision_cooldown = 2.0
-								continue
-							c.target_pos = storage_p
-							c.target_coord = up_coord
-							c.task_id = "fetch_upgrade_materials"
-							c.path = p_path
-							c.path_index = 0
-							c.state = CitizenNPC.State.MOVING_TO_WORK
-							c.last_status_reason = "Идёт на склад за материалами для улучшения (%s)" % missing_r
-							c.decision_cooldown = 0.8
-							continue
-						else:
-							c.state = CitizenNPC.State.WAITING
-							c.last_status_reason = "Улучшение остановлено: нет материалов на складе (%s)" % missing_r
-							c.decision_cooldown = randf_range(2.0, 4.0)
-							continue
-					else:
-						# Все материалы доставлены: физическая работа над улучшением
-						var b_pos = GameManager.nav_grid.tile_to_world_center(up_coord)
-						var s_path = GameManager.nav_grid.find_path(c.pos, b_pos) if GameManager.nav_grid else []
-						if s_path.is_empty():
-							c.state = CitizenNPC.State.WAITING
-							c.last_status_reason = "Нет пути к зданию для улучшения"
-							c.decision_cooldown = 2.0
-							continue
-						c.target_coord = up_coord
-						c.target_pos = b_pos
-						c.task_id = "upgrade_work"
-						c.path = s_path
-						c.path_index = 0
-						c.state = CitizenNPC.State.MOVING_TO_WORK
-						c.last_status_reason = "Идёт улучшать здание (%s)" % up.get("id", "")
-						c.decision_cooldown = 0.8
-						continue
-						
-				c.state = CitizenNPC.State.WAITING
-				c.last_status_reason = "Нет активных строек"
-				c.decision_cooldown = randf_range(4.0, 7.0)
+				_try_assign_construction_task(c)
 				continue
 
 			# 7. Особая логика для Ремесленника (S05: забор сырья со склада, крафт в мастерской, сдача готовых изделий)
@@ -2442,7 +2317,12 @@ func update_citizens(delta: float) -> void:
 				c.last_status_reason = "Идёт к месту работы (%s)" % _get_job_display_name(c.job_id)
 				c.decision_cooldown = 1.0
 			else:
-				# 10. Свободные жители, дети и старики (Этап D)
+				# 10. Свободные трудоспособные жители помогают на стройках в первую очередь!
+				if c.cohort in ["youth", "adult"] and c.job_id == "idle" and not construction_queue.is_empty():
+					if _try_assign_construction_task(c):
+						continue
+
+				# 11. Свободные жители, дети и старики (Этап D)
 				var partner = _find_chat_partner(c)
 				if partner != null and randf() < 0.40:
 					_start_social_dialog(c, partner)
@@ -2460,6 +2340,175 @@ func update_citizens(delta: float) -> void:
 				else:
 					c.last_status_reason = "Отдыхает в свободное время"
 				c.decision_cooldown = randf_range(6.0, 12.0)
+
+func _get_materials_in_transit(target_coord: Vector2i, res_name: String, exclude_citizen: CitizenNPC = null) -> float:
+	var total: float = 0.0
+	for other in population.citizens:
+		if other == exclude_citizen:
+			continue
+		if other.target_coord == target_coord:
+			if other.task_id in ["haul_to_site", "haul_to_upgrade"] and other.cargo_type == res_name:
+				total += other.cargo_amount
+			elif other.task_id in ["fetch_materials", "fetch_upgrade_materials"] and other.target_id == res_name:
+				total += other.max_carry
+	return total
+
+func _try_assign_construction_task(c: CitizenNPC) -> bool:
+	# 1. Если уже держит груз стройматериалов в руках — несёт на площадку
+	if c.cargo_amount > 0.0:
+		if c.task_id == "haul_to_site" and c.target_coord != Vector2i(-1, -1):
+			c.state = CitizenNPC.State.CARRYING
+			c.target_pos = GameManager.nav_grid.tile_to_world_center(c.target_coord)
+			c.path = GameManager.nav_grid.find_path(c.pos, c.target_pos)
+			c.path_index = 0
+			c.last_status_reason = "Несёт %d %s на стройплощадку" % [int(c.cargo_amount), c.cargo_type]
+			return true
+		elif c.task_id == "haul_to_upgrade" and c.target_coord != Vector2i(-1, -1):
+			c.state = CitizenNPC.State.CARRYING
+			c.target_pos = GameManager.nav_grid.tile_to_world_center(c.target_coord)
+			c.path = GameManager.nav_grid.find_path(c.pos, c.target_pos)
+			c.path_index = 0
+			c.last_status_reason = "Несёт %d %s для улучшения здания" % [int(c.cargo_amount), c.cargo_type]
+			return true
+
+	var missing_warehouse_res = ""
+
+	# 2. Поиск доставки материалов для всех строек в очереди (не зависаем на первом проекте!)
+	for item in construction_queue:
+		var q_c = item.get("coord", Vector2i(-1, -1))
+		if q_c != Vector2i(-1, -1) and GameManager.tile_buildings.has(q_c):
+			var b = GameManager.tile_buildings[q_c]
+			if b.get("status", "") == "constructing":
+				var req = b.get("materials_required", {})
+				var deliv = b.get("materials_delivered", {})
+				for r in req:
+					var already_delivered = float(deliv.get(r, 0.0))
+					var in_transit = _get_materials_in_transit(q_c, r, c)
+					var needed = float(req[r]) - (already_delivered + in_transit)
+					if needed > 0.0:
+						var in_storage = economy.get_resource(r)
+						if in_storage >= 1.0:
+							var storage_p = _get_storage_pos(c)
+							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
+							if p_path.is_empty():
+								continue
+							c.target_pos = storage_p
+							c.target_coord = q_c
+							c.target_id = r
+							c.task_id = "fetch_materials"
+							c.path = p_path
+							c.path_index = 0
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.last_status_reason = "Идёт на склад за стройматериалами (%s)" % r
+							c.decision_cooldown = 0.8
+							if GameManager.task_service:
+								var tid = GameManager.task_service.create_task("haul_materials", b.get("id", ""), q_c, storage_p)
+								GameManager.task_service.assign_actor(tid, c.citizen_id)
+								c.task_instance_id = tid
+							return true
+						else:
+							if missing_warehouse_res == "":
+								missing_warehouse_res = r
+
+	# 3. Физическая работа на стройплощадках, где все материалы уже доставлены
+	for item in construction_queue:
+		var q_c = item.get("coord", Vector2i(-1, -1))
+		if q_c != Vector2i(-1, -1) and GameManager.tile_buildings.has(q_c):
+			var b = GameManager.tile_buildings[q_c]
+			if b.get("status", "") == "constructing" and float(b.get("days_left", 1.0)) > 0.0:
+				var req = b.get("materials_required", {})
+				var deliv = b.get("materials_delivered", {})
+				var all_delivered = true
+				for r in req:
+					if float(deliv.get(r, 0.0)) < float(req[r]):
+						all_delivered = false
+						break
+				if all_delivered:
+					var site_p = GameManager.nav_grid.tile_to_world_center(q_c) if GameManager.nav_grid else Vector2.ZERO
+					var s_path = GameManager.nav_grid.find_path(c.pos, site_p) if GameManager.nav_grid else []
+					if s_path.is_empty():
+						continue
+					c.target_coord = q_c
+					c.target_pos = site_p
+					c.task_id = "build"
+					c.path = s_path
+					c.path_index = 0
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.last_status_reason = "Идёт строить: %s" % b.get("id", "")
+					c.decision_cooldown = 0.8
+					if GameManager.task_service:
+						var tid = GameManager.task_service.create_task("build", b.get("id", ""), q_c, site_p)
+						GameManager.task_service.assign_actor(tid, c.citizen_id)
+						c.task_instance_id = tid
+					return true
+
+	# 4. Поиск активных улучшений зданий
+	if GameManager.building_instances:
+		for b_inst in GameManager.building_instances.values():
+			if b_inst and b_inst.has_pending_upgrade():
+				var up = b_inst.pending_upgrade
+				var req = up.get("materials_required", {})
+				var deliv = up.get("materials_delivered", {})
+				for r in req:
+					var already_delivered = float(deliv.get(r, 0.0))
+					var in_transit = _get_materials_in_transit(b_inst.pos, r, c)
+					var needed = float(req[r]) - (already_delivered + in_transit)
+					if needed > 0.0:
+						var in_storage = economy.get_resource(r)
+						if in_storage >= 1.0:
+							var storage_p = _get_storage_pos(c)
+							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
+							if p_path.is_empty():
+								continue
+							c.target_pos = storage_p
+							c.target_coord = b_inst.pos
+							c.target_id = r
+							c.task_id = "fetch_upgrade_materials"
+							c.path = p_path
+							c.path_index = 0
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.last_status_reason = "Идёт на склад за материалами для улучшения (%s)" % r
+							c.decision_cooldown = 0.8
+							return true
+						else:
+							if missing_warehouse_res == "":
+								missing_warehouse_res = r
+
+				var all_up_delivered = true
+				for r in req:
+					if float(deliv.get(r, 0.0)) < float(req[r]):
+						all_up_delivered = false
+						break
+				if all_up_delivered:
+					var b_pos = GameManager.nav_grid.tile_to_world_center(b_inst.pos) if GameManager.nav_grid else Vector2.ZERO
+					var s_path = GameManager.nav_grid.find_path(c.pos, b_pos) if GameManager.nav_grid else []
+					if s_path.is_empty():
+						continue
+					c.target_coord = b_inst.pos
+					c.target_pos = b_pos
+					c.task_id = "upgrade_work"
+					c.path = s_path
+					c.path_index = 0
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.last_status_reason = "Идёт улучшать здание (%s)" % up.get("id", "")
+					c.decision_cooldown = 0.8
+					return true
+
+	# Если задач нет:
+	if c.job_id == "builder":
+		if missing_warehouse_res != "":
+			c.state = CitizenNPC.State.WAITING
+			c.last_status_reason = "Стройка остановлена: нет материалов на складе (%s)" % missing_warehouse_res
+			c.decision_cooldown = randf_range(2.0, 4.0)
+			if GameManager.task_service and c.task_instance_id != "":
+				GameManager.task_service.fail_task(c.task_instance_id, "Нехватка материалов", true)
+				c.task_instance_id = ""
+		else:
+			c.state = CitizenNPC.State.WAITING
+			c.last_status_reason = "Нет активных строек"
+			c.decision_cooldown = randf_range(3.0, 5.0)
+
+	return false
 
 func _get_job_display_name(job: String) -> String:
 	match job:
@@ -2504,8 +2553,10 @@ func _get_cargo_for_job(job: String) -> String:
 		_: return ""
 
 func _find_chat_partner(citizen: CitizenNPC) -> CitizenNPC:
+	if citizen.social_cooldown > 0.0 or not construction_queue.is_empty():
+		return null
 	for other in population.citizens:
-		if other != citizen and other.state == CitizenNPC.State.IDLE and other.pos.distance_to(citizen.pos) < 28.0:
+		if other != citizen and other.social_cooldown <= 0.0 and other.state == CitizenNPC.State.IDLE and other.pos.distance_to(citizen.pos) < 28.0:
 			return other
 	return null
 

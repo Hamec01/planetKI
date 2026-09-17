@@ -906,7 +906,7 @@ func _draw_citizens() -> void:
 				elif c.job_id in ["quarryman", "miner"]:
 					draw_line(p + Vector2(4, -6), p + Vector2(7 - swing, -9 + swing * 0.5), Color(0.6, 0.4, 0.2), 1.6)
 					draw_circle(p + Vector2(7 - swing, -9 + swing * 0.5), 2.0, Color(0.85, 0.75, 0.4))
-				elif c.job_id == "builder":
+				elif c.job_id == "builder" or c.task_id in ["build", "upgrade_work"]:
 					draw_line(p + Vector2(4, -5), p + Vector2(7, -8 + swing * 0.6), Color(0.6, 0.4, 0.2), 1.5)
 			elif c.job_id in ["guard", "warrior"]:
 				draw_line(p + Vector2(5.0, 1.0), p + Vector2(5.0, -char_size.y - 4.0), Color(0.55, 0.38, 0.2), 1.5)

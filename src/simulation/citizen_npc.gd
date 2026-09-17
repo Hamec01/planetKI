@@ -138,6 +138,7 @@ var traits: Dictionary = {
 }
 var commitment_timer: float = 0.0 # Таймер устойчивости выбора (защита от метания)
 var ongoing_task_kind: String = "" # Текущий закрепленный тип задачи
+var social_cooldown: float = 0.0 # Кулдаун на повторные социальные диалоги
 
 func take_damage(amount: float, source_name: String = "") -> bool:
 	health = maxf(0.0, health - amount)
@@ -453,6 +454,7 @@ func serialize() -> Dictionary:
 		"pregnancy": pregnancy.duplicate(),
 		"traits": traits.duplicate(),
 		"commitment_timer": commitment_timer,
+		"social_cooldown": social_cooldown,
 		"profession_levels": profession_levels.duplicate()
 	}
 
@@ -486,6 +488,7 @@ func deserialize(data: Dictionary) -> void:
 		"loyalty_ruler": 50.0, "tradition": 50.0, "tolerance": 50.0, "aggression": 20.0
 	}).duplicate()
 	commitment_timer = float(data.get("commitment_timer", 0.0))
+	social_cooldown = float(data.get("social_cooldown", 0.0))
 	profession_levels = data.get("profession_levels", {}).duplicate()
 	var p = data.get("pos", [0, 0])
 	pos = Vector2(p[0], p[1])
