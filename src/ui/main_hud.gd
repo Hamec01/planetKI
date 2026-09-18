@@ -91,6 +91,7 @@ const EventRegistryPanelScript = preload("res://src/ui/event_registry_panel.gd")
 const TraditionsRegistryModalScript = preload("res://src/ui/traditions_registry_modal.gd")
 const FaithChronicleModalScript = preload("res://src/ui/faith_chronicle_modal.gd")
 const DevEventInspectorScript = preload("res://src/ui/dev_event_inspector.gd")
+const GameOverModalScript = preload("res://src/ui/game_over_modal.gd")
 
 var rts_build_menu: Control = null
 var building_detail_panel: Control = null
@@ -99,6 +100,7 @@ var event_registry_panel: Control = null
 var traditions_modal: Control = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
+var game_over_modal: Control = null
 
 var notification_badges_container: HBoxContainer = null
 var badge_decisions_btn: Button = null
@@ -191,8 +193,16 @@ func _setup_rts_build_menu() -> void:
 		dev_inspector = DevEventInspectorScript.new()
 		dev_inspector.name = "DevEventInspector"
 		add_child(dev_inspector)
+		
+	if game_over_modal == null:
+		game_over_modal = GameOverModalScript.new()
+		game_over_modal.name = "GameOverModal"
+		add_child(game_over_modal)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.is_game_over:
+		return
+		
 	if event is InputEventKey and event.pressed and not event.echo:
 		var focused = get_viewport().gui_get_focus_owner()
 		if focused is LineEdit or focused is TextEdit:
@@ -1166,6 +1176,8 @@ func _setup_placement_mode_banner() -> void:
 	add_child(placement_mode_banner)
 
 func _on_placement_started(building_id: String) -> void:
+	if GameManager.is_game_over:
+		return
 	var b_info = BuildingDB.get_building(building_id)
 	var b_name = b_info.get("name", building_id)
 	placement_mode_label.text = "🔨 СТРОИТЕЛЬСТВО [%s]: Кликните ЛКМ по зеленой клетке для закладки | ПКМ / ESC — Отмена" % b_name

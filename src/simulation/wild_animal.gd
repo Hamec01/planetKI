@@ -166,6 +166,40 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 	var cfg = SPECIES_CONFIG.get(type_id, SPECIES_CONFIG["hare_brown"])
 	var behavior = cfg.get("behavior", "skittish")
 	
+	# 0. Охранный радиус костра и стоянки: дикие звери боятся огня и бегут от поселения
+	var near_settlement_fire = false
+	var nearest_settlement_pos = Vector2.ZERO
+	var min_settlement_dist = 999999.0
+	if GameManager and GameManager.settlements:
+		for s in GameManager.settlements.values():
+			var s_pos = Vector2(s.pos.x * 32.0 + 16.0, s.pos.y * 32.0 + 16.0)
+			var d_s = pos.distance_to(s_pos)
+			if d_s < min_settlement_dist:
+				min_settlement_dist = d_s
+				nearest_settlement_pos = s_pos
+		if min_settlement_dist < 192.0: # 6 тайлов безопасности вокруг костра стоянки
+			near_settlement_fire = true
+			
+	if near_settlement_fire and state != State.DEAD:
+		if state != State.FLEEING:
+			state = State.FLEEING
+			flee_from_pos = nearest_settlement_pos
+			flee_timer = randf_range(3.5, 6.0)
+			var flee_dir = (pos - nearest_settlement_pos).normalized()
+			if flee_dir.length_squared() < 0.01:
+				flee_dir = Vector2(1.0, 0.0)
+			facing_dir = flee_dir
+			var test_target = pos + flee_dir * randf_range(90.0, 160.0)
+			if nav_grid:
+				var target_tile = nav_grid.world_pos_to_tile(test_target)
+				if nav_grid.is_tile_walkable(target_tile):
+					target_pos = test_target
+				else:
+					var alt_tile = nav_grid.find_random_walkable_nearby(nav_grid.world_pos_to_tile(pos), 3)
+					target_pos = nav_grid.tile_to_world_center(alt_tile)
+			else:
+				target_pos = test_target
+
 	# 1. Проверка обнаружения угрозы (охотника или враждебного хищника)
 	var threat_spotted = false
 	var nearest_threat_pos = Vector2.ZERO

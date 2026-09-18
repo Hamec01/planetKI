@@ -388,6 +388,9 @@ func _process_mouse_hover() -> void:
 # ОБРАБОТКА ВВОДА (КЛИК ПО КАРТЕ, РАЗМЕЩЕНИЕ, ВЫБОР АРМИИ, МАРШ)
 # ==============================================================================
 func _unhandled_input(event: InputEvent) -> void:
+	if GameManager.is_game_over:
+		return
+		
 	var hovered_ui = get_viewport().gui_get_hovered_control()
 	if hovered_ui != null and hovered_ui.visible and not (hovered_ui.name == "MapView" or hovered_ui.name == "Game"):
 		return

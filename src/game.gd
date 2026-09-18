@@ -58,25 +58,25 @@ func start_game(seed_str: String) -> void:
 	player_f.generals.clear()
 	player_f.armies.clear()
 	
-	# 4. Создание ИИ-фракций и поселений
-	for ai_spawn in world_data["spawns"]["ai"]:
-		var ai_f = FactionData.new(ai_spawn["id"], ai_spawn["name"], ai_spawn["leader_name"], ai_spawn["color"], false)
-		ai_f.culture = ai_spawn["culture"]
-		ai_f.religion_id = "world_spirits"
-		ai_f.personality = ai_spawn["personality"]
-		ai_f.generals.clear()
-		ai_f.armies.clear()
-		GameManager.factions[ai_f.id] = ai_f
-		
-		var ai_s = SettlementData.new(
-			ai_spawn["id"] + "_settlement",
-			"Стоянка " + ai_spawn["name"],
-			ai_f.id,
-			ai_spawn["pos"]
-		)
-		GameManager.settlements[ai_s.id] = ai_s
-		ai_s.init_starter_buildings_on_map()
-		ai_s.init_citizens_on_map()
+	# 4. Создание ИИ-фракций и поселений (ВРЕМЕННО ОТКЛЮЧЕНО ПО ЗАПРОСУ ИГРОКА ДЛЯ СОЛО-ТЕСТИРОВАНИЯ)
+	# for ai_spawn in world_data["spawns"]["ai"]:
+	# 	var ai_f = FactionData.new(ai_spawn["id"], ai_spawn["name"], ai_spawn["leader_name"], ai_spawn["color"], false)
+	# 	ai_f.culture = ai_spawn["culture"]
+	# 	ai_f.religion_id = "world_spirits"
+	# 	ai_f.personality = ai_spawn["personality"]
+	# 	ai_f.generals.clear()
+	# 	ai_f.armies.clear()
+	# 	GameManager.factions[ai_f.id] = ai_f
+	# 	
+	# 	var ai_s = SettlementData.new(
+	# 		ai_spawn["id"] + "_settlement",
+	# 		"Стоянка " + ai_spawn["name"],
+	# 		ai_f.id,
+	# 		ai_spawn["pos"]
+	# 	)
+	# 	GameManager.settlements[ai_s.id] = ai_s
+	# 	ai_s.init_starter_buildings_on_map()
+	# 	ai_s.init_citizens_on_map()
 		
 	# 5. Оповещаем карту и центрируем камеру на стартовой стоянке игрока
 	EventBus.world_generated.emit(world_data)

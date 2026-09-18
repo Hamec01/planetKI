@@ -249,6 +249,10 @@ func pop_modal_pause() -> void:
 	modal_pause_count = maxi(0, modal_pause_count - 1)
 	_apply_pause_state()
 
+func reset_modal_pause() -> void:
+	modal_pause_count = 0
+	_apply_pause_state()
+
 func toggle_pause() -> void:
 	user_paused = !user_paused
 	_apply_pause_state()
@@ -259,8 +263,7 @@ func set_paused(paused: bool) -> void:
 
 func set_speed(speed: float) -> void:
 	game_speed = speed
-	if modal_pause_count == 0:
-		user_paused = false
+	user_paused = false
 	_apply_pause_state()
 
 func _apply_pause_state() -> void:

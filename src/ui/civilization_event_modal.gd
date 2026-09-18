@@ -191,8 +191,9 @@ func open_event(ev: Dictionary) -> void:
 		btn.pressed.connect(func(): _select_choice(c_id))
 		choices_container.add_child(btn)
 		
-	visible = true
-	GameManager.push_modal_pause()
+	if not visible:
+		visible = true
+		GameManager.push_modal_pause()
 
 func _select_choice(choice_id: String) -> void:
 	selected_choice_id = choice_id
@@ -237,17 +238,20 @@ func _on_confirm_pressed() -> void:
 	var instance_id = current_event.get("instance_id", "")
 	GameManager.civilization_event_manager.apply_choice(instance_id, selected_choice_id, extra_data)
 	
-	visible = false
-	GameManager.pop_modal_pause()
+	if visible:
+		visible = false
+		GameManager.pop_modal_pause()
 
 func _on_defer_pressed() -> void:
 	var instance_id = current_event.get("instance_id", "")
 	GameManager.civilization_event_manager.defer_event(instance_id)
-	visible = false
-	GameManager.pop_modal_pause()
+	if visible:
+		visible = false
+		GameManager.pop_modal_pause()
 
 func _on_ignore_pressed() -> void:
 	var instance_id = current_event.get("instance_id", "")
 	GameManager.civilization_event_manager.resolve_without_intervention(instance_id)
-	visible = false
-	GameManager.pop_modal_pause()
+	if visible:
+		visible = false
+		GameManager.pop_modal_pause()
