@@ -556,15 +556,15 @@ func _update_ui() -> void:
 		var season = GameManager.current_season
 		var ledger = s.get_detailed_ledger(season)
 		var inc: Dictionary = ledger.get("income", {})
-		var exp: Dictionary = ledger.get("expenses", ledger.get("expense", {}))
+		var exp_dict: Dictionary = ledger.get("expenses", ledger.get("expense", {}))
 		
 		var food_inc = float(inc.get("food", 0.0))
-		var food_exp = float(exp.get("food", 0.0))
+		var food_exp = float(exp_dict.get("food", 0.0))
 		food_label.text = "🍗 %d" % int(econ.get_resource("food"))
 		food_label.tooltip_text = _format_tooltip("Пища", econ.get_resource("food"), food_inc - food_exp, {"Добыча": food_inc, "Потребление": -food_exp})
 		
 		var wood_inc = float(inc.get("wood", 0.0))
-		var wood_exp = float(exp.get("wood", 0.0))
+		var wood_exp = float(exp_dict.get("wood", 0.0))
 		wood_label.text = "🪵 %d" % int(econ.get_resource("wood"))
 		wood_label.tooltip_text = _format_tooltip("Древесина", econ.get_resource("wood"), wood_inc - wood_exp, {"Добыча": wood_inc, "Расход": -wood_exp})
 		

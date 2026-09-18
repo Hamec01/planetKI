@@ -401,7 +401,7 @@ func _apply_current_tool(coord: Vector2i) -> void:
 			if target_b != cur_biome:
 				_flood_fill_biome(coord, target_b, cur_biome)
 		else:
-			var rad = brush_size / 2
+			var rad = int(brush_size * 0.5)
 			for dy in range(-rad, rad + 1):
 				for dx in range(-rad, rad + 1):
 					var nx = coord.x + dx
@@ -525,7 +525,7 @@ func _on_canvas_draw() -> void:
 	if hovered_tile != Vector2i(-1, -1):
 		var h_rect = Rect2(hovered_tile.x * TILE_SIZE, hovered_tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
 		if cur_mode == "biome" and brush_size > 1 and brush_size != 99:
-			var rad = brush_size / 2
+			var rad = int(brush_size * 0.5)
 			var b_area = Rect2((hovered_tile.x - rad) * TILE_SIZE, (hovered_tile.y - rad) * TILE_SIZE, brush_size * TILE_SIZE, brush_size * TILE_SIZE)
 			canvas.draw_rect(b_area, Color(1, 0.9, 0.2, 0.25))
 			canvas.draw_rect(b_area, Color(1, 0.9, 0.2, 0.8), false, 2.0)

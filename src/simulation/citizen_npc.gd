@@ -1,7 +1,6 @@
 class_name CitizenNPC
 extends RefCounted
 
-const CombatStatsResolver = preload("res://src/combat/combat_stats_resolver.gd")
 
 enum State {
 	IDLE,

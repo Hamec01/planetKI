@@ -1,9 +1,6 @@
 class_name SettlementData
 extends RefCounted
 
-const PopulationSim = preload("res://src/simulation/population_sim.gd")
-const EconomySim = preload("res://src/simulation/economy_sim.gd")
-const BuildingDB = preload("res://src/simulation/building_db.gd")
 
 var id: String = ""
 var name: String = "Стоянка Первого Костра"
@@ -84,19 +81,19 @@ func deposit_food_batch(batch: Dictionary) -> void:
 func consume_food(request_amount: float) -> float:
 	if request_amount <= 0.0:
 		return 0.0
-	var consumed = 0.0
+	var _consumed = 0.0
 	var rem_to_consume = request_amount
 	var i = 0
 	while i < food_batches.size() and rem_to_consume > 0.0:
 		var b = food_batches[i]
 		var b_amt = float(b.get("amount", 0.0))
 		if b_amt <= rem_to_consume:
-			consumed += b_amt
+			_consumed += b_amt
 			rem_to_consume -= b_amt
 			food_batches.remove_at(i)
 		else:
 			b["amount"] = b_amt - rem_to_consume
-			consumed += rem_to_consume
+			_consumed += rem_to_consume
 			rem_to_consume = 0.0
 			i += 1
 	var curr_food = economy.get_resource("food")
@@ -969,7 +966,7 @@ func sim_daily_tick(season: String) -> void:
 	# 2. Производство и потребление
 	var prod = calculate_daily_production(season)
 	var spoilage_factor = get_granary_spoilage_factor()
-	var econ_result = economy.sim_daily_tick(population.get_total_population(), prod, spoilage_factor)
+	var _econ_result = economy.sim_daily_tick(population.get_total_population(), prod, spoilage_factor)
 	
 	if faction_id == GameManager.player_faction_id:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -992,7 +989,6 @@ func update_citizens(delta: float) -> void:
 		
 	update_food_spoilage(delta)
 	var cur_hour = GameManager.current_hour
-	var center_pixel = Vector2(pos.x * 32.0 + 16.0, pos.y * 32.0 + 16.0)
 	
 	for c in population.citizens:
 		# 1. Индивидуальное суточное время
@@ -1252,8 +1248,8 @@ func update_citizens(delta: float) -> void:
 							c.target_pos = animal.pos
 							c.path = GameManager.nav_grid.find_path(c.pos, animal.pos)
 							c.path_index = 0
-						var arrived = c.update_movement(delta)
-						if arrived and dist_to_animal > 70.0:
+						var hunt_arrived = c.update_movement(delta)
+						if hunt_arrived and dist_to_animal > 70.0:
 							c.target_pos = animal.pos
 							c.path = GameManager.nav_grid.find_path(c.pos, animal.pos)
 							c.path_index = 0

@@ -34,7 +34,7 @@ static func create_blank_map(width: int = 48, height: int = 48, default_biome: i
 		"height": height,
 		"tiles": tiles,
 		"spawns": {
-			"player": {"pos": Vector2i(width / 2, height / 2), "name": "Стоянка Первого Костра"},
+			"player": {"pos": Vector2i(int(width * 0.5), int(height * 0.5)), "name": "Стоянка Первого Костра"},
 			"ai": []
 		}
 	}

@@ -75,7 +75,7 @@ func init_wildlife(world_data: Dictionary, nav_grid) -> void:
 	if water_near_tiles.is_empty(): water_near_tiles = all_walkable_tiles.duplicate()
 	
 	# Определяем позицию поселения игрока для создания богатой местной фауны
-	var player_spawn: Vector2i = Vector2i(width / 2, height / 2)
+	var player_spawn: Vector2i = Vector2i(int(width * 0.5), int(height * 0.5))
 	if world_data.has("spawns") and world_data["spawns"] is Dictionary and world_data["spawns"].has("player"):
 		var p_spawn = world_data["spawns"]["player"]
 		if p_spawn is Dictionary and p_spawn.has("pos"):

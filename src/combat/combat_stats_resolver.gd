@@ -1,7 +1,6 @@
 class_name CombatStatsResolver
 extends RefCounted
 
-const EquipmentDB = preload("res://src/combat/equipment_db.gd")
 
 # ==============================================================================
 # ЕДИНЫЙ КАЛЬКУЛЯТОР ХАРАКТЕРИСТИК, ОРУЖИЯ, БРОНИ, ОПЫТА И СТАРЕНИЯ (PLANETKI v2)

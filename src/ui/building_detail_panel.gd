@@ -3,11 +3,13 @@ extends PanelContainer
 
 const BuildingInstanceScript = preload("res://src/simulation/building_instance.gd")
 const BuildingSystemScript = preload("res://src/simulation/building_system.gd")
-const EquipmentDB = preload("res://src/combat/equipment_db.gd")
-
+@warning_ignore("unused_signal")
 signal building_mode_changed(building_inst: RefCounted, new_mode: String)
+@warning_ignore("unused_signal")
 signal building_upgrade_unlocked(building_inst: RefCounted, upgrade_id: String)
+@warning_ignore("unused_signal")
 signal worker_assigned(building_inst: RefCounted, citizen_id: String)
+@warning_ignore("unused_signal")
 signal worker_removed(building_inst: RefCounted, citizen_id: String)
 
 var current_building: RefCounted = null

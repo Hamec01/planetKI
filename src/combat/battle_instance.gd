@@ -1,7 +1,6 @@
 class_name BattleInstance
 extends RefCounted
 
-const ArmyData = preload("res://src/simulation/army_system.gd")
 
 var id: String = ""
 var battle_name: String = "Схватка у Каменного Брода"
@@ -49,7 +48,7 @@ func advance_round() -> Dictionary:
 	var def_gen = defender_army.general
 	
 	var att_name = att_gen.get("name", "Командир атакующих")
-	var def_name = def_gen.get("name", "Командир защитников")
+	var _def_name = def_gen.get("name", "Командир защитников")
 	
 	var att_losses = 0
 	var def_losses = 0

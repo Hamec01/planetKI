@@ -527,7 +527,6 @@ func _unhandled_input(event: InputEvent) -> void:
 				selected_nature_coord = Vector2i(-1, -1)
 				selected_nature_info = {}
 				selected_animal_id = ""
-				var mouse_pos = get_viewport().get_mouse_position()
 				EventBus.tile_selected.emit(selected_tile_coord, tile)
 				if tile["settlement_id"] != "":
 					var s_data = GameManager.settlements.get(tile["settlement_id"], null)

@@ -328,7 +328,7 @@ static func _place_tribes(tiles: Array, land_tiles: Array[Vector2i], rng: Random
 	
 	# Оценка пригодности клеток для стартового племени игрока
 	var best_score = -1.0
-	var player_pos = Vector2i(MAP_WIDTH / 2, MAP_HEIGHT / 2)
+	var player_pos = Vector2i(int(MAP_WIDTH * 0.5), int(MAP_HEIGHT * 0.5))
 	
 	for pos in land_tiles:
 		var tile = tiles[pos.y][pos.x]
@@ -377,7 +377,7 @@ static func _place_tribes(tiles: Array, land_tiles: Array[Vector2i], rng: Random
 		if has_stone: score += 2.5
 		
 		# Центр карты предпочтительнее краев
-		var center_dist = pos.distance_to(Vector2i(MAP_WIDTH / 2, MAP_HEIGHT / 2))
+		var center_dist = pos.distance_to(Vector2i(int(MAP_WIDTH * 0.5), int(MAP_HEIGHT * 0.5)))
 		score += maxf(0.0, 3.0 - center_dist * 0.08)
 		
 		if score > best_score:

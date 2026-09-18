@@ -17,7 +17,7 @@ static func process_ai_daily(faction: FactionData, settlement: SettlementData, s
 	if GameManager.current_day % 15 == 0:
 		_evaluate_ai_decisions(faction, settlement, season)
 
-static func _evaluate_ai_decisions(faction: FactionData, settlement: SettlementData, season: String) -> void:
+static func _evaluate_ai_decisions(faction: FactionData, settlement: SettlementData, _season: String) -> void:
 	var total_pop = settlement.population.get_total_population()
 	var food = settlement.economy.get_resource("food")
 	var wood = settlement.economy.get_resource("wood")
