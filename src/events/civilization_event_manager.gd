@@ -63,6 +63,10 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 			
 		var conds = ev.get("conditions", {})
 		if _check_event_conditions(conds, total_days, settlement):
+			if ev_id == "HUT-01":
+				var hut_ctx = check_hut_dispute_trigger(settlement)
+				if hut_ctx.is_empty():
+					continue
 			eligible.append(ev)
 			
 	if eligible.is_empty():
@@ -72,7 +76,35 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 	eligible.sort_custom(func(a, b): return a.get("priority", 50) > b.get("priority", 50))
 	
 	var chosen_event = eligible[0]
-	trigger_event(chosen_event)
+	var event_context = {}
+	if chosen_event.get("id", "") == "HUT-01":
+		event_context = check_hut_dispute_trigger(settlement)
+	trigger_event(chosen_event, event_context)
+
+func check_hut_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement or not ("id" in p_settlement):
+		return {}
+	if not GameManager or not GameManager.building_instances:
+		return {}
+	for b in GameManager.building_instances.values():
+		if not b or b.settlement_id != p_settlement.id or b.type != "hut":
+			continue
+		if b.residents.size() >= 2:
+			var c0 = _find_citizen(p_settlement.population, b.residents[0])
+			var c1 = _find_citizen(p_settlement.population, b.residents[1])
+			if c0 and c1:
+				return {
+					"target_building_id": b.id,
+					"actor_ids": [c0.id, c1.id],
+					"actor_names": [c0.name, c1.name],
+					"causes": ["Нехватка жилплощади в поселении", "Претензия на право первого очага"],
+					"context_data": {
+						"building_id": b.id,
+						"actor_0": c0.name,
+						"actor_1": c1.name
+					}
+				}
+	return {}
 
 func _check_event_conditions(conds: Dictionary, total_days: int, settlement: RefCounted) -> bool:
 	if conds.is_empty():
@@ -332,6 +364,10 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 							for tid in tenure["tenant_ids"]:
 								var res_tid = _resolve_placeholder_str(str(tid), ev)
 								b_inst.resident_roles[res_tid] = "Жилец"
+						if tenure.has("dependent_ids"):
+							for did in tenure["dependent_ids"]:
+								var res_did = _resolve_placeholder_str(str(did), ev)
+								b_inst.resident_roles[res_did] = "Зависимый"
 						if tenure.has("co_owners"):
 							for co_id in tenure["co_owners"]:
 								var res_coid = _resolve_placeholder_str(str(co_id), ev)
@@ -350,6 +386,59 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 				settlement.economy.resources[res_k] = maxf(0.0, settlement.economy.get_resource(res_k) + amt)
 		if settlement.faction_id == GameManager.player_faction_id:
 			EventBus.resources_updated.emit(settlement.faction_id, settlement.economy.resources)
+
+	# Решение суда общины (council_vote)
+	if consequences.get("council_vote", false) and pop:
+		var actor_ids = ev.get("actor_ids", [])
+		if actor_ids.size() >= 2:
+			var act_0_id = _resolve_placeholder_str(str(actor_ids[0]), ev)
+			var act_1_id = _resolve_placeholder_str(str(actor_ids[1]), ev)
+			var cit_0 = _find_citizen(pop, act_0_id)
+			var cit_1 = _find_citizen(pop, act_1_id)
+			if cit_0 and cit_1:
+				var votes_0 = 0
+				var votes_1 = 0
+				var score_0 = cit_0.personality.get("pride", 50.0) * 0.5 + cit_0.skill_builder * 2.0
+				var score_1 = cit_1.personality.get("sociability", 50.0) * 0.5 + (100.0 - cit_1.personality.get("greed", 50.0)) * 0.5
+				for c in pop.citizens:
+					if c.is_alive and c.cohort in ["youth", "adult", "elder"]:
+						var aff_0 = c.get_relationship_affinity(act_0_id)
+						var aff_1 = c.get_relationship_affinity(act_1_id)
+						if (aff_0 + score_0 * 0.1) >= (aff_1 + score_1 * 0.1):
+							votes_0 += 1
+						else:
+							votes_1 += 1
+				
+				var b_id = ev.get("target_building_id", "")
+				var b_inst = null
+				if GameManager and GameManager.building_instances:
+					b_inst = GameManager.building_instances.get(b_id, null)
+				
+				if votes_0 >= votes_1:
+					if b_inst:
+						b_inst.household_head_id = act_0_id
+						b_inst.resident_roles[act_0_id] = "Владелец"
+						b_inst.resident_roles[act_1_id] = "Жилец"
+						b_inst.active_modifiers["council_verdict"] = "property"
+						b_inst.add_history_entry(GameManager.current_year, "Совет общины признал права строителя (%d против %d)" % [votes_0, votes_1])
+					cit_0.loyalty = clampf(cit_0.loyalty + 10.0, 0.0, 100.0)
+					cit_1.modify_relationship(act_0_id, -15.0, 5.0)
+					cit_0.add_memory("gratitude", "council", b_id, 1.0, "Совет племени признал дом нашей собственностью", true)
+					cit_1.add_memory("acceptance", "council", b_id, 0.8, "Совет племени решил дело в пользу строителя", false)
+				else:
+					if b_inst:
+						b_inst.resident_roles[act_0_id] = "Совладелец"
+						b_inst.resident_roles[act_1_id] = "Совладелец"
+						b_inst.active_modifiers["council_verdict"] = "communal"
+						b_inst.add_history_entry(GameManager.current_year, "Совет общины объявил дом общим (%d против %d)" % [votes_1, votes_0])
+					cit_1.loyalty = clampf(cit_1.loyalty + 10.0, 0.0, 100.0)
+					cit_0.modify_relationship(act_1_id, -10.0, 0.0)
+					cit_1.add_memory("gratitude", "council", b_id, 1.0, "Совет племени защитил наш кров в общем доме", true)
+					cit_0.add_memory("disappointment", "council", b_id, 0.8, "Совет племени не отдал дом в единоличную собственность", false)
+
+	# Невмешательство из карточки выбора
+	if consequences.get("no_intervention", false):
+		resolve_without_intervention(ev.get("instance_id", ""))
 
 func defer_event(instance_id: String) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})

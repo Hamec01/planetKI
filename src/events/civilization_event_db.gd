@@ -795,6 +795,96 @@ const EVENTS: Dictionary = {
 				"effects_desc": "🏛️ Мудрый советник. +10% к стабильности и качеству решений вождя."
 			}
 		]
+	},
+	# --------------------------------------------------------------------------
+	# 21. ПЕРВАЯ ХИЖИНА И ЖИЛИЩНЫЙ ПРЕЦЕДЕНТ (HUT-01)
+	# --------------------------------------------------------------------------
+	"HUT-01": {
+		"id": "HUT-01",
+		"chain_id": "HOUSING_PRECEDENT",
+		"title": "Дом, который мы подняли своими руками",
+		"category": "Община и кров",
+		"icon": "building_hut",
+		"priority": 95,
+		"once": true,
+		"exclusive_group": "housing_precedent",
+		"description": "В только что возведённой хижине разгорелся первый жилищный спор. {actor_0}, чей очаг зажёгся первым, заявляет: «Мы таскали брёвна, месили глину и первыми вошли под эту крышу — это наш дом!» На это {actor_1} возражает: «Лес рубила вся община, земля под домом общая, а нам негде укрыться от ночного холода!». Как рассудит правитель?",
+		"conditions": { "min_huts": 1 },
+		"choices": [
+			{
+				"id": "A",
+				"title": "Дом принадлежит всем, кто нуждается в крыше",
+				"desc": "Создать прецедент общего жилья. Хозяева не могут единолично выселять жильцов; жильё распределяется общиной.",
+				"group_value": "COMMUNAL",
+				"tradition_id": "communal_housing",
+				"effects_desc": "🏛️ Прецедент общего крова. Жильцы становятся совладельцами. Укрепляется солидарность бедноты.",
+				"consequences": {
+					"housing_tenure": {"mode": "communal", "co_owners": ["{actor_0}", "{actor_1}"]},
+					"modify_relations": [{"from": "{actor_0}", "to": "{actor_1}", "delta": -15.0}],
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": -10.0}, {"actor_id": "{actor_1}", "delta": 15.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "bitterness", "desc": "Правитель объявил наш дом общим", "permanent": true},
+						{"actor_id": "{actor_1}", "type": "gratitude", "desc": "Правитель защитил наше право на крышу над головой", "permanent": true}
+					]
+				}
+			},
+			{
+				"id": "B",
+				"title": "Семья владеет домом, но принимает жильцов по договору",
+				"desc": "Создать свободную собственность дома. Вторая семья живёт на правах жильцов по взаимному согласию.",
+				"group_value": "FREE_CONTRACT",
+				"tradition_id": "free_contract_housing",
+				"effects_desc": "📜 Прецедент частной собственности и договора. Семья строителя — полноправные хозяева.",
+				"consequences": {
+					"housing_tenure": {"mode": "free_contract", "owner_id": "{actor_0}", "tenant_ids": ["{actor_1}"]},
+					"modify_relations": [{"from": "{actor_0}", "to": "{actor_1}", "delta": 10.0}, {"from": "{actor_1}", "to": "{actor_0}", "delta": 5.0}],
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": 15.0}, {"actor_id": "{actor_1}", "delta": 5.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "gratitude", "desc": "Правитель признал наш дом нашей собственностью", "permanent": true},
+						{"actor_id": "{actor_1}", "type": "peace", "desc": "У нас есть ясное соглашение с хозяевами дома", "permanent": false}
+					]
+				}
+			},
+			{
+				"id": "C",
+				"title": "Хозяева вправе требовать посильный вклад за проживание",
+				"desc": "Создать прецедент зависимого проживания. Жильцы обязаны компенсировать кров трудом или долей ресурсов.",
+				"group_value": "DEPENDENT",
+				"tradition_id": "dependent_housing",
+				"effects_desc": "⚖️ Зависимое проживание. Обязательный вклад жильцов перед хозяевами дома.",
+				"consequences": {
+					"housing_tenure": {"mode": "dependent", "owner_id": "{actor_0}", "dependent_ids": ["{actor_1}"]},
+					"modify_relations": [{"from": "{actor_1}", "to": "{actor_0}", "delta": -25.0}],
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": 20.0}, {"actor_id": "{actor_1}", "delta": -15.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "gratitude", "desc": "Правитель наделил нас правом требовать вклад от жильцов", "permanent": true},
+						{"actor_id": "{actor_1}", "type": "resentment", "desc": "Правитель обязал нас нести повинность перед хозяевами дома", "permanent": true}
+					]
+				}
+			},
+			{
+				"id": "D",
+				"title": "Пусть община рассудит",
+				"desc": "Собрать совет общины. Исход решится взвешиванием уважения, авторитета и связей спорящих соплеменников.",
+				"group_value": "COUNCIL",
+				"tradition_id": "council_housing",
+				"effects_desc": "👥 Суд общины. Вердикт определит совет соплеменников на основе авторитета и родства.",
+				"consequences": {
+					"council_vote": true
+				}
+			},
+			{
+				"id": "E",
+				"title": "Не вмешиваться пока",
+				"desc": "Предоставить семьям разбираться самим. Напряжение останется в доме и может вылиться в дальнейший конфликт.",
+				"group_value": "NO_INTERVENTION",
+				"tradition_id": "unresolved_housing",
+				"effects_desc": "⚠️ Невмешательство вождя. Спор тлеет, отношения в доме ухудшаются.",
+				"consequences": {
+					"no_intervention": true
+				}
+			}
+		]
 	}
 }
 

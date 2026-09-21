@@ -113,6 +113,25 @@ var weapon_skills: Dictionary = {
 
 var profession_levels: Dictionary = {}
 
+var skill_builder: float:
+	get: return float(experience.get("builder", 0.0))
+	set(val): experience["builder"] = val
+var skill_woodcutter: float:
+	get: return float(experience.get("woodcutter", 0.0))
+	set(val): experience["woodcutter"] = val
+var skill_stonecutter: float:
+	get: return float(experience.get("stonecutter", 0.0))
+	set(val): experience["stonecutter"] = val
+var skill_miner: float:
+	get: return float(experience.get("miner", 0.0))
+	set(val): experience["miner"] = val
+var skill_gatherer: float:
+	get: return float(experience.get("gatherer", 0.0))
+	set(val): experience["gatherer"] = val
+var skill_hunter: float:
+	get: return float(experience.get("hunter", 0.0))
+	set(val): experience["hunter"] = val
+
 # 3. Опыт опасных столкновений (EGP: 0..20) и антифарм история (20 последних)
 var encounter_growth_points: float = 0.0
 var recent_encounters: Array[Dictionary] = []
@@ -134,6 +153,9 @@ var daily_hunt_xp: float = 0.0
 
 # --- ЛИЧНОСТЬ, ХАРАКТЕР И ПАМЯТЬ (P01.2 / ТЗ РАЗДЕЛ 4) ---
 # 9 скрытых шкал личности + непредсказуемость + совместимость с S08
+var personality: Dictionary:
+	get: return traits
+	set(val): traits = val
 var traits: Dictionary = {
 	"diligence": 50.0,       # Трудолюбие (0..100)
 	"bravery": 50.0,         # Храбрость (0..100)

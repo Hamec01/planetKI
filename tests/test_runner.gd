@@ -2932,8 +2932,133 @@ func _ready() -> void:
 
 	print("OK 102. P01.5 Contextual event engine, placeholder formatting, consequence execution and inaction friction verified.")
 
+	# ---------------------------------------------------------
+	# TEST 103: P01.6 HUT-01 («Дом, который мы подняли своими руками»)
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING P01.6 HUT-01 HOUSING PRECEDENT & 5 WAYS RESOLUTION")
+	print("----------------------------------------")
+	var p01_6_settlement = SettlementData.new("p01_6_test_settlement")
+	var p01_6_ev_mgr = CivilizationEventManager.new()
+	p01_6_ev_mgr.settlement = p01_6_settlement
+
+	# Граждане поселения
+	var cit_builder_103 = CitizenNPC.new("builder_103", "Яромир Зодчий", "m", 30)
+	cit_builder_103.skill_builder = 25.0
+	cit_builder_103.personality["pride"] = 80.0
+
+	var cit_second_103 = CitizenNPC.new("second_103", "Милана Бездомная", "f", 22)
+	cit_second_103.personality["sociability"] = 70.0
+	cit_second_103.personality["greed"] = 20.0
+
+	var cit_voter_103 = CitizenNPC.new("voter_103", "Воислав Старейшина", "m", 45)
+
+	p01_6_settlement.population.citizens.append(cit_builder_103)
+	p01_6_settlement.population.citizens.append(cit_second_103)
+	p01_6_settlement.population.citizens.append(cit_voter_103)
+
+	# Первая построенная и заселенная хижина
+	var hut_103 = BuildingInstance.new("hut_p01_6", "hut", p01_6_settlement.id, Vector2i(10, 10))
+	var r_list_103: Array[String] = [cit_builder_103.id, cit_second_103.id]
+	hut_103.residents = r_list_103
+	cit_builder_103.home_id = hut_103.id
+	cit_second_103.home_id = hut_103.id
+	GameManager.building_instances[hut_103.id] = hut_103
+
+	# 1. Проверка автоматического триггера HUT-01 через check_hut_dispute_trigger
+	var hut_ctx = p01_6_ev_mgr.check_hut_dispute_trigger(p01_6_settlement)
+	assert(not hut_ctx.is_empty(), "P01.6: Dispute trigger found populated hut with 2+ residents")
+	assert(hut_ctx["target_building_id"] == hut_103.id, "P01.6: Target building matches hut_p01_6")
+	assert(hut_ctx["actor_ids"].has(cit_builder_103.id), "P01.6: First builder is among dispute actors")
+	assert(hut_ctx["actor_ids"].has(cit_second_103.id), "P01.6: Second resident is among dispute actors")
+
+	# Запуск HUT-01 через process_daily_triggers
+	p01_6_ev_mgr.process_daily_triggers(1, 1, p01_6_settlement)
+	assert(not p01_6_ev_mgr.active_event.is_empty(), "P01.6: HUT-01 triggered in daily processing")
+	assert(p01_6_ev_mgr.active_event["id"] == "HUT-01", "P01.6: Active event is HUT-01")
+	assert("Яромир Зодчий" in p01_6_ev_mgr.active_event["description"], "P01.6: Builder name in description")
+	assert("Милана Бездомная" in p01_6_ev_mgr.active_event["description"], "P01.6: Second resident name in description")
+	assert(p01_6_ev_mgr.active_event["choices"].size() == 5, "P01.6: Exactly 5 choices presented for HUT-01")
+
+	var hut_ev_id = p01_6_ev_mgr.active_event["instance_id"]
+
+	# 2. Тестирование Варианта B: «Свободный договор» (FREE_CONTRACT)
+	p01_6_ev_mgr.apply_choice(hut_ev_id, "B")
+	assert(hut_103.household_head_id == cit_builder_103.id, "P01.6 (Choice B): Builder is household head")
+	assert(hut_103.get_resident_role(cit_builder_103.id) == "Владелец", "P01.6 (Choice B): Builder is Owner")
+	assert(hut_103.get_resident_role(cit_second_103.id) == "Жилец", "P01.6 (Choice B): Second resident is Tenant")
+	assert(cit_builder_103.has_memory_of("ruler", "gratitude"), "P01.6 (Choice B): Builder has gratitude memory")
+	assert(GameManager.culture_memory.has_tradition("free_contract_housing"), "P01.6: Tradition free_contract_housing unlocked")
+
+	# 3. Тестирование Варианта A: «Общинный дом» (COMMUNAL) на отдельном инстансе
+	var hut_communal = BuildingInstance.new("hut_communal_103", "hut", p01_6_settlement.id, Vector2i(11, 11))
+	var r_communal: Array[String] = [cit_builder_103.id, cit_second_103.id]
+	hut_communal.residents = r_communal
+	GameManager.building_instances[hut_communal.id] = hut_communal
+
+	var ev_comm_template = CivilizationEventDB.get_event("HUT-01")
+	var comm_ev_id = p01_6_ev_mgr.trigger_event(ev_comm_template, {
+		"actor_ids": [cit_builder_103.id, cit_second_103.id],
+		"actor_names": [cit_builder_103.name, cit_second_103.name],
+		"target_building_id": hut_communal.id
+	})
+	p01_6_ev_mgr.apply_choice(comm_ev_id, "A")
+	assert(hut_communal.get_resident_role(cit_builder_103.id) == "Совладелец", "P01.6 (Choice A): Builder is Co-owner")
+	assert(hut_communal.get_resident_role(cit_second_103.id) == "Совладелец", "P01.6 (Choice A): Second resident is Co-owner")
+	assert(cit_builder_103.has_memory_of("ruler", "bitterness"), "P01.6 (Choice A): Builder has bitterness memory of losing sole home rights")
+
+	# 4. Тестирование Варианта C: «Зависимое проживание» (DEPENDENT)
+	var hut_dep = BuildingInstance.new("hut_dep_103", "hut", p01_6_settlement.id, Vector2i(12, 12))
+	var r_dep: Array[String] = [cit_builder_103.id, cit_second_103.id]
+	hut_dep.residents = r_dep
+	GameManager.building_instances[hut_dep.id] = hut_dep
+
+	var dep_ev_id = p01_6_ev_mgr.trigger_event(ev_comm_template, {
+		"actor_ids": [cit_builder_103.id, cit_second_103.id],
+		"actor_names": [cit_builder_103.name, cit_second_103.name],
+		"target_building_id": hut_dep.id
+	})
+	p01_6_ev_mgr.apply_choice(dep_ev_id, "C")
+	assert(hut_dep.get_resident_role(cit_builder_103.id) == "Владелец", "P01.6 (Choice C): Builder is Owner")
+	assert(hut_dep.get_resident_role(cit_second_103.id) == "Зависимый", "P01.6 (Choice C): Dependent has Зависимый role")
+	assert(cit_second_103.has_memory_of("ruler", "resentment"), "P01.6 (Choice C): Dependent remembers grievance toward ruler")
+
+	# 5. Тестирование Варианта D: «Пусть община рассудит» (COUNCIL)
+	var hut_council = BuildingInstance.new("hut_council_103", "hut", p01_6_settlement.id, Vector2i(13, 13))
+	var r_council: Array[String] = [cit_builder_103.id, cit_second_103.id]
+	hut_council.residents = r_council
+	GameManager.building_instances[hut_council.id] = hut_council
+
+	var council_ev_id = p01_6_ev_mgr.trigger_event(ev_comm_template, {
+		"actor_ids": [cit_builder_103.id, cit_second_103.id],
+		"actor_names": [cit_builder_103.name, cit_second_103.name],
+		"target_building_id": hut_council.id
+	})
+	# Старейшина уважает строителя за труд
+	cit_voter_103.add_relationship(cit_builder_103.id, "peer", 60.0)
+	cit_voter_103.add_relationship(cit_second_103.id, "peer", 20.0)
+	p01_6_ev_mgr.apply_choice(council_ev_id, "D")
+	assert(hut_council.active_modifiers.has("council_verdict"), "P01.6 (Choice D): Council verdict recorded on hut")
+	assert(cit_builder_103.has_memory_of("council", "gratitude"), "P01.6 (Choice D): Builder has memory of council decision")
+
+	# 6. Тестирование Варианта E: «Не вмешиваться пока» (NO_INTERVENTION)
+	var hut_no_interv = BuildingInstance.new("hut_no_interv_103", "hut", p01_6_settlement.id, Vector2i(14, 14))
+	var r_no_interv: Array[String] = [cit_builder_103.id, cit_second_103.id]
+	hut_no_interv.residents = r_no_interv
+	GameManager.building_instances[hut_no_interv.id] = hut_no_interv
+
+	var no_int_ev_id = p01_6_ev_mgr.trigger_event(ev_comm_template, {
+		"actor_ids": [cit_builder_103.id, cit_second_103.id],
+		"actor_names": [cit_builder_103.name, cit_second_103.name],
+		"target_building_id": hut_no_interv.id
+	})
+	p01_6_ev_mgr.apply_choice(no_int_ev_id, "E")
+	assert(hut_no_interv.has_unresolved_dispute(), "P01.6 (Choice E): Hut retains unresolved dispute")
+
+	print("OK 103. P01.6 HUT-01 housing precedent, 5-option resolution, council vote and persistent world consequences verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-102) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-103) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 
