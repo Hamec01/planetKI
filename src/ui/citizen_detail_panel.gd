@@ -24,6 +24,11 @@ var phys_stats_lbl: Label
 var weapon_skill_lbl: Label
 var dmg_breakdown_lbl: Label
 
+var personality_vbox: VBoxContainer
+var loyalty_lbl: Label
+var traits_lbl: Label
+var memories_lbl: Label
+
 var btn_follow: Button
 var btn_close: Button
 var debug_lbl: Label
@@ -239,6 +244,38 @@ func _build_ui() -> void:
 	
 	vbox.add_child(HSeparator.new())
 	
+	# 8. Характер, Верность и Память (P01.2)
+	personality_vbox = VBoxContainer.new()
+	personality_vbox.add_theme_constant_override("separation", 3)
+	vbox.add_child(personality_vbox)
+	
+	var pers_title = Label.new()
+	pers_title.text = "🧠 Характер и Восприятие:"
+	pers_title.add_theme_font_size_override("font_size", 11)
+	pers_title.add_theme_color_override("font_color", Color(0.65, 0.9, 1.0))
+	personality_vbox.add_child(pers_title)
+	
+	loyalty_lbl = Label.new()
+	loyalty_lbl.text = "👑 Верность правителю: 85%"
+	loyalty_lbl.add_theme_font_size_override("font_size", 10)
+	loyalty_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	personality_vbox.add_child(loyalty_lbl)
+	
+	traits_lbl = Label.new()
+	traits_lbl.text = "Черты: Общительный, Гордый"
+	traits_lbl.add_theme_font_size_override("font_size", 10)
+	traits_lbl.add_theme_color_override("font_color", Color(0.8, 0.88, 0.95))
+	personality_vbox.add_child(traits_lbl)
+	
+	memories_lbl = Label.new()
+	memories_lbl.text = "Память: нет ярких событий"
+	memories_lbl.add_theme_font_size_override("font_size", 10)
+	memories_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 0.75))
+	memories_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	personality_vbox.add_child(memories_lbl)
+	
+	vbox.add_child(HSeparator.new())
+	
 	# 8. Действия: Следовать камерой
 	var btns_box = HBoxContainer.new()
 	btns_box.add_theme_constant_override("separation", 8)
@@ -359,6 +396,30 @@ func _update_ui_values() -> void:
 	dmg_breakdown_lbl.text = "Урон: %d (основа %.1f + оруж. %.1f + сила %.1f + закалка %.1f)" % [
 		stats["display_damage"], bd["base_attack"], bd["weapon_component"], bd["physical_damage"], bd["encounter_damage"]
 	]
+	
+	# Обновление верности, характера и воспоминаний (P01.2)
+	loyalty_lbl.text = "👑 Верность правителю: %d%%" % int(current_citizen.loyalty)
+	var trait_list = []
+	var pers = current_citizen.personality
+	if pers.get("pride", 50.0) >= 65.0: trait_list.append("Гордый")
+	elif pers.get("pride", 50.0) <= 35.0: trait_list.append("Скромный")
+	if pers.get("sociability", 50.0) >= 65.0: trait_list.append("Общительный")
+	elif pers.get("sociability", 50.0) <= 35.0: trait_list.append("Замкнутый")
+	if pers.get("greed", 50.0) >= 65.0: trait_list.append("Бережливый")
+	elif pers.get("greed", 50.0) <= 35.0: trait_list.append("Щедрый")
+	if pers.get("laziness", 50.0) >= 65.0: trait_list.append("Ленивый")
+	elif pers.get("laziness", 50.0) <= 35.0: trait_list.append("Трудолюбивый")
+	if pers.get("temper", 50.0) >= 65.0: trait_list.append("Вспыльчивый")
+	elif pers.get("temper", 50.0) <= 35.0: trait_list.append("Хладнокровный")
+	if trait_list.is_empty():
+		trait_list.append("Уравновешенный нрав")
+	traits_lbl.text = "Черты: " + ", ".join(trait_list)
+
+	if current_citizen.memories.size() > 0:
+		var last_mem = current_citizen.memories[-1]
+		memories_lbl.text = "Память: «%s»" % last_mem.get("desc", "")
+	else:
+		memories_lbl.text = "Память: спокойная жизнь без потрясений"
 	
 	debug_lbl.text = "ID: %s | State: %d | Pos: (%.0f, %.0f) | P: %.2f R: %.2f" % [
 		current_citizen.citizen_id, current_citizen.state, current_citizen.pos.x, current_citizen.pos.y, stats["P"], stats["R"]
