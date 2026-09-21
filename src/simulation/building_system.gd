@@ -316,6 +316,35 @@ const UPGRADES: Dictionary = {
 		"category": "tools", "unlock_type": "ordinary",
 		"cost": {"wood": 20, "metal": 10}, "prerequisites": [],
 		"effects": {"woodcutting_speed": 0.30}
+	},
+	# 10. ХИЖИНА (HUT) - ЧАСТНЫЕ УЛУЧШЕНИЯ СЕМЬИ (P01.4 / ТЗ 6.3)
+	"hut_annex": {
+		"id": "hut_annex", "building_type": "hut",
+		"name": "Пристройка", "desc": "Расширяет жилое пространство: увеличивает вместимость и комфорт хижины (+2 комфортных места).",
+		"category": "living", "unlock_type": "practical",
+		"cost": {"wood": 10}, "prerequisites": [],
+		"effects": {"comfort_capacity": 2, "max_residents": 2}
+	},
+	"hut_shed": {
+		"id": "hut_shed", "building_type": "hut",
+		"name": "Сарай", "desc": "Малый физический придомовой буфер для хранения домашних вещей и инвентаря (+15 к объёму домашнего склада).",
+		"category": "storage", "unlock_type": "ordinary",
+		"cost": {"wood": 8}, "prerequisites": [],
+		"effects": {"domestic_capacity": 15}
+	},
+	"hut_pantry": {
+		"id": "hut_pantry", "building_type": "hut",
+		"name": "Кладовая", "desc": "Защищенное прохладное хранилище еды: снижает порчу домашнего запаса пищи на 50%.",
+		"category": "storage", "unlock_type": "ordinary",
+		"cost": {"wood": 6, "stone": 4}, "prerequisites": [],
+		"effects": {"spoilage_reduction": 0.5}
+	},
+	"hut_garden": {
+		"id": "hut_garden", "building_type": "hut",
+		"name": "Огород", "desc": "Придомовой участок для выращивания трав и овощей свободным трудом семьи.",
+		"category": "food", "unlock_type": "ordinary",
+		"cost": {"wood": 4}, "prerequisites": [],
+		"effects": {"garden_food": true}
 	}
 }
 

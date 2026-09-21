@@ -336,6 +336,150 @@ func _render_overview() -> void:
 	card.add_child(vbox)
 	overview_vbox.add_child(card)
 
+	# Карточка домохозяйства и жильцов для жилых зданий (P01.4 / ТЗ Раздел 6, 10)
+	if current_building.is_residential():
+		var res_card = PanelContainer.new()
+		var res_sbox = StyleBoxFlat.new()
+		res_sbox.bg_color = Color(0.10, 0.14, 0.20, 0.95)
+		res_sbox.border_color = Color(0.4, 0.7, 0.9, 0.7)
+		res_sbox.set_border_width_all(1)
+		res_sbox.set_corner_radius_all(6)
+		res_sbox.set_content_margin_all(8)
+		res_card.add_theme_stylebox_override("panel", res_sbox)
+		
+		var res_vbox = VBoxContainer.new()
+		res_vbox.add_theme_constant_override("separation", 6)
+		
+		# Заголовок
+		var res_title = Label.new()
+		res_title.text = "🏠 Домохозяйство и Проживание"
+		res_title.add_theme_font_size_override("font_size", 13)
+		res_title.add_theme_color_override("font_color", Color(1.0, 0.88, 0.45))
+		res_vbox.add_child(res_title)
+		
+		# Комфорт и Теснота
+		var cap_lbl = Label.new()
+		var cur_res = current_building.residents.size()
+		var max_res = current_building.get_max_residents()
+		var comf_cap = current_building.get_comfort_capacity()
+		var crowd_text = ""
+		if current_building.is_crowded():
+			var pen_pct = int(current_building.get_crowding_penalty() * 100)
+			crowd_text = "  ⚠️ ТЕСНОТА! (Штраф к отдыху: -%d%%)" % pen_pct
+		else:
+			crowd_text = "  ✅ Условия комфортные"
+		cap_lbl.text = "Вместимость: %d / %d чел. (Комфортно: %d)%s" % [cur_res, max_res, comf_cap, crowd_text]
+		cap_lbl.add_theme_font_size_override("font_size", 11)
+		cap_lbl.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3) if current_building.is_crowded() else Color(0.5, 0.9, 0.6))
+		res_vbox.add_child(cap_lbl)
+		
+		# Глава семьи
+		var head_name = "Не определён"
+		if current_building.household_head_id != "":
+			var h_cit = current_settlement.population.get_citizen_by_id(current_building.household_head_id)
+			if h_cit != null:
+				head_name = "%s (%d лет)" % [h_cit.name, h_cit.age]
+		var head_lbl = Label.new()
+		head_lbl.text = "👑 Глава домохозяйства: %s" % head_name
+		head_lbl.add_theme_font_size_override("font_size", 11)
+		head_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.6))
+		res_vbox.add_child(head_lbl)
+		
+		# Список постоянных жильцов
+		var occupants_title = Label.new()
+		occupants_title.text = "Постоянные жильцы (%d):" % cur_res
+		occupants_title.add_theme_font_size_override("font_size", 11)
+		occupants_title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		res_vbox.add_child(occupants_title)
+		
+		for r_id in current_building.residents:
+			var cit = current_settlement.population.get_citizen_by_id(r_id)
+			if cit != null:
+				var role_str = current_building.resident_roles.get(r_id, "resident")
+				var role_name = "Владелец" if role_str == "owner" else ("Зависимый" if role_str == "dependent" else "Жилец")
+				var icon_prefix = "👑 " if role_str == "owner" else "👤 "
+				var status_desc = ", ".join(cit.get_physical_status_descriptors())
+				if status_desc == "": status_desc = "в норме"
+				
+				var cit_lbl = Label.new()
+				cit_lbl.text = "  %s%s (%d лет) — [%s] — Состояние: %s (%s)" % [
+					icon_prefix, cit.name, cit.age, role_name, status_desc, cit.last_status_reason
+				]
+				cit_lbl.add_theme_font_size_override("font_size", 10)
+				cit_lbl.add_theme_color_override("font_color", Color(0.85, 0.88, 0.95))
+				res_vbox.add_child(cit_lbl)
+				
+		# Гости
+		if current_building.guests.size() > 0:
+			var guests_title = Label.new()
+			guests_title.text = "Гости (%d / %d):" % [current_building.guests.size(), current_building.max_guests]
+			guests_title.add_theme_font_size_override("font_size", 11)
+			guests_title.add_theme_color_override("font_color", Color(0.9, 0.8, 0.6))
+			res_vbox.add_child(guests_title)
+			for g_id in current_building.guests:
+				var cit = current_settlement.population.get_citizen_by_id(g_id)
+				if cit != null:
+					var g_lbl = Label.new()
+					g_lbl.text = "  🧳 %s (%d лет) — [Гость] (%s)" % [cit.name, cit.age, cit.last_status_reason]
+					g_lbl.add_theme_font_size_override("font_size", 10)
+					g_lbl.add_theme_color_override("font_color", Color(0.9, 0.85, 0.7))
+					res_vbox.add_child(g_lbl)
+					
+		# Домашний запас еды и вещей
+		var stock_lbl = Label.new()
+		var spoil_mult = current_building.get_home_spoilage_multiplier()
+		var spoil_str = " (порча снижена на 50%% благодаря кладовой)" if spoil_mult < 1.0 else ""
+		stock_lbl.text = "🍲 Домашняя пища: %.1f / %.1f ед.%s\n📦 Домашний инвентарь: %d предметов (вместимость: %.0f ед.)" % [
+			current_building.food_stockpile, current_building.food_stockpile_max, spoil_str,
+			current_building.domestic_goods.size(), current_building.get_domestic_goods_capacity()
+		]
+		stock_lbl.add_theme_font_size_override("font_size", 10)
+		stock_lbl.add_theme_color_override("font_color", Color(0.75, 0.9, 0.8))
+		res_vbox.add_child(stock_lbl)
+		
+		# Частные улучшения дома
+		var up_names = []
+		for u_id in current_building.unlocked_upgrades:
+			var u_info = BuildingSystemScript.get_upgrade(u_id)
+			up_names.append(u_info.get("name", u_id))
+		var up_str = ", ".join(up_names) if up_names.size() > 0 else "нет"
+		
+		var up_lbl = Label.new()
+		up_lbl.text = "✨ Построенные улучшения: %s" % up_str
+		up_lbl.add_theme_font_size_override("font_size", 10)
+		up_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+		res_vbox.add_child(up_lbl)
+		
+		# Активное улучшение
+		if current_building.has_pending_upgrade():
+			var pend_id = current_building.pending_upgrade.get("id", "")
+			var pend_def = BuildingSystemScript.get_upgrade(pend_id)
+			var pend_name = pend_def.get("name", pend_id)
+			var pend_box = HBoxContainer.new()
+			pend_box.add_theme_constant_override("separation", 8)
+			
+			var pend_lbl = Label.new()
+			pend_lbl.text = "🔨 Строится улучшение: %s (осталось работы: %.1f)" % [
+				pend_name, float(current_building.pending_upgrade.get("work_left", 0.0))
+			]
+			pend_lbl.add_theme_font_size_override("font_size", 10)
+			pend_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 1.0))
+			pend_box.add_child(pend_lbl)
+			
+			var cancel_btn = Button.new()
+			cancel_btn.text = "Запретить стройку"
+			cancel_btn.add_theme_font_size_override("font_size", 9)
+			cancel_btn.pressed.connect(func():
+				current_settlement.cancel_building_upgrade(current_building, true)
+				EventBus.notification_toast.emit("Улучшение отменено", "Правитель запретил частную стройку: %s" % pend_name, "warning")
+				refresh_all_tabs()
+			)
+			pend_box.add_child(cancel_btn)
+			res_vbox.add_child(pend_box)
+			
+		res_card.add_child(res_vbox)
+		overview_vbox.add_child(res_card)
+
 func _render_workers() -> void:
 	for c in workers_vbox.get_children():
 		c.queue_free()

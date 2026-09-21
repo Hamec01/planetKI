@@ -2659,8 +2659,135 @@ func _ready() -> void:
 	assert(loaded_hut.domestic_goods.get("hides", 0.0) == 5.0, "P01.3: Domestic goods preserved in save")
 	print("OK 100. P01.3 Housing comfort, capacity isolation, roles and legacy migration verified.")
 
+	# --------------------------------------------------------------------------
+	# TEST 101: P01.4 — РЕАЛЬНЫЙ ЦИКЛ ХИЖИНЫ, СОН, ТЕСНОТА, УЛУЧШЕНИЯ И ПАМЯТЬ
+	# --------------------------------------------------------------------------
+	var p01_4_settlement = SettlementData.new("p01_4_s", "Поселение Хижины", "player_tribe", Vector2i(10, 10))
+	GameManager.settlements["p01_4_s"] = p01_4_settlement
+	p01_4_settlement.init_citizens_on_map()
+
+	# 1. Проверка каталога data-driven улучшений хижины в BuildingSystem
+	var hut_upgrades = BuildingSystem.get_upgrades_for_building("hut")
+	assert(hut_upgrades.size() >= 4, "P01.4: Hut must have at least 4 data-driven upgrades")
+	var up_ids = []
+	for u in hut_upgrades:
+		up_ids.append(u["id"])
+	assert(up_ids.has("hut_annex"), "P01.4: hut_annex registered")
+	assert(up_ids.has("hut_shed"), "P01.4: hut_shed registered")
+	assert(up_ids.has("hut_pantry"), "P01.4: hut_pantry registered")
+	assert(up_ids.has("hut_garden"), "P01.4: hut_garden registered")
+
+	# 2. Создание тестовой хижины
+	var test_hut = BuildingInstance.new("inst_p01_4_hut", "hut", "p01_4_s", Vector2i(10, 11))
+	GameManager.building_instances[Vector2i(10, 11)] = test_hut
+	assert(test_hut.get_comfort_capacity() == 6, "P01.4: Base hut comfort capacity is 6")
+	assert(test_hut.get_max_residents() == 8, "P01.4: Base hut max residents is 8")
+
+	# Заселяем 7 жителей — превышение комфорта (теснота: 7 > 6)
+	for i in range(7):
+		var cit_id = "test_res_%d" % i
+		var cit = CitizenNPC.new(cit_id, "Житель %d" % i, "m" if i % 2 == 0 else "f", 20 + i)
+		p01_4_settlement.population.citizens.append(cit)
+		test_hut.add_resident(cit_id, "resident")
+		cit.set_home(test_hut.id, test_hut.pos, Vector2(test_hut.pos.x * 32, test_hut.pos.y * 32), false, test_hut.id)
+
+	assert(test_hut.is_crowded(), "P01.4: 7 residents in 6-comfort hut is crowded")
+	var crowd_pen = test_hut.get_crowding_penalty()
+	assert(crowd_pen > 0.0, "P01.4: Crowding penalty must be greater than 0")
+
+	# 3. Проверка сна в тесноте против сна на улице (бездомный)
+	var crowded_cit = p01_4_settlement.population.find_citizen("test_res_0")
+	crowded_cit.energy = 20.0
+	crowded_cit.state = CitizenNPC.State.SLEEPING
+
+	var p01_4_homeless = CitizenNPC.new("homeless_cit_p01_4", "Бездомный Бродяга", "m", 25)
+	p01_4_settlement.population.citizens.append(p01_4_homeless)
+	p01_4_homeless.energy = 20.0
+	p01_4_homeless.clear_home()
+	p01_4_homeless.state = CitizenNPC.State.SLEEPING
+
+	# Имитация ночного тика сна (delta = 1.0s)
+	GameManager.current_hour = 1.0 # Ночь
+	p01_4_settlement.update_citizens(1.0)
+
+	# В тесноте сон медленнее, чем нормальные 12/сек: sleep_rate = 12 * (1 - penalty)
+	var expected_crowded_rate = 12.0 * (1.0 - crowd_pen)
+	assert(crowded_cit.energy < (20.0 + 12.0 * 1.0), "P01.4: Crowded sleep recovers less than full rate")
+	assert("тесноте" in crowded_cit.last_status_reason, "P01.4: Crowded status reason mentions crowding")
+
+	# Бездомный восстанавливает лишь 6/сек и получает статус сна на улице
+	assert(p01_4_homeless.energy <= 26.0, "P01.4: Homeless sleep rate is 6.0/s")
+	assert("Бездомный" in p01_4_homeless.last_status_reason, "P01.4: Homeless status reason mentions outdoor sleep")
+
+	# Утреннее пробуждение: если не выспался (energy < 50), получает статус "Не выспался (усталость)"
+	GameManager.current_hour = 8.0 # Утро
+	crowded_cit.energy = 40.0 # Устал
+	crowded_cit.state = CitizenNPC.State.SLEEPING
+	p01_4_settlement.update_citizens(0.1)
+	assert(crowded_cit.state == CitizenNPC.State.IDLE, "P01.4: Citizen wakes up in morning")
+	assert(crowded_cit.last_status_reason == "Не выспался (усталость)", "P01.4: Low energy morning status is tired")
+
+	# 4. Проверка влияния усталости и голода на результативность лесоруба (ТЗ Критерий 3)
+	var wc_cit = CitizenNPC.new("wc_test", "Лесоруб Уставший", "m", 25)
+	wc_cit.energy = 10.0 # Истощен
+	wc_cit.hunger = 15.0 # Голоден
+	var tired_mult = wc_cit.get_vitality_multiplier()
+	assert(tired_mult < 0.5, "P01.4: Tired & hungry citizen has vitality multiplier < 0.5")
+
+	# Восстановление сил после еды и отдыха
+	wc_cit.energy = 100.0
+	wc_cit.hunger = 100.0
+	var rested_mult = wc_cit.get_vitality_multiplier()
+	assert(rested_mult == 1.0, "P01.4: Fully fed and rested citizen has 100% vitality multiplier")
+
+	# 5. Автономное начало частного улучшения свободной семьей (P01.4 / ТЗ 6.3)
+	p01_4_settlement.economy.resources["wood"] = 50.0
+	p01_4_settlement.economy.resources["stone"] = 20.0
+	# Семья в test_hut испытывает тесноту (7 > 6) -> потребность в hut_annex
+	var started_private = p01_4_settlement.check_family_private_improvements()
+	assert(started_private, "P01.4: Family autonomously starts private improvement when need & resources exist")
+	assert(test_hut.has_pending_upgrade(), "P01.4: Hut now has pending upgrade")
+	assert(test_hut.pending_upgrade["id"] == "hut_annex", "P01.4: Started upgrade matches family need (hut_annex)")
+	assert(p01_4_settlement.economy.get_resource("wood") == 40.0, "P01.4: 10 wood deducted for hut_annex")
+
+	# 6. Отмена улучшения правителем и память семьи о вмешательстве
+	var initial_loyalty = crowded_cit.loyalty
+	var cancelled_up = p01_4_settlement.cancel_building_upgrade(test_hut, true)
+	assert(not cancelled_up.is_empty(), "P01.4: Upgrade successfully cancelled")
+	assert(not test_hut.has_pending_upgrade(), "P01.4: Pending upgrade cleared")
+	assert(p01_4_settlement.economy.get_resource("wood") == 50.0, "P01.4: Wood refunded to economy upon cancel")
+
+	# Жильцы хижины получили возмущение и запись в памяти
+	assert(crowded_cit.loyalty < initial_loyalty, "P01.4: Resident loyalty dropped after player cancelled home improvement")
+	assert(crowded_cit.has_memory_of("ruler", "outrage"), "P01.4: Family stored memory of ruler prohibiting their home improvement")
+	var has_outrage_memory = false
+	for m in crowded_cit.memories:
+		if m.get("type", "") == "outrage" and "обустройство" in m.get("description", ""):
+			has_outrage_memory = true
+			break
+	assert(has_outrage_memory, "P01.4: Outrage memory details verify description")
+
+	# 7. Завершение улучшения и снятие тесноты
+	test_hut.unlock_upgrade("hut_annex")
+	assert(test_hut.is_upgrade_unlocked("hut_annex"), "P01.4: hut_annex is unlocked")
+	assert(test_hut.get_comfort_capacity() == 8, "P01.4: Comfort capacity expanded from 6 to 8")
+	assert(test_hut.get_max_residents() == 10, "P01.4: Max residents expanded from 8 to 10")
+	assert(not test_hut.is_crowded(), "P01.4: 7 residents in 8-comfort hut is no longer crowded!")
+
+	# 8. Кладовая и огород
+	test_hut.unlock_upgrade("hut_pantry")
+	assert(test_hut.get_home_spoilage_multiplier() == 0.5, "P01.4: Pantry reduces home food spoilage by 50%")
+	test_hut.unlock_upgrade("hut_shed")
+	assert(test_hut.get_domestic_goods_capacity() == 25.0, "P01.4: Shed expands domestic storage to 25")
+	test_hut.unlock_upgrade("hut_garden")
+	test_hut.food_stockpile = 2.0
+	p01_4_settlement.sim_daily_tick("summer")
+	assert(test_hut.food_stockpile >= 2.5, "P01.4: Garden yields food produce for the household")
+
+	print("OK 101. P01.4 Hut life cycle, sleep quality, crowding penalty, family private improvements and cancellation memory verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-98) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-101) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 

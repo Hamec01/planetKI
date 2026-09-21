@@ -129,6 +129,13 @@ func update_food_spoilage(delta: float) -> void:
 			EventBus.resources_updated.emit(faction_id, economy.resources)
 			EventBus.notification_toast.emit("Испорченная пища", "На складе испортилось %.1f ед. запасов пищи" % spoiled_total, "warning")
 
+	# Домашняя порча пищи в хижинах (снижается на 50% при наличии кладовой hut_pantry)
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.is_residential() and b.food_stockpile > 0.0:
+				var home_spoil = 0.0005 * b.get_home_spoilage_multiplier() * delta
+				b.food_stockpile = maxf(0.0, b.food_stockpile - home_spoil)
+
 func deposit_resource(res_name: String, amount: float, source_name: String = "", batch_info: Dictionary = {}) -> void:
 	if amount <= 0.0 or res_name == "":
 		return
@@ -509,6 +516,98 @@ func demolish_building(coord: Vector2i) -> bool:
 		
 	auto_assign_housing()
 	return true
+
+func cancel_building_upgrade(b_inst: BuildingInstance, is_player_mandate: bool = true) -> Dictionary:
+	if not b_inst or not b_inst.has_pending_upgrade():
+		return {}
+	var up_data = b_inst.cancel_upgrade()
+	if up_data.is_empty():
+		return {}
+	# Возврат доставленных стройматериалов на склад
+	for res in up_data.get("materials_delivered", {}):
+		var amt = float(up_data["materials_delivered"][res])
+		if amt > 0.0:
+			deposit_resource(res, amt, "Возврат отмененного улучшения")
+	if is_player_mandate and b_inst.is_residential():
+		for r_id in b_inst.residents:
+			var c = population.find_citizen(r_id) if population else null
+			if c:
+				c.loyalty = maxf(0.0, c.loyalty - 10.0)
+				c.add_memory("outrage", "ruler", b_inst.id, 1.0, "Правитель запретил обустройство нашего дома", false)
+				c.last_status_reason = "Возмущён: правитель запретил обустройство дома"
+	return up_data
+
+func check_family_private_improvements() -> bool:
+	if not GameManager or not GameManager.building_instances:
+		return false
+	
+	for b_inst in GameManager.building_instances.values():
+		if not b_inst or b_inst.settlement_id != id or not b_inst.is_residential():
+			continue
+		if b_inst.type != "hut":
+			continue
+		if b_inst.has_pending_upgrade():
+			continue
+		if b_inst.residents.is_empty():
+			continue
+			
+		# Проверка наличия дееспособного жильца семьи
+		var has_free_worker = false
+		for r_id in b_inst.residents:
+			var c = population.find_citizen(r_id) if population else null
+			if c and c.is_alive and c.cohort in ["youth", "adult", "elder"] and c.energy > 30.0:
+				has_free_worker = true
+				break
+		if not has_free_worker:
+			continue
+			
+		# Определение потребности семьи
+		var candidate_up = ""
+		if (b_inst.is_crowded() or b_inst.residents.size() >= b_inst.get_comfort_capacity()) and not b_inst.is_upgrade_unlocked("hut_annex"):
+			candidate_up = "hut_annex"
+		elif b_inst.food_stockpile >= 2.0 and not b_inst.is_upgrade_unlocked("hut_pantry"):
+			candidate_up = "hut_pantry"
+		elif not b_inst.domestic_goods.is_empty() and not b_inst.is_upgrade_unlocked("hut_shed"):
+			candidate_up = "hut_shed"
+		elif not b_inst.is_upgrade_unlocked("hut_garden"):
+			candidate_up = "hut_garden"
+		elif not b_inst.is_upgrade_unlocked("hut_shed"):
+			candidate_up = "hut_shed"
+			
+		if candidate_up == "":
+			continue
+			
+		var up_def = BuildingSystem.get_upgrade(candidate_up)
+		if up_def.is_empty():
+			continue
+		var cost = up_def.get("cost", {})
+		var can_afford = true
+		for res in cost:
+			if economy.get_resource(res) < float(cost[res]):
+				can_afford = false
+				break
+		if not can_afford:
+			continue
+			
+		# Списание материалов и старт улучшения
+		for res in cost:
+			economy.resources[res] = maxf(0.0, economy.get_resource(res) - float(cost[res]))
+		if faction_id == GameManager.player_faction_id:
+			EventBus.resources_updated.emit(faction_id, economy.resources)
+			
+		b_inst.start_upgrade(candidate_up, cost)
+		b_inst.pending_upgrade["materials_delivered"] = cost.duplicate()
+		b_inst.pending_upgrade["work_left"] = 4.0
+		b_inst.pending_upgrade["total_work"] = 4.0
+		
+		var up_name = up_def.get("name", candidate_up)
+		EventBus.notification_toast.emit(
+			"Частная стройка",
+			"Семья из хижины (%d:%d) самостоятельно начала обустройство: %s" % [b_inst.pos.x, b_inst.pos.y, up_name],
+			"info"
+		)
+		return true
+	return false
 
 func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dictionary:
 	var b_inst: BuildingInstance = GameManager.building_instances.get(source_coord, null) if GameManager else null
@@ -971,6 +1070,14 @@ func sim_daily_tick(season: String) -> void:
 	if faction_id == GameManager.player_faction_id:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
 
+	# 3. Придомовые огороды (hut_garden) и проверка частных улучшений семей (P01.4 / ТЗ 6.3)
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.is_residential():
+				if b.is_upgrade_unlocked("hut_garden"):
+					b.food_stockpile = minf(b.food_stockpile_max, b.food_stockpile + 0.5)
+	check_family_private_improvements()
+
 func sim_monthly_tick(season: String) -> void:
 	var food_ratio = 1.0
 	var pop_res = population.sim_monthly_tick(food_ratio, get_housing_capacity(), season)
@@ -1046,25 +1153,48 @@ func update_citizens(delta: float) -> void:
 				
 		# 3. Ночной режим: Сон в хижине (стража не спит ночью — выходит в ночной дозор)
 		if is_night and c.job_id != "guard":
+			var home_inst: BuildingInstance = null
+			if c.home_id != "" and GameManager and GameManager.building_instances:
+				for bi in GameManager.building_instances.values():
+					if bi and bi.id == c.home_id:
+						home_inst = bi
+						break
+
 			if c.state == CitizenNPC.State.SLEEPING:
-				var sleep_rate = 12.0 if c.home_id != "" else 6.0
-				c.energy = minf(100.0, c.energy + sleep_rate * delta)
-				if c.home_id == "":
-					c.loyalty = maxf(0.0, c.loyalty - 0.2 * delta)
-					c.last_status_reason = "Бездомный, спит на земле"
+				if home_inst != null:
+					var penalty = home_inst.get_crowding_penalty()
+					var sleep_rate = 12.0 * (1.0 - penalty)
+					c.energy = minf(100.0, c.energy + sleep_rate * delta)
+					if home_inst.is_crowded():
+						c.loyalty = maxf(0.0, c.loyalty - 0.05 * penalty * delta)
+						c.last_status_reason = "Спит в хижине в тесноте (штраф отдыха -%d%%)" % int(penalty * 100)
+					else:
+						c.last_status_reason = "Спит в гостях" if c.is_guest else "Спит в хижине"
 				else:
-					c.last_status_reason = "Спит в гостях" if c.is_guest else "Спит в хижине"
+					var sleep_rate = 6.0
+					c.energy = minf(100.0, c.energy + sleep_rate * delta)
+					c.loyalty = maxf(0.0, c.loyalty - 0.2 * delta)
+					c.last_status_reason = "Бездомный, спит на земле (плохой отдых)"
 				continue
 			elif c.state == CitizenNPC.State.GOING_HOME:
 				var reached = c.update_movement(delta)
 				if reached or c.pos.distance_to(c.home_pos) < 6.0:
 					c.state = CitizenNPC.State.SLEEPING
-					c.last_status_reason = "Спит в хижине" if c.home_id != "" else "Спит под звёздами"
+					if home_inst != null:
+						if home_inst.is_crowded():
+							c.last_status_reason = "Спит в хижине в тесноте (штраф отдыха -%d%%)" % int(home_inst.get_crowding_penalty() * 100)
+						else:
+							c.last_status_reason = "Спит в гостях" if c.is_guest else "Спит в хижине"
+					else:
+						c.last_status_reason = "Бездомный, спит на земле (плохой отдых)"
 			else:
 				# Если уже дома — сразу ложится спать в хижине
 				if c.home_id != "" and c.home_pos != Vector2.ZERO and c.pos.distance_to(c.home_pos) <= 6.0:
 					c.state = CitizenNPC.State.SLEEPING
-					c.last_status_reason = "Спит в гостях" if c.is_guest else "Спит в хижине"
+					if home_inst != null and home_inst.is_crowded():
+						c.last_status_reason = "Спит в хижине в тесноте (штраф отдыха -%d%%)" % int(home_inst.get_crowding_penalty() * 100)
+					else:
+						c.last_status_reason = "Спит в гостях" if c.is_guest else "Спит в хижине"
 					continue
 					
 				# Проверка достижимости кровати
@@ -1118,7 +1248,10 @@ func update_citizens(delta: float) -> void:
 				continue
 			else:
 				c.state = CitizenNPC.State.IDLE
-				c.last_status_reason = "Пробуждение"
+				if c.energy < 50.0:
+					c.last_status_reason = "Не выспался (усталость)"
+				else:
+					c.last_status_reason = "Пробуждение"
 				c.decision_cooldown = randf_range(0.5, 2.0)
 			
 		# Снижение бодрости и сытости
@@ -1639,8 +1772,8 @@ func update_citizens(delta: float) -> void:
 						c.last_status_reason = "Посадил молодой саженец"
 						EventBus.notification_toast.emit("Посадка леса", "Лесорубы посеяли молодое дерево", "good")
 					else:
-						# УДАР ТОПОРОМ: прогрессивное снятие порции древесины (25 дров за удар)
-						var strike_harvest = 25.0
+						# УДАР ТОПОРОМ: прогрессивное снятие порции древесины (25 дров за удар с учетом сил)
+						var strike_harvest = 25.0 * c.get_vitality_multiplier()
 						var h_amount = 0.0
 						if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
 							h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, strike_harvest)

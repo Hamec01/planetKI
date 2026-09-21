@@ -130,6 +130,15 @@ func unlock_upgrade(u_id: String) -> bool:
 		return true
 	return false
 
+func cancel_upgrade() -> Dictionary:
+	if not has_pending_upgrade():
+		return {}
+	var saved_pending = pending_upgrade.duplicate(true)
+	pending_upgrade.clear()
+	var year = GameManager.current_year if GameManager else 1
+	add_history_entry(year, "Отменено улучшение: %s" % saved_pending.get("id", ""))
+	return saved_pending
+
 func set_mode(new_mode: String) -> void:
 	active_mode = new_mode
 	var year = GameManager.current_year if GameManager else 1
@@ -155,6 +164,12 @@ func add_worker(citizen_id: String) -> void:
 func is_residential() -> bool:
 	return max_residents > 0
 
+func get_max_residents() -> int:
+	var cap = max_residents
+	if type == "hut" and is_upgrade_unlocked("hut_annex"):
+		cap += 2
+	return cap
+
 func get_comfort_capacity() -> int:
 	if type == "hut":
 		var cap = comfort_capacity
@@ -162,6 +177,17 @@ func get_comfort_capacity() -> int:
 			cap += 2
 		return cap
 	return comfort_capacity
+
+func get_domestic_goods_capacity() -> float:
+	var cap = 10.0
+	if is_upgrade_unlocked("hut_shed"):
+		cap += 15.0
+	return cap
+
+func get_home_spoilage_multiplier() -> float:
+	if is_upgrade_unlocked("hut_pantry"):
+		return 0.5
+	return 1.0
 
 func is_crowded() -> bool:
 	return is_residential() and residents.size() > get_comfort_capacity()
@@ -176,10 +202,10 @@ func get_total_occupants() -> int:
 	return residents.size() + guests.size()
 
 func get_total_capacity() -> int:
-	return max_residents + max_guests
+	return get_max_residents() + max_guests
 
 func has_space_for_resident() -> bool:
-	return residents.size() < max_residents
+	return residents.size() < get_max_residents()
 
 func has_space_for_guest() -> bool:
 	return guests.size() < max_guests

@@ -1050,10 +1050,27 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 		else:
 			ctx_title_lbl.text = "🏠 %s" % b_name
 			ctx_coords_lbl.text = "Институт (%d:%d)" % [coord.x, coord.y]
-			ctx_desc_lbl.text = "%s" % b_info.get("description", "Действующее здание.")
 			var s_id = b_data.get("settlement_id", "player_tribe_settlement")
 			var b_inst = GameManager.get_or_create_building_instance(coord, b_id, s_id)
 			var s = GameManager.settlements.get(s_id, null)
+			
+			var desc_text = b_info.get("description", "Действующее здание.")
+			if b_inst and b_inst.is_residential():
+				var res_cnt = b_inst.residents.size()
+				var guest_cnt = b_inst.guests.size()
+				var max_res = b_inst.get_max_residents()
+				var comf_cap = b_inst.get_comfort_capacity()
+				var crowd_str = " | ⚠️ Теснота (-%d%%)" % int(b_inst.get_crowding_penalty() * 100) if b_inst.is_crowded() else " | ✅ Комфортно"
+				desc_text += "\n👥 Жильцы: %d/%d (комфорт: %d)%s\n🧳 Гости: %d | 🍲 Еда: %.1f ед." % [
+					res_cnt, max_res, comf_cap, crowd_str, guest_cnt, b_inst.food_stockpile
+				]
+				if b_inst.has_pending_upgrade():
+					var up_name = BuildingSystem.get_upgrade(b_inst.pending_upgrade.get("id", "")).get("name", b_inst.pending_upgrade.get("id", ""))
+					desc_text += "\n🔨 Стройка: %s (осталось %.1f)" % [up_name, float(b_inst.pending_upgrade.get("work_left", 0.0))]
+			elif b_inst and b_inst.workers.size() > 0:
+				desc_text += "\n👥 Работников: %d чел." % b_inst.workers.size()
+				
+			ctx_desc_lbl.text = desc_text
 			ctx_action_btn.text = "🏛 Войти в здание"
 			ctx_action_btn.pressed.connect(func():
 				cursor_context_menu.visible = false
