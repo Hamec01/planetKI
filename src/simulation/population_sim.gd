@@ -7,8 +7,8 @@ const CitizenNPCScript = preload("res://src/simulation/citizen_npc.gd")
 var children: int = 0       # 0–13 лет
 var youth: int = 1          # 14–17 лет
 var adults_m: int = 4       # 18–45 лет мужчины
-var adults_f: int = 4       # 18–45 лет женщины
-var elders: int = 1         # 46–60 лет
+var adults_f: int = 5       # 18–45 лет женщины
+var elders: int = 0         # 46–60 лет (правитель исключён из демографии)
 var old_folk: int = 0       # 60+ лет
 
 var health_index: float = 95.0 # 0 - 100
@@ -31,6 +31,7 @@ func _init_starter_citizens() -> void:
 	citizens.clear()
 	var race = GameManager.player_race if "player_race" in GameManager else "north"
 	
+	# P01.1 ТЗ: Ровно 5 мужчин и 5 женщин соплеменников, правитель не входит в их число
 	var starter_data = [
 		{"id": "cit_1", "name": "Старейшина Мирослав", "gender": "m", "age": 52, "cohort": "elder", "job": "elder", "exp": {"sage": 40, "woodcutter": 10}, "ruler": true},
 		{"id": "cit_2", "name": "Брок", "gender": "m", "age": 28, "cohort": "adult", "job": "woodcutter", "exp": {"woodcutter": 25, "hunter": 15}, "ruler": false},
@@ -42,7 +43,7 @@ func _init_starter_citizens() -> void:
 		{"id": "cit_8", "name": "Лада", "gender": "f", "age": 29, "cohort": "adult", "job": "idle", "exp": {"forager": 20, "craftsman": 20}, "ruler": false},
 		{"id": "cit_9", "name": "Забава", "gender": "f", "age": 21, "cohort": "adult", "job": "idle", "exp": {"forager": 15, "farmer": 15}, "ruler": false},
 		{"id": "cit_10", "name": "Радомир", "gender": "m", "age": 16, "cohort": "youth", "job": "idle", "exp": {"hunter": 10, "forager": 10}, "ruler": false},
-		{"id": "cit_11", "name": "Богдан", "gender": "m", "age": 25, "cohort": "adult", "job": "idle", "exp": {"quarryman": 15, "woodcutter": 10}, "ruler": false}
+		{"id": "cit_11", "name": "Радмила", "gender": "f", "age": 25, "cohort": "adult", "job": "idle", "exp": {"quarryman": 15, "woodcutter": 10}, "ruler": false}
 	]
 	
 	for s in starter_data:
@@ -140,6 +141,17 @@ func get_mobilization_pool() -> int:
 			count += 1
 	return count
 
+func get_gender_counts() -> Dictionary:
+	var men = 0
+	var women = 0
+	for c in citizens:
+		if not c.is_ruler and c.health > 0:
+			if c.gender == "m":
+				men += 1
+			elif c.gender == "f":
+				women += 1
+	return {"men": men, "women": women}
+
 func get_population_reconciliation() -> Dictionary:
 	var total_living = 0
 	var ruler_count = 0
@@ -149,6 +161,8 @@ func get_population_reconciliation() -> Dictionary:
 	var active_on_map = 0
 	var guests = 0
 	var children_count = 0
+	var men = 0
+	var women = 0
 	
 	for c in citizens:
 		if c.is_ruler:
@@ -157,6 +171,10 @@ func get_population_reconciliation() -> Dictionary:
 		if c.health <= 0:
 			continue
 		total_living += 1
+		if c.gender == "m":
+			men += 1
+		elif c.gender == "f":
+			women += 1
 		if c.cohort == "child":
 			children_count += 1
 		if c.is_guest:
@@ -173,6 +191,8 @@ func get_population_reconciliation() -> Dictionary:
 	return {
 		"total_citizens": total_living,
 		"ruler_count": ruler_count,
+		"men_count": men,
+		"women_count": women,
 		"unemployed": unemployed,
 		"available_for_tasks": available,
 		"active_on_map": active_on_map,

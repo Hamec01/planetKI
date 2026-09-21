@@ -2281,11 +2281,18 @@ func _ready() -> void:
 	assert(s_a01.population.get_total_population() == 10, "A01: Total population must be exactly 10 excluding ruler")
 	assert(s_a01.population.citizens.size() == 11, "A01: Citizen registry has 10 citizens + 1 ruler")
 	var ruler_found = false
+	var seen_ids: Dictionary = {}
 	for c in s_a01.population.citizens:
+		assert(not seen_ids.has(c.citizen_id), "P01.1: Citizen IDs must be strictly unique without duplicates")
+		seen_ids[c.citizen_id] = true
 		if c.is_ruler:
 			ruler_found = true
 			assert(c.citizen_id == "cit_1", "A01: cit_1 is designated ruler")
 	assert(ruler_found, "A01: Ruler must exist in settlement")
+	
+	var initial_gender_counts = s_a01.population.get_gender_counts()
+	assert(initial_gender_counts["men"] == 5, "P01.1: Starter population must have exactly 5 men")
+	assert(initial_gender_counts["women"] == 5, "P01.1: Starter population must have exactly 5 women")
 	
 	# Тройной Save/Load
 	GameManager.settlements[s_a01.id] = s_a01
@@ -2296,7 +2303,14 @@ func _ready() -> void:
 		assert(reloaded_s != null, "A01: Reloaded settlement must exist")
 		assert(reloaded_s.population.get_total_population() == 10, "A01: Population must stay 10 after reload cycle %d" % cycle)
 		assert(reloaded_s.population.citizens.size() == 11, "A01: Total registry must stay 11 after reload cycle %d" % cycle)
-	print("OK 84. A01/A03 Starter population, ruler exclusion and 3 consecutive Save/Load cycles verified.")
+		var reloaded_genders = reloaded_s.population.get_gender_counts()
+		assert(reloaded_genders["men"] == 5, "P01.1: Post-load population must retain exactly 5 men")
+		assert(reloaded_genders["women"] == 5, "P01.1: Post-load population must retain exactly 5 women")
+		var post_seen_ids: Dictionary = {}
+		for rc in reloaded_s.population.citizens:
+			assert(not post_seen_ids.has(rc.citizen_id), "P01.1: Post-load citizen IDs must be unique")
+			post_seen_ids[rc.citizen_id] = true
+	print("OK 84. A01/A03 & P01.1 Starter population (5M + 5F), ruler exclusion and 3 consecutive Save/Load cycles verified.")
 
 	# 85. A04/A05: Параметры суточного цикла и возраста
 	assert(GameManager.DAY_CYCLE_DURATION == 300.0, "A04: Day cycle is exactly 300.0s at 1x")
