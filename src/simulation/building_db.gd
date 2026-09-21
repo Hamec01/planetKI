@@ -11,8 +11,10 @@ const BUILDINGS: Dictionary = {
 		"cost": {"wood": 15},
 		"build_days": 10,
 		"housing": 8,
+		"comfort_housing": 6,
+		"max_guests": 2,
 		"max_workers": 0,
-		"description": "Простое жилище из веток, шкур и глины. Даёт кров 8 соплеменникам."
+		"description": "Простое жилище из веток, шкур и глины. Комфортно вмещает 4–6 соплеменников, до 8 — тесно."
 	},
 	"great_lodge": {
 		"id": "great_lodge",

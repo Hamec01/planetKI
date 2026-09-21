@@ -2590,6 +2590,75 @@ func _ready() -> void:
 	assert(p01_restored.traits["temper"] == p01_npc.traits["temper"], "P01.2: Restored personality trait matches")
 	print("OK 99. P01.2 Citizen effective parameters, personality scales, memories and observation radius verified.")
 
+	# 100. P01.3: Модель жилья — разделение слотов, комфорт, теснота, роли и миграция сохранений
+	var hut_def = BuildingDB.get_building("hut")
+	assert(hut_def["housing"] == 8 and hut_def.get("comfort_housing", 0) == 6, "P01.3: Hut has 8 max residents and 6 comfort capacity")
+	assert(hut_def.get("cost", {}).get("wood", 0) == 15, "P01.3: Hut costs 15 wood")
+
+	var hut_inst = BuildingInstance.new("test_hut_1", "hut", "test_s", Vector2i(25, 25))
+	assert(hut_inst.max_residents == 8, "P01.3: Max residents is 8")
+	assert(hut_inst.get_comfort_capacity() == 6, "P01.3: Comfort capacity is 6")
+	assert(hut_inst.max_guests == 2, "P01.3: Max guests is 2")
+	assert(not hut_inst.is_crowded(), "P01.3: Empty hut is not crowded")
+
+	# Заселяем постоянных жильцов до комфортной вместимости
+	for i in range(6):
+		assert(hut_inst.add_resident("res_%d" % i), "P01.3: Resident %d accommodated" % i)
+	assert(not hut_inst.is_crowded(), "P01.3: 6 residents in hut is comfortable, not crowded")
+	assert(hut_inst.get_crowding_penalty() == 0.0, "P01.3: Zero penalty at comfort limit")
+	assert(hut_inst.get_resident_role("res_0") == "owner", "P01.3: First resident designated as owner / head of household")
+	assert(hut_inst.get_resident_role("res_1") == "resident", "P01.3: Subsequent residents have resident role")
+
+	# Заселяем 7-го и 8-го (теснота)
+	assert(hut_inst.add_resident("res_6"), "P01.3: Resident 6 added (crowded)")
+	assert(hut_inst.is_crowded(), "P01.3: 7 residents makes hut crowded")
+	assert(hut_inst.get_crowding_penalty() > 0.0, "P01.3: Crowding penalty active")
+	assert(hut_inst.add_resident("res_7"), "P01.3: Resident 7 added (maximum capacity)")
+	assert(not hut_inst.has_space_for_resident(), "P01.3: Resident capacity full at 8")
+	assert(not hut_inst.add_resident("res_8"), "P01.3: 9th resident rejected")
+
+	# Проверка строгой изоляции слотов гостей: гостевые места остаются доступны даже при полной хижине!
+	assert(hut_inst.has_space_for_guest(), "P01.3: Guest slots remain available despite full permanent slots")
+	assert(hut_inst.add_guest("guest_0"), "P01.3: First guest accommodated")
+	assert(hut_inst.get_resident_role("guest_0") == "guest", "P01.3: Guest has guest role")
+	assert(hut_inst.add_guest("guest_1"), "P01.3: Second guest accommodated")
+	assert(not hut_inst.has_space_for_guest(), "P01.3: Guest capacity full at 2")
+	assert(not hut_inst.add_guest("guest_2"), "P01.3: Third guest rejected (guest slots cannot overflow)")
+
+	# Освобождение и смена ролей
+	hut_inst.set_resident_role("res_2", "dependent")
+	assert(hut_inst.get_resident_role("res_2") == "dependent", "P01.3: Dependent role set cleanly on res_2")
+	hut_inst.remove_resident("res_0")
+	assert(hut_inst.get_resident_role("res_0") == "none", "P01.3: Removed resident role cleared")
+	assert(hut_inst.household_head_id == "res_1", "P01.3: Head of household automatically reassigned to res_1 on owner removal")
+	assert(hut_inst.get_resident_role("res_1") == "owner", "P01.3: res_1 automatically becomes owner")
+
+	# Миграция старых сохранений (без полей resident_roles и household_head_id)
+	var legacy_save = {
+		"id": "legacy_hut",
+		"type": "hut",
+		"residents": ["leg_1", "leg_2", "leg_3"],
+		"guests": ["leg_guest"]
+	}
+	var migrated_hut = BuildingInstance.new()
+	migrated_hut.deserialize(legacy_save)
+	assert(migrated_hut.household_head_id == "leg_1", "P01.3: Legacy save migrated: first resident becomes owner")
+	assert(migrated_hut.get_resident_role("leg_1") == "owner", "P01.3: Legacy leg_1 role is owner")
+	assert(migrated_hut.get_resident_role("leg_2") == "resident", "P01.3: Legacy leg_2 role is resident")
+	assert(migrated_hut.get_resident_role("leg_guest") == "guest", "P01.3: Legacy leg_guest role is guest")
+	assert(migrated_hut.get_comfort_capacity() == 6, "P01.3: Legacy comfort capacity initialized")
+
+	# Проверка сохранения и загрузки всех расширенных полей домохозяйства
+	hut_inst.domestic_goods["hides"] = 5.0
+	var saved_hut_data = hut_inst.serialize()
+	var loaded_hut = BuildingInstance.new()
+	loaded_hut.deserialize(saved_hut_data)
+	assert(loaded_hut.comfort_capacity == hut_inst.comfort_capacity, "P01.3: Comfort capacity preserved in save")
+	assert(loaded_hut.household_head_id == "res_1", "P01.3: Head of household preserved in save")
+	assert(loaded_hut.get_resident_role("res_2") == "dependent", "P01.3: Dependent role preserved in save")
+	assert(loaded_hut.domestic_goods.get("hides", 0.0) == 5.0, "P01.3: Domestic goods preserved in save")
+	print("OK 100. P01.3 Housing comfort, capacity isolation, roles and legacy migration verified.")
+
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-98) COMPLETED SUCCESSFULLY!")
 	print("========================================")

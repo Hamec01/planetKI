@@ -19,11 +19,15 @@ var condition: float = 100.0 # 0 - 100%
 var manager_id: String = "" # ID назначенного мастера/руководителя (напр. "cit_2")
 var workers: Array[String] = [] # IDs соплеменников
 
-# --- ДОМОХОЗЯЙСТВО, ЖИЛЬЦЫ И ЗАПАСЫ (S06) ---
+# --- ДОМОХОЗЯЙСТВО, ЖИЛЬЦЫ И ЗАПАСЫ (S06 / P01.3) ---
 var residents: Array[String] = [] # IDs постоянных членов домохозяйства
 var guests: Array[String] = [] # IDs временных гостей (гостевое проживание)
 var max_residents: int = 8
+var comfort_capacity: int = 6
 var max_guests: int = 2
+var household_head_id: String = ""
+var resident_roles: Dictionary = {} # citizen_id -> "owner" | "resident" | "guest" | "dependent"
+var domestic_goods: Dictionary = {} # Личные вещи и материалы домохозяйства
 var food_stockpile: float = 0.0 # Домашний запас пищи
 var food_stockpile_max: float = 16.0 # Целевой запас на 2 дня
 var is_locked_by_player: bool = false # Запрет автоматического выселения игроком
@@ -53,18 +57,22 @@ func _init_housing_capacity() -> void:
 	var b_info = BuildingDB.get_building(type)
 	if b_info.has("housing") and b_info["housing"] > 0:
 		max_residents = b_info["housing"]
-		max_guests = maxi(2, int(ceil(max_residents * 0.25)))
+		comfort_capacity = b_info.get("comfort_housing", 6 if type == "hut" else max_residents)
+		max_guests = b_info.get("max_guests", maxi(2, int(ceil(max_residents * 0.25))))
 		food_stockpile_max = float(max_residents * 2)
 	elif type == "elders_house":
 		max_residents = 4
+		comfort_capacity = 4
 		max_guests = 2
 		food_stockpile_max = 12.0
 	elif type == "granary":
 		max_residents = 0
+		comfort_capacity = 0
 		max_guests = 0
 		food_stockpile_max = 100.0
 	else:
 		max_residents = 0
+		comfort_capacity = 0
 		max_guests = 0
 		food_stockpile_max = 0.0
 
@@ -147,6 +155,23 @@ func add_worker(citizen_id: String) -> void:
 func is_residential() -> bool:
 	return max_residents > 0
 
+func get_comfort_capacity() -> int:
+	if type == "hut":
+		var cap = comfort_capacity
+		if is_upgrade_unlocked("hut_annex"):
+			cap += 2
+		return cap
+	return comfort_capacity
+
+func is_crowded() -> bool:
+	return is_residential() and residents.size() > get_comfort_capacity()
+
+func get_crowding_penalty() -> float:
+	if not is_crowded():
+		return 0.0
+	var excess = residents.size() - get_comfort_capacity()
+	return clampf(float(excess) * 0.12, 0.0, 0.35)
+
 func get_total_occupants() -> int:
 	return residents.size() + guests.size()
 
@@ -157,32 +182,68 @@ func has_space_for_resident() -> bool:
 	return residents.size() < max_residents
 
 func has_space_for_guest() -> bool:
-	return get_total_occupants() < get_total_capacity()
+	return guests.size() < max_guests
 
-func add_resident(citizen_id: String) -> bool:
+func get_resident_role(citizen_id: String) -> String:
+	if guests.has(citizen_id):
+		return "guest"
+	if resident_roles.has(citizen_id):
+		return resident_roles[citizen_id]
+	if household_head_id == citizen_id or (household_head_id == "" and residents.size() > 0 and residents[0] == citizen_id):
+		return "owner"
+	if residents.has(citizen_id):
+		return "resident"
+	return "none"
+
+func set_resident_role(citizen_id: String, role: String) -> void:
+	if role == "guest":
+		if not guests.has(citizen_id):
+			add_guest(citizen_id)
+		resident_roles[citizen_id] = "guest"
+	else:
+		if not residents.has(citizen_id):
+			add_resident(citizen_id, role)
+		else:
+			resident_roles[citizen_id] = role
+		if role == "owner":
+			household_head_id = citizen_id
+
+func add_resident(citizen_id: String, role: String = "resident") -> bool:
 	if has_space_for_resident():
 		if not residents.has(citizen_id):
 			guests.erase(citizen_id)
 			residents.append(citizen_id)
+			if household_head_id == "" or role == "owner":
+				household_head_id = citizen_id
+				resident_roles[citizen_id] = "owner"
+			else:
+				resident_roles[citizen_id] = role
 			return true
 	return false
 
 func remove_resident(citizen_id: String) -> void:
 	residents.erase(citizen_id)
+	resident_roles.erase(citizen_id)
+	if household_head_id == citizen_id:
+		household_head_id = residents[0] if not residents.is_empty() else ""
+		if household_head_id != "":
+			resident_roles[household_head_id] = "owner"
 
 func add_guest(citizen_id: String) -> bool:
 	if has_space_for_guest():
 		if not guests.has(citizen_id) and not residents.has(citizen_id):
 			guests.append(citizen_id)
+			resident_roles[citizen_id] = "guest"
 			return true
 	return false
 
 func remove_guest(citizen_id: String) -> void:
 	guests.erase(citizen_id)
+	resident_roles.erase(citizen_id)
 
 func remove_occupant(citizen_id: String) -> void:
-	residents.erase(citizen_id)
-	guests.erase(citizen_id)
+	remove_resident(citizen_id)
+	remove_guest(citizen_id)
 
 func add_production_order(item_id: String, count: int = 1, maintain_stock: int = 0) -> Dictionary:
 	var recipe = EquipmentDB.RECIPES.get(item_id, {})
@@ -291,7 +352,11 @@ func serialize() -> Dictionary:
 		"residents": residents.duplicate(),
 		"guests": guests.duplicate(),
 		"max_residents": max_residents,
+		"comfort_capacity": comfort_capacity,
 		"max_guests": max_guests,
+		"household_head_id": household_head_id,
+		"resident_roles": resident_roles.duplicate(),
+		"domestic_goods": domestic_goods.duplicate(),
 		"food_stockpile": food_stockpile,
 		"food_stockpile_max": food_stockpile_max,
 		"is_locked_by_player": is_locked_by_player,
@@ -317,8 +382,17 @@ func deserialize(data: Dictionary) -> void:
 	workers.assign(data.get("workers", []))
 	residents.assign(data.get("residents", []))
 	guests.assign(data.get("guests", []))
-	max_residents = data.get("max_residents", max_residents)
-	max_guests = data.get("max_guests", max_guests)
+	var b_info = BuildingDB.get_building(type)
+	var default_max_res = b_info.get("housing", 0) if not b_info.is_empty() else 0
+	var default_comfort = b_info.get("comfort_housing", 6 if type == "hut" else default_max_res) if not b_info.is_empty() else 0
+	var default_guests = b_info.get("max_guests", maxi(2, int(ceil(default_max_res * 0.25))) if default_max_res > 0 else 0) if not b_info.is_empty() else 0
+
+	max_residents = data.get("max_residents", default_max_res)
+	comfort_capacity = data.get("comfort_capacity", default_comfort)
+	max_guests = data.get("max_guests", default_guests)
+	household_head_id = data.get("household_head_id", "")
+	resident_roles = data.get("resident_roles", {}).duplicate()
+	domestic_goods = data.get("domestic_goods", {}).duplicate()
 	food_stockpile = float(data.get("food_stockpile", 0.0))
 	food_stockpile_max = float(data.get("food_stockpile_max", food_stockpile_max))
 	is_locked_by_player = bool(data.get("is_locked_by_player", false))
@@ -331,4 +405,14 @@ func deserialize(data: Dictionary) -> void:
 	active_events.assign(data.get("active_events", []))
 	pending_upgrade = data.get("pending_upgrade", {}).duplicate(true)
 	construction_year = data.get("construction_year", 1)
+	
+	# Миграция старых данных жителей (P01.3):
+	if household_head_id == "" and not residents.is_empty():
+		household_head_id = residents[0]
+	for res_id in residents:
+		if not resident_roles.has(res_id):
+			resident_roles[res_id] = "owner" if res_id == household_head_id else "resident"
+	for gst_id in guests:
+		if not resident_roles.has(gst_id):
+			resident_roles[gst_id] = "guest"
 
