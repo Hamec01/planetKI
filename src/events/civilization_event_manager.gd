@@ -247,15 +247,6 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	var cur_settlement: RefCounted = settlement
 	if cur_settlement == null:
 		cur_settlement = GameManager.settlements.get(GameManager.player_faction_id + "_settlement", null)
-	if not _check_event_conditions(ev.get("conditions", {}), GameManager.total_simulation_days, cur_settlement):
-		ev["status"] = "obsolete"
-		ev["resolved_day"] = GameManager.total_simulation_days
-		event_instances[instance_id] = ev
-		resolved_events.append(ev.duplicate(true))
-		if active_event.get("instance_id", "") == instance_id:
-			active_event.clear()
-		EventBus.notification_toast.emit("Ситуация изменилась", "Выбранное действие больше не актуально.", "info")
-		return
 		
 	var chosen_choice: Dictionary = {}
 	for c in ev.get("choices", []):

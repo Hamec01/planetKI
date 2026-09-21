@@ -145,6 +145,16 @@ var equipment: Dictionary = {
 	"weapon_mods": [],
 	"arrows": "basic_arrows"
 }
+var equipped_tool: Dictionary = {} # {"id": String, "type": "axe", "durability": float, ...}
+
+func has_tool(tool_type: String = "axe") -> bool:
+	return not equipped_tool.is_empty() and equipped_tool.get("type", "") == tool_type and float(equipped_tool.get("durability", 0.0)) > 0.0
+
+func wear_tool(amount: float = 2.0) -> bool:
+	if equipped_tool.is_empty():
+		return false
+	equipped_tool["durability"] = maxf(0.0, float(equipped_tool.get("durability", 100.0)) - amount)
+	return float(equipped_tool["durability"]) <= 0.0
 
 # Суточные лимиты роста (максимум 8 часов физики, 8 часов профессии, 40 XP охоты)
 var daily_physical_hours: float = 0.0
@@ -664,7 +674,8 @@ func serialize() -> Dictionary:
 		"memories": memories.duplicate(true),
 		"commitment_timer": commitment_timer,
 		"social_cooldown": social_cooldown,
-		"profession_levels": profession_levels.duplicate()
+		"profession_levels": profession_levels.duplicate(),
+		"equipped_tool": equipped_tool.duplicate(true)
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -746,6 +757,7 @@ func deserialize(data: Dictionary) -> void:
 		"weapon_mods": [],
 		"arrows": "basic_arrows"
 	})
+	equipped_tool = data.get("equipped_tool", {}).duplicate(true)
 	cached_texture = null
 
 func sim_aging(sim_delta: float) -> void:

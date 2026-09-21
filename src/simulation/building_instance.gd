@@ -43,6 +43,64 @@ var event_history: Array[Dictionary] = []
 var active_events: Array[Dictionary] = []
 var construction_year: int = 1
 
+# --- БУФЕР И ИНВЕНТАРЬ ИНСТРУМЕНТОВ ЛАГЕРЯ (P01.8) ---
+var local_buffer_wood: float = 0.0
+var local_buffer_max: float = 50.0
+var tool_inventory: Array[Dictionary] = [] # [{"id": "...", "type": "axe", "name": "...", "durability": 100.0, "max_durability": 100.0, "quality": 1.0, "assigned_to": ""}]
+
+func _init_camp_tools() -> void:
+	if type == "woodcutter_camp":
+		local_buffer_max = 50.0
+		local_buffer_wood = 0.0
+		tool_inventory.clear()
+		for i in range(3):
+			tool_inventory.append({
+				"id": "axe_%s_%d" % [id, i + 1],
+				"type": "axe",
+				"name": "Каменный топор",
+				"durability": 100.0,
+				"max_durability": 100.0,
+				"quality": 1.0,
+				"assigned_to": ""
+			})
+
+func has_available_tool(tool_type: String = "axe") -> bool:
+	for t in tool_inventory:
+		if t.get("type", "") == tool_type and t.get("assigned_to", "") == "" and float(t.get("durability", 0.0)) > 0.0:
+			return true
+	return false
+
+func take_tool(tool_type: String = "axe", citizen_id: String = "") -> Dictionary:
+	for t in tool_inventory:
+		if t.get("type", "") == tool_type and t.get("assigned_to", "") == "" and float(t.get("durability", 0.0)) > 0.0:
+			t["assigned_to"] = citizen_id
+			return t
+	return {}
+
+func return_tool(tool_id: String, current_durability: float) -> void:
+	for t in tool_inventory:
+		if t.get("id", "") == tool_id:
+			t["assigned_to"] = ""
+			t["durability"] = maxf(0.0, current_durability)
+			break
+
+func can_store_wood(amount: float) -> bool:
+	return (local_buffer_wood + amount) <= (local_buffer_max + 0.01)
+
+func is_buffer_full() -> bool:
+	return local_buffer_wood >= local_buffer_max
+
+func store_wood(amount: float) -> float:
+	var space = maxf(0.0, local_buffer_max - local_buffer_wood)
+	var added = minf(amount, space)
+	local_buffer_wood += added
+	return added
+
+func take_wood(request_amount: float) -> float:
+	var taken = minf(request_amount, local_buffer_wood)
+	local_buffer_wood = maxf(0.0, local_buffer_wood - taken)
+	return taken
+
 func _init(p_id: String = "", p_type: String = "", p_settlement: String = "", p_pos: Vector2i = Vector2i.ZERO) -> void:
 	id = p_id
 	type = p_type
@@ -52,6 +110,7 @@ func _init(p_id: String = "", p_type: String = "", p_settlement: String = "", p_
 	construction_year = GameManager.current_year if GameManager else 1
 	_init_housing_capacity()
 	_init_default_mode()
+	_init_camp_tools()
 
 func _init_housing_capacity() -> void:
 	var b_info = BuildingDB.get_building(type)
@@ -399,7 +458,10 @@ func serialize() -> Dictionary:
 		"event_history": event_history.duplicate(true),
 		"active_events": active_events.duplicate(true),
 		"pending_upgrade": pending_upgrade.duplicate(true),
-		"construction_year": construction_year
+		"construction_year": construction_year,
+		"local_buffer_wood": local_buffer_wood,
+		"local_buffer_max": local_buffer_max,
+		"tool_inventory": tool_inventory.duplicate(true)
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -446,4 +508,10 @@ func deserialize(data: Dictionary) -> void:
 	for gst_id in guests:
 		if not resident_roles.has(gst_id):
 			resident_roles[gst_id] = "guest"
+	
+	local_buffer_wood = float(data.get("local_buffer_wood", 0.0))
+	local_buffer_max = float(data.get("local_buffer_max", 50.0))
+	tool_inventory.assign(data.get("tool_inventory", []))
+	if type == "woodcutter_camp" and tool_inventory.is_empty():
+		_init_camp_tools()
 

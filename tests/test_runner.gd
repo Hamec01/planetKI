@@ -1108,6 +1108,9 @@ func _ready() -> void:
 	woodcutter.settlement_id = s.id
 	woodcutter.pos = Vector2(s.pos.x * 32.0 + 16, s.pos.y * 32.0 + 16)
 	woodcutter.home_pos = woodcutter.pos
+	woodcutter.equipped_tool = {"id": "axe_test", "type": "axe", "durability": 100.0, "max_durability": 100.0}
+	if not s.buildings.has("woodcutter_camp"):
+		s.buildings.append("woodcutter_camp")
 	s.population.citizens.append(woodcutter)
 	
 	s.priority_harvest_coords.clear()
@@ -3183,8 +3186,161 @@ func _ready() -> void:
 
 	print("OK 104. P01.7 HUT-02 re-occurring housing dispute, 4 branches (eviction, food aid, partition, domestic brawl) verified.")
 
+	# ---------------------------------------------------------
+	# P01.8: СТРОИТЕЛЬСТВО И БАЗОВЫЙ ЛАГЕРЬ ЛЕСОРУБОВ (woodcutter_camp)
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING P01.8 WOODCUTTER CAMP, TOOLS, BUFFER & HAULING")
+	print("----------------------------------------")
+
+	var s_105 = SettlementData.new("s_p01_8", "Лагерное Племя", "player_tribe", Vector2i(10, 10))
+	s_105.buildings.clear()
+	s_105.buildings.append("elders_house")
+	s_105.economy.resources["wood"] = 10.0
+	GameManager.settlements[s_105.id] = s_105
+
+	for c_test in [Vector2i(10, 10), Vector2i(11, 10), Vector2i(12, 10)]:
+		GameManager.planet_data["tiles"][c_test.y][c_test.x]["is_water"] = false
+		GameManager.planet_data["tiles"][c_test.y][c_test.x]["biome"] = 2
+		GameManager.planet_data["tiles"][c_test.y][c_test.x]["walkable"] = true
+		if GameManager.nav_grid:
+			GameManager.nav_grid.set_cell_solid(c_test, false)
+
+	var tree_coord_105 = Vector2i(12, 10)
+	var tree_pos_105 = Vector2(12 * 32.0 + 16, 10 * 32.0 + 16)
+	GameManager.planet_data["tiles"][tree_coord_105.y][tree_coord_105.x]["nature_object"] = "tree_oak"
+	GameManager.resource_manager.nodes[tree_coord_105] = {
+		"id": "tree_node_105",
+		"coord": tree_coord_105,
+		"pos": tree_pos_105,
+		"type": "wood",
+		"category": "wood",
+		"name": "Дуб P01.8",
+		"amount": 100.0,
+		"max_amount": 100.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "tree_oak",
+		"depleted_sprite": "none"
+	}
+
+	var wc_105 = CitizenNPC.new("wc_105", "Добрыня Лесоруб", "m", 26, "adult")
+	wc_105.job_id = "woodcutter"
+	wc_105.settlement_id = s_105.id
+	wc_105.pos = Vector2(10 * 32.0 + 16, 10 * 32.0 + 16)
+	s_105.population.citizens.append(wc_105)
+	s_105.priority_harvest_coords.clear()
+	s_105.priority_harvest_coords.append(tree_coord_105)
+
+	# 1. Без лагеря лесорубов рубка живого леса ЗАПРЕЩЕНА
+	s_105.update_citizens(0.1)
+	assert(wc_105.state == CitizenNPC.State.WAITING, "P01.8: Without camp woodcutter must be WAITING")
+	assert("требуется Лагерь лесорубов" in wc_105.last_status_reason, "P01.8: Status reason requires camp")
+	assert(wc_105.equipped_tool.is_empty(), "P01.8: No tool equipped before camp")
+
+	# 2. Строительство завершено: лагерь лесорубов появляется на карте с инвентарем топоров
+	var camp_105 = BuildingInstance.new("wc_camp_105", "woodcutter_camp", s_105.id, Vector2i(11, 10))
+	GameManager.building_instances[camp_105.id] = camp_105
+	s_105.buildings.append("woodcutter_camp")
+	assert(camp_105.local_buffer_max == 50.0, "P01.8: Camp local buffer max is 50")
+	assert(camp_105.local_buffer_wood == 0.0, "P01.8: Camp starts with empty buffer")
+	assert(camp_105.tool_inventory.size() == 3, "P01.8: Camp starts with 3 stone axes in property")
+	assert(camp_105.has_available_tool("axe"), "P01.8: Camp has available axe")
+
+	# 3. Лесоруб берет топор из лагеря и приступает к работе
+	wc_105.decision_cooldown = 0.0
+	s_105.update_citizens(0.1)
+	assert(wc_105.has_tool("axe"), "P01.8: Woodcutter equipped axe from camp")
+	assert(wc_105.equipped_tool.get("durability", 0.0) == 100.0, "P01.8: Axe durability is 100")
+	var unassigned_axes_105 = 0
+	for t in camp_105.tool_inventory:
+		if t.get("type", "") == "axe" and t.get("assigned_to", "") == "":
+			unassigned_axes_105 += 1
+	assert(unassigned_axes_105 == 2, "P01.8: 1 axe assigned, 2 unassigned remaining in camp property")
+	assert(wc_105.state == CitizenNPC.State.MOVING_TO_WORK, "P01.8: Woodcutter moves to work after taking tool")
+
+	# 4. Прибытие к дереву, рубка, износ топора и наполнение рук
+	wc_105.pos = tree_pos_105
+	wc_105.path.clear()
+	s_105.update_citizens(0.1)
+	assert(wc_105.state == CitizenNPC.State.WORKING, "P01.8: Woodcutter started working at tree")
+
+	wc_105.work_timer = 0.0
+	s_105.update_citizens(0.1) # 1 удар
+	assert(wc_105.cargo_amount == 25.0, "P01.8: Cargo in hands is 25 after strike")
+	assert(wc_105.equipped_tool.get("durability", 0.0) < 100.0, "P01.8: Axe took durability wear during chopping")
+
+	# Завершаем рубку дерева
+	wc_105.work_timer = 0.0
+	GameManager.resource_manager.harvest_from_node(tree_coord_105, 75.0)
+	s_105.update_citizens(0.1)
+	assert(wc_105.state == CitizenNPC.State.CARRYING, "P01.8: Woodcutter carrying felled wood")
+	assert(wc_105.task_id == "deposit_to_camp", "P01.8: Task is deposit_to_camp, not direct central warehouse")
+
+	# 5. Доставка в буфер лагеря: общий склад поселения НЕ пополняется преждевременно!
+	var initial_s_wood_105 = s_105.economy.get_resource("wood")
+	var camp_pos_105 = Vector2(camp_105.pos.x * 32.0 + 16, camp_105.pos.y * 32.0 + 16)
+	wc_105.pos = camp_pos_105
+	wc_105.path.clear()
+	s_105.update_citizens(0.1)
+	assert(wc_105.cargo_amount == 0.0, "P01.8: Cargo unloaded at camp buffer")
+	assert(camp_105.local_buffer_wood == 25.0, "P01.8: Camp local buffer received 25 wood")
+	assert(s_105.economy.get_resource("wood") == initial_s_wood_105, "P01.8: Settlement central warehouse did NOT receive wood yet")
+
+	# 6. Заполнение буфера до предела (50.0): остановка с реальной причиной
+	camp_105.local_buffer_wood = 50.0
+	wc_105.cargo_amount = 25.0
+	wc_105.cargo_type = "wood"
+	wc_105.task_id = "deposit_to_camp"
+	wc_105.state = CitizenNPC.State.CARRYING
+	wc_105.pos = camp_pos_105
+	s_105.update_citizens(0.1)
+	assert(wc_105.state == CitizenNPC.State.WAITING, "P01.8: Woodcutter halts when camp buffer is full")
+	assert("Буфер лагеря лесорубов заполнен" in wc_105.last_status_reason, "P01.8: Status reason is buffer full")
+	assert(wc_105.cargo_amount == 25.0, "P01.8: Wood remains in hands when buffer cannot accept it")
+
+	# 7. Транспортировка из лагеря на центральный склад свободным работником
+	wc_105.cargo_amount = 0.0
+	wc_105.cargo_type = ""
+	wc_105.state = CitizenNPC.State.IDLE
+	camp_105.local_buffer_wood = 20.0
+
+	var hauler_105 = CitizenNPC.new("hauler_105", "Ратибор Переносчик", "m", 20, "adult")
+	hauler_105.job_id = "idle"
+	hauler_105.settlement_id = s_105.id
+	hauler_105.pos = camp_pos_105
+	hauler_105.max_carry = 20.0
+	s_105.population.citizens.append(hauler_105)
+
+	s_105.update_citizens(0.1)
+	assert(hauler_105.state == CitizenNPC.State.CARRYING, "P01.8: Idle citizen picked up haul task from camp buffer")
+	assert(hauler_105.task_id == "haul_from_camp", "P01.8: Hauler task_id is haul_from_camp")
+	assert(hauler_105.cargo_amount == 20.0, "P01.8: Hauler took wood from camp buffer")
+	assert(camp_105.local_buffer_wood == 0.0, "P01.8: Camp buffer emptied by hauler")
+	assert(s_105.economy.get_resource("wood") == initial_s_wood_105, "P01.8: Central warehouse still unchanged in transit")
+
+	# Доставляем на центральный склад
+	var central_storage_105 = s_105._get_storage_pos(hauler_105)
+	hauler_105.pos = central_storage_105
+	hauler_105.path.clear()
+	s_105.update_citizens(0.1)
+	assert(hauler_105.cargo_amount == 0.0, "P01.8: Cargo unloaded into central warehouse")
+	assert(s_105.economy.get_resource("wood") == initial_s_wood_105 + 20.0, "P01.8: Settlement economy wood credited ONLY on warehouse arrival")
+
+	# 8. Износ и поломка топора
+	wc_105.equipped_tool["durability"] = 0.5
+	wc_105.wear_tool(1.0)
+	assert(not wc_105.has_tool("axe"), "P01.8: Tool broken when durability <= 0")
+	camp_105.tool_inventory.clear() # все топоры исчерпаны
+	wc_105.decision_cooldown = 0.0
+	s_105.update_citizens(0.1)
+	assert(wc_105.state == CitizenNPC.State.WAITING, "P01.8: Woodcutter waiting when no axes in camp")
+	assert("Нет доступного топора" in wc_105.last_status_reason, "P01.8: Correct reason for missing tool")
+
+	print("OK 105. P01.8 Woodcutter camp, physical tool cycle, local buffer and central warehouse hauling verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-104) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-105) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 

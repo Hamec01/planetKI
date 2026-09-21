@@ -235,6 +235,22 @@ func get_granary_spoilage_factor() -> float:
 			factor *= b_info["food_spoilage_reduction"]
 	return factor
 
+func has_active_woodcutter_camp() -> bool:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.type == "woodcutter_camp":
+				return true
+	if "buildings" in self and buildings.has("woodcutter_camp"):
+		return true
+	return false
+
+func get_active_woodcutter_camp() -> BuildingInstance:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.type == "woodcutter_camp":
+				return b
+	return null
+
 func get_idle_citizens() -> Array[CitizenNPC]:
 	var result: Array[CitizenNPC] = []
 	if not population:
@@ -1607,6 +1623,32 @@ func update_citizens(delta: float) -> void:
 						c.work_timer = 2.5
 						c.last_status_reason = "Разделывает добычу в лагере"
 						continue
+					elif c.task_id == "deposit_to_camp":
+						var camp = get_active_woodcutter_camp()
+						if camp:
+							if camp.is_buffer_full():
+								c.state = CitizenNPC.State.WAITING
+								c.last_status_reason = "Буфер лагеря лесорубов заполнен"
+								c.decision_cooldown = 2.0
+								continue
+							else:
+								var stored = camp.store_wood(c.cargo_amount)
+								c.cargo_amount -= stored
+								if c.cargo_amount <= 0.0:
+									c.cargo_type = ""
+									c.task_id = ""
+									c.state = CitizenNPC.State.IDLE
+									c.decision_cooldown = 0.5
+									c.last_status_reason = "Сложил брёвна в буфер лагеря (%d/%d)" % [int(camp.local_buffer_wood), int(camp.local_buffer_max)]
+									if GameManager.task_service and c.task_instance_id != "":
+										GameManager.task_service.complete_task(c.task_instance_id)
+										c.task_instance_id = ""
+									continue
+								else:
+									c.state = CitizenNPC.State.WAITING
+									c.last_status_reason = "Буфер лагеря лесорубов заполнен"
+									c.decision_cooldown = 2.0
+									continue
 					elif c.task_id == "haul_to_site":
 						var constr_coord = c.target_coord
 						if GameManager.tile_buildings.has(constr_coord):
@@ -1785,7 +1827,18 @@ func update_citizens(delta: float) -> void:
 						c.last_status_reason = "Посадил молодой саженец"
 						EventBus.notification_toast.emit("Посадка леса", "Лесорубы посеяли молодое дерево", "good")
 					else:
-						# УДАР ТОПОРОМ: прогрессивное снятие порции древесины (25 дров за удар с учетом сил)
+						# УДАР ТОПОРОМ: износ топора и прогрессивное снятие порции древесины (25 дров за удар с учетом сил)
+						if not c.equipped_tool.is_empty():
+							c.wear_tool(0.5)
+							if not c.has_tool("axe"):
+								c.state = CitizenNPC.State.WAITING
+								c.last_status_reason = "Топор сломан во время рубки"
+								c.task_id = ""
+								c.decision_cooldown = randf_range(2.0, 4.0)
+								if GameManager.resource_manager:
+									GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
+								continue
+
 						var strike_harvest = 25.0 * c.get_vitality_multiplier()
 						var h_amount = 0.0
 						if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
@@ -1806,26 +1859,36 @@ func update_citizens(delta: float) -> void:
 								GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 							if priority_harvest_coords.has(c.target_coord):
 								priority_harvest_coords.erase(c.target_coord)
+							c.target_coord = Vector2i(-1, -1)
 								
 							if c.cargo_amount > 0.0:
 								c.state = CitizenNPC.State.CARRYING
-								var dest_p = _get_storage_pos(c)
-								c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
-								c.path_index = 0
-								c.last_status_reason = "Срубил дерево, несёт %d дров на склад" % int(c.cargo_amount)
+								var camp = get_active_woodcutter_camp()
+								if camp:
+									var camp_p = GameManager.nav_grid.tile_to_world_center(camp.pos) if GameManager.nav_grid else Vector2(camp.pos.x * 32.0 + 16, camp.pos.y * 32.0 + 16)
+									c.path = GameManager.nav_grid.find_path(c.pos, camp_p) if GameManager.nav_grid else []
+									c.path_index = 0
+									c.task_id = "deposit_to_camp"
+									c.last_status_reason = "Срубил дерево, несёт %d дров в лагерь лесорубов" % int(c.cargo_amount)
+								else:
+									var dest_p = _get_storage_pos(c)
+									c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
+									c.path_index = 0
+									c.task_id = ""
+									c.last_status_reason = "Срубил дерево, несёт %d дров на склад" % int(c.cargo_amount)
 								if GameManager.task_service and c.task_instance_id != "":
 									GameManager.task_service.set_delivering(c.task_instance_id)
 							else:
 								c.state = CitizenNPC.State.IDLE
+								c.task_id = ""
 								c.decision_cooldown = 1.0
 								if GameManager.task_service and c.task_instance_id != "":
 									GameManager.task_service.cancel_task(c.task_instance_id, "Дерево пустое")
 									c.task_instance_id = ""
-							c.target_coord = Vector2i(-1, -1)
-							c.task_id = ""
 						else:
 							# Следующий удар топором через 0.75 сек
 							c.work_timer = 0.75
+							c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
 							c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
 				elif c.job_id in ["quarryman", "miner"]:
 					var res_cat = "stone" if c.job_id == "quarryman" else "metal"
@@ -2196,13 +2259,62 @@ func update_citizens(delta: float) -> void:
 			if c.job_id == "woodcutter" and c.cohort in ["youth", "adult", "elder"]:
 				if c.cargo_amount > 0.0:
 					c.state = CitizenNPC.State.CARRYING
-					var dest_p = _get_storage_pos(c)
-					c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
-					c.path_index = 0
-					c.last_status_reason = "Несёт %d дров на склад" % int(c.cargo_amount)
+					var camp_lead = get_active_woodcutter_camp()
+					if camp_lead and c.task_id == "deposit_to_camp":
+						var camp_p = GameManager.nav_grid.tile_to_world_center(camp_lead.pos) if GameManager.nav_grid else Vector2(camp_lead.pos.x * 32.0 + 16, camp_lead.pos.y * 32.0 + 16)
+						c.path = GameManager.nav_grid.find_path(c.pos, camp_p) if GameManager.nav_grid else []
+						c.path_index = 0
+						c.last_status_reason = "Несёт %d дров в лагерь лесорубов" % int(c.cargo_amount)
+					else:
+						var dest_p = _get_storage_pos(c)
+						c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
+						c.path_index = 0
+						c.last_status_reason = "Несёт %d дров на склад" % int(c.cargo_amount)
 					if GameManager.task_service and c.task_instance_id != "":
 						GameManager.task_service.set_delivering(c.task_instance_id)
 					continue
+
+				# Проверяем наличие Лагеря лесорубов
+				var camp = get_active_woodcutter_camp()
+				if not has_active_woodcutter_camp():
+					c.state = CitizenNPC.State.WAITING
+					c.last_status_reason = "Нельзя рубить лес: требуется Лагерь лесорубов"
+					c.decision_cooldown = randf_range(2.0, 4.0)
+					continue
+
+				# Проверяем топор
+				if not c.has_tool("axe"):
+					if camp and camp.has_available_tool("axe"):
+						var tool = camp.take_tool("axe")
+						tool["assigned_to"] = c.citizen_id
+						c.equipped_tool = tool
+						c.last_status_reason = "Взял топор в лагере лесорубов"
+					elif not camp and buildings.has("woodcutter_camp"):
+						c.equipped_tool = {"id": "legacy_axe", "type": "axe", "durability": 100.0, "max_durability": 100.0}
+					else:
+						c.state = CitizenNPC.State.WAITING
+						c.last_status_reason = "Нет доступного топора в лагере лесорубов"
+						c.decision_cooldown = randf_range(2.0, 4.0)
+						continue
+
+				# Проверяем заполненность буфера лагеря: если полон, помогаем переносить на склад или ждём
+				if camp and camp.is_buffer_full():
+					var take_amt = camp.take_wood(c.max_carry)
+					if take_amt > 0.0:
+						c.cargo_type = "wood"
+						c.cargo_amount = take_amt
+						c.task_id = "haul_from_camp"
+						c.state = CitizenNPC.State.CARRYING
+						var s_pos = _get_storage_pos(c)
+						c.path = GameManager.nav_grid.find_path(c.pos, s_pos) if GameManager.nav_grid else []
+						c.path_index = 0
+						c.last_status_reason = "Буфер полон: несёт %d дров из лагеря на склад" % int(take_amt)
+						continue
+					else:
+						c.state = CitizenNPC.State.WAITING
+						c.last_status_reason = "Буфер лагеря лесорубов заполнен"
+						c.decision_cooldown = randf_range(2.0, 4.0)
+						continue
 					
 				# Проверяем наличие Лагеря лесорубов и улучшения на посадку леса
 				var can_plant = false
@@ -2463,6 +2575,22 @@ func update_citizens(delta: float) -> void:
 				if c.cohort in ["youth", "adult"] and c.job_id == "idle" and not construction_queue.is_empty():
 					if _try_assign_construction_task(c):
 						continue
+
+				# 10a. Свободные трудоспособные жители переносят древесину из лагеря лесорубов на склад
+				if c.cohort in ["youth", "adult"] and c.job_id == "idle":
+					var camp_idle = get_active_woodcutter_camp()
+					if camp_idle and camp_idle.local_buffer_wood >= 10.0:
+						var take_amt = camp_idle.take_wood(c.max_carry)
+						if take_amt > 0.0:
+							c.cargo_type = "wood"
+							c.cargo_amount = take_amt
+							c.task_id = "haul_from_camp"
+							c.state = CitizenNPC.State.CARRYING
+							var s_pos = _get_storage_pos(c)
+							c.path = GameManager.nav_grid.find_path(c.pos, s_pos) if GameManager.nav_grid else []
+							c.path_index = 0
+							c.last_status_reason = "Несёт %d дров из лагеря на склад" % int(take_amt)
+							continue
 
 				# 11. Свободные жители, дети и старики (Этап D)
 				var partner = _find_chat_partner(c)

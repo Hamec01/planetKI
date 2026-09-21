@@ -1039,6 +1039,14 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 			elif b_inst and b_inst.workers.size() > 0:
 				desc_text += "\n👥 Работников: %d чел." % b_inst.workers.size()
 				
+			if b_inst and b_inst.type == "woodcutter_camp":
+				desc_text += "\n🪵 Буфер лагеря: %d/%d ед." % [int(b_inst.local_buffer_wood), int(b_inst.local_buffer_max)]
+				var avail_axes = 0
+				for t in b_inst.tool_inventory:
+					if t.get("type", "") == "axe" and t.get("assigned_to", "") == "" and float(t.get("durability", 0.0)) > 0.0:
+						avail_axes += 1
+				desc_text += "\n🪓 Доступно топоров: %d шт." % avail_axes
+				
 			ctx_desc_lbl.text = desc_text
 			ctx_action_btn.text = "🏛 Войти в здание"
 			ctx_action_btn.pressed.connect(func():
