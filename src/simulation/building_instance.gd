@@ -164,6 +164,9 @@ func add_worker(citizen_id: String) -> void:
 func is_residential() -> bool:
 	return max_residents > 0
 
+func has_unresolved_dispute() -> bool:
+	return active_modifiers.get("unresolved_housing_dispute", false)
+
 func get_max_residents() -> int:
 	var cap = max_residents
 	if type == "hut" and is_upgrade_unlocked("hut_annex"):

@@ -23,6 +23,9 @@ enum State {
 
 # --- ИДЕНТИЧНОСТЬ И ДАННЫЕ ГРАЖДАНИНА ---
 var citizen_id: String = ""
+var id: String:
+	get: return citizen_id
+	set(val): citizen_id = val
 var name: String = ""
 var gender: String = "m" # "m" или "f"
 var age: int = 25
@@ -38,6 +41,9 @@ var job_id: String = "idle"
 var workplace_id: String = ""
 var workplace_coord: Vector2i = Vector2i(-1, -1)
 var home_id: String = ""
+var home_building_id: String:
+	get: return home_id
+	set(val): home_id = val
 var home_coord: Vector2i = Vector2i(-1, -1)
 var household_id: String = ""
 var is_guest: bool = false
@@ -750,12 +756,30 @@ func add_relationship(other_id: String, rel_type: String, closeness: float = 50.
 	relationships[other_id] = {
 		"type": rel_type,
 		"closeness": closeness,
+		"affinity": closeness,
 		"romance": romance,
+		"respect": 0.0,
 		"married": married,
 		"is_parent": (rel_type == "parent" or was_parent)
 	}
 	if rel_type == "spouse" or married:
 		spouse_id = other_id
+
+func modify_relationship(other_id: String, delta_affinity: float, delta_respect: float = 0.0) -> void:
+	if not relationships.has(other_id):
+		relationships[other_id] = {
+			"type": "peer",
+			"closeness": 50.0,
+			"affinity": 0.0,
+			"romance": 0.0,
+			"respect": 0.0,
+			"married": false,
+			"is_parent": false
+		}
+	var rel = relationships[other_id]
+	rel["affinity"] = clampf(float(rel.get("affinity", 0.0)) + delta_affinity, -100.0, 100.0)
+	rel["closeness"] = clampf(float(rel.get("closeness", 50.0)) + delta_affinity * 0.5, 0.0, 100.0)
+	rel["respect"] = clampf(float(rel.get("respect", 0.0)) + delta_respect, -100.0, 100.0)
 
 func remove_relationship(other_id: String) -> void:
 	relationships.erase(other_id)
@@ -764,6 +788,15 @@ func remove_relationship(other_id: String) -> void:
 
 func get_relationship(other_id: String) -> Dictionary:
 	return relationships.get(other_id, {})
+
+func get_relationship_affinity(other_id: String) -> float:
+	var rel = relationships.get(other_id, {})
+	if rel.has("affinity"):
+		return float(rel["affinity"])
+	return float(rel.get("closeness", 0.0))
+
+func get_relationship_with(other_id: String) -> float:
+	return get_relationship_affinity(other_id)
 
 func get_spouses() -> Array[String]:
 	var result: Array[String] = []

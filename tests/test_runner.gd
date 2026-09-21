@@ -2786,8 +2786,154 @@ func _ready() -> void:
 
 	print("OK 101. P01.4 Hut life cycle, sleep quality, crowding penalty, family private improvements and cancellation memory verified.")
 
+	# ---------------------------------------------------------
+	# TEST 102: P01.5 Contextual Event Engine & Dynamic Consequence Resolution
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING P01.5 CONTEXTUAL EVENT ENGINE & CONSEQUENCE RESOLUTION")
+	print("----------------------------------------")
+	var p01_5_settlement = SettlementData.new("p01_5_test_settlement")
+	var p01_5_ev_mgr = CivilizationEventManager.new()
+	p01_5_ev_mgr.settlement = p01_5_settlement
+
+	var cit_owner = CitizenNPC.new("owner_102", "Борс Строитель", "m", 28)
+	var cit_guest = CitizenNPC.new("guest_102", "Дара Переселенка", "f", 24)
+	p01_5_settlement.population.citizens.append(cit_owner)
+	p01_5_settlement.population.citizens.append(cit_guest)
+
+	var p01_5_hut = BuildingInstance.new("hut_102", "hut", p01_5_settlement.id, Vector2i(5, 5))
+	var r_list_102: Array[String] = [cit_owner.id, cit_guest.id]
+	p01_5_hut.residents = r_list_102
+	cit_owner.home_building_id = p01_5_hut.id
+	cit_guest.home_building_id = p01_5_hut.id
+	GameManager.building_instances[p01_5_hut.id] = p01_5_hut
+
+	# 1. Проверка шаблона события с плейсхолдерами и контекстом
+	var test_event_template: Dictionary = {
+		"id": "EV_TEST_CONTEXT_102",
+		"title": "Спор за жильё в доме {building_id}",
+		"description": "Семья {actor_0} и семья {actor_1} спорят о правах на дом.",
+		"category": "community",
+		"min_huts": 1,
+		"choices": [
+			{
+				"id": "A",
+				"title": "Признать собственность первого строителя",
+				"desc": "Дом закрепляется за семьей строителя.",
+				"consequences": {
+					"housing_tenure": {"owner_id": "{actor_0}", "tenant_ids": ["{actor_1}"]},
+					"modify_relations": [{"from": "{actor_1}", "to": "{actor_0}", "delta": -25.0}],
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": 15.0}, {"actor_id": "{actor_1}", "delta": -15.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "gratitude", "desc": "Правитель защитил наш труд и права на дом", "permanent": true},
+						{"actor_id": "{actor_1}", "type": "resentment", "desc": "Нас низвели до положения жильцов-арендаторов", "permanent": false}
+					],
+					"modify_resources": {"wood": 5.0}
+				}
+			},
+			{
+				"id": "B",
+				"title": "Сделать общинным жильем",
+				"desc": "Все жильцы имеют равные права совладельцев.",
+				"consequences": {
+					"housing_tenure": {"co_owners": ["{actor_0}", "{actor_1}"]},
+					"modify_relations": [{"from": "{actor_0}", "to": "{actor_1}", "delta": -10.0}]
+				}
+			}
+		]
+	}
+
+	# 2. Триггер события с живым контекстом
+	var ev_instance_id = p01_5_ev_mgr.trigger_event(test_event_template, {
+		"actor_ids": [cit_owner.id, cit_guest.id],
+		"actor_names": [cit_owner.name, cit_guest.name],
+		"target_building_id": p01_5_hut.id,
+		"causes": ["Нехватка жилплощади", "Разный вклад в строительство"],
+		"context_data": {
+			"building_id": p01_5_hut.id,
+			"actor_0": cit_owner.name,
+			"actor_1": cit_guest.name
+		}
+	})
+
+	assert(ev_instance_id != "", "P01.5: Event triggered with context")
+	var ev_instance = p01_5_ev_mgr.event_instances[ev_instance_id]
+	assert("Борс Строитель" in ev_instance["description"], "P01.5: Actor 0 placeholder substituted in description")
+	assert("Дара Переселенка" in ev_instance["description"], "P01.5: Actor 1 placeholder substituted in description")
+	assert("hut_102" in ev_instance["title"], "P01.5: Building placeholder substituted in title")
+	assert(ev_instance["causes"].size() == 2, "P01.5: Causes recorded in event instance")
+
+	# 3. Применение последствий выбора A (реальное изменение мира)
+	var initial_wood_102 = p01_5_settlement.economy.get_resource("wood")
+	var initial_owner_loyalty = cit_owner.loyalty
+	var initial_guest_loyalty = cit_guest.loyalty
+
+	p01_5_ev_mgr.apply_choice(ev_instance_id, "A")
+
+	# Проверяем жилищный статус
+	assert(p01_5_hut.household_head_id == cit_owner.id, "P01.5: Owner assigned to hut")
+	assert(p01_5_hut.get_resident_role(cit_owner.id) == "Владелец", "P01.5: cit_owner has Owner role")
+	assert(p01_5_hut.get_resident_role(cit_guest.id) == "Жилец", "P01.5: cit_guest has Tenant role")
+
+	# Проверяем лояльность и отношения
+	assert(cit_owner.loyalty == initial_owner_loyalty + 15.0, "P01.5: Owner loyalty increased by 15")
+	assert(cit_guest.loyalty == initial_guest_loyalty - 15.0, "P01.5: Guest loyalty decreased by 15")
+	var rel = cit_guest.get_relationship_with(cit_owner.id)
+	assert(rel < 0.0, "P01.5: Guest affinity towards owner dropped after dispute verdict")
+
+	# Проверяем воспоминания
+	assert(cit_owner.has_memory_of("ruler", "gratitude"), "P01.5: Owner stored permanent gratitude memory to ruler")
+	assert(cit_guest.has_memory_of("ruler", "resentment"), "P01.5: Guest stored resentment memory to ruler")
+
+	# Проверяем экономику
+	assert(p01_5_settlement.economy.get_resource("wood") == initial_wood_102 + 5.0, "P01.5: Economy received wood bonus from consequence")
+
+	# 4. Проверка условий зависимостей событий
+	var child_event_template: Dictionary = {
+		"id": "EV_TEST_CHILD_102",
+		"required_event_resolved": "EV_TEST_CONTEXT_102",
+		"required_choice": {"event_id": "EV_TEST_CONTEXT_102", "choice_id": "A"},
+		"min_huts": 1
+	}
+	assert(p01_5_ev_mgr._check_event_conditions(child_event_template, 10, p01_5_settlement), "P01.5: Child event conditions pass when prerequisite event choice matches")
+
+	var forbidden_event_template: Dictionary = {
+		"id": "EV_TEST_FORBIDDEN_102",
+		"required_event_resolved": "EV_TEST_CONTEXT_102",
+		"forbidden_choice": {"event_id": "EV_TEST_CONTEXT_102", "choice_id": "A"}
+	}
+	assert(not p01_5_ev_mgr._check_event_conditions(forbidden_event_template, 10, p01_5_settlement), "P01.5: Event forbidden when choice A was made")
+
+	# 5. Проверка невмешательства (resolve_without_intervention)
+	var hut_inaction = BuildingInstance.new("hut_inaction_102", "hut", p01_5_settlement.id, Vector2i(6, 6))
+	GameManager.building_instances[hut_inaction.id] = hut_inaction
+	var inaction_ev_template: Dictionary = {
+		"id": "EV_INACTION_102",
+		"title": "Спор без суда"
+	}
+	var inaction_ev_id = p01_5_ev_mgr.trigger_event(inaction_ev_template, {
+		"actor_ids": [cit_owner.id, cit_guest.id],
+		"target_building_id": hut_inaction.id
+	})
+	var rel_before = cit_owner.get_relationship_with(cit_guest.id)
+	p01_5_ev_mgr.resolve_without_intervention(inaction_ev_id)
+	assert(cit_owner.get_relationship_with(cit_guest.id) < rel_before, "P01.5: Unresolved dispute reduces mutual relations")
+	assert(hut_inaction.has_unresolved_dispute(), "P01.5: Hut marked with unresolved dispute")
+	assert(cit_owner.has_memory_of("ruler", "disappointment"), "P01.5: Citizens remember ruler inaction in domestic crisis")
+
+	# 6. Проверка модального окна на отображение фактов
+	var modal_ui = CivilizationEventModal.new()
+	modal_ui._build_ui()
+	modal_ui.open_event(ev_instance)
+	assert(modal_ui.context_container.visible == true, "P01.5: Event modal displays context box when causes/actors exist")
+	assert("Борс Строитель" in modal_ui.context_lbl.text, "P01.5: Modal context label contains actor names")
+	assert("Нехватка жилплощади" in modal_ui.context_lbl.text, "P01.5: Modal context label contains causes")
+	modal_ui.queue_free()
+
+	print("OK 102. P01.5 Contextual event engine, placeholder formatting, consequence execution and inaction friction verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-101) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-102) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 

@@ -120,7 +120,7 @@ func save_game() -> bool:
 	print("Игра успешно сохранена в " + SAVE_PATH)
 	return true
 
-func load_game() -> bool:
+func load_game(_slot: String = "") -> bool:
 	var target_path = SAVE_PATH
 	if not FileAccess.file_exists(target_path):
 		if FileAccess.file_exists(SAVE_BAK_PATH):
@@ -259,3 +259,9 @@ func load_game() -> bool:
 
 func has_save_file() -> bool:
 	return FileAccess.file_exists(SAVE_PATH)
+
+func has_save(_slot: String = "") -> bool:
+	return has_save_file()
+
+func quick_load() -> bool:
+	return load_game()

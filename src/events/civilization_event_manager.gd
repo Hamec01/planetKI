@@ -13,6 +13,7 @@ var event_queue: Array[Dictionary] = []
 var event_instances: Dictionary = {}
 var resolved_events: Array[Dictionary] = []
 var next_instance_number: int = 1
+var settlement: RefCounted = null
 
 signal event_triggered(event_data: Dictionary)
 signal choice_applied(event_id: String, choice_id: String)
@@ -78,6 +79,24 @@ func _check_event_conditions(conds: Dictionary, total_days: int, settlement: Ref
 		return true
 	if conds.has("min_days") and total_days < int(conds["min_days"]):
 		return false
+	if conds.has("required_event_resolved"):
+		var req_ev = conds["required_event_resolved"]
+		if not triggered_events.has(req_ev):
+			return false
+	if conds.has("required_choice"):
+		var req_c = conds["required_choice"] # {"event_id": "...", "choice_id": "..."}
+		var found_choice = false
+		for rev in resolved_events:
+			if rev.get("template_id", "") == req_c.get("event_id", "") and rev.get("chosen_choice_id", "") == req_c.get("choice_id", ""):
+				found_choice = true
+				break
+		if not found_choice:
+			return false
+	if conds.has("forbidden_choice"):
+		var forb_c = conds["forbidden_choice"]
+		for rev in resolved_events:
+			if rev.get("template_id", "") == forb_c.get("event_id", "") and rev.get("chosen_choice_id", "") == forb_c.get("choice_id", ""):
+				return false
 	if settlement != null:
 		if conds.has("min_population") and "population" in settlement and settlement.population.get_total_population() < int(conds["min_population"]):
 			return false
@@ -91,16 +110,24 @@ func _check_event_conditions(conds: Dictionary, total_days: int, settlement: Ref
 			return false
 		if conds.has("required_building") and "buildings" in settlement and not settlement.buildings.has(conds["required_building"]):
 			return false
-	elif conds.has("min_iron") or conds.has("required_building"):
+		if conds.has("min_huts"):
+			var hut_cnt = 0
+			if GameManager and GameManager.building_instances:
+				for b in GameManager.building_instances.values():
+					if b and b.settlement_id == settlement.id and b.type == "hut":
+						hut_cnt += 1
+			if hut_cnt < int(conds["min_huts"]):
+				return false
+	elif conds.has("min_iron") or conds.has("required_building") or conds.has("min_huts"):
 		return false
 	return true
 
-func trigger_event(ev: Dictionary) -> void:
+func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 	if ev.is_empty():
-		return
+		return ""
 	var template_id = ev.get("id", "")
 	if template_id == "":
-		return
+		return ""
 	var instance_id = "%s#%d" % [template_id, next_instance_number]
 	next_instance_number += 1
 	var instance = ev.duplicate(true)
@@ -110,6 +137,22 @@ func trigger_event(ev: Dictionary) -> void:
 	instance["created_day"] = GameManager.total_simulation_days
 	instance["resolved_day"] = -1
 	instance["chosen_choice_id"] = ""
+	instance["actor_ids"] = context.get("actor_ids", instance.get("actor_ids", []))
+	instance["actor_names"] = context.get("actor_names", instance.get("actor_names", []))
+	instance["target_building_id"] = context.get("target_building_id", instance.get("target_building_id", ""))
+	instance["causes"] = context.get("causes", instance.get("causes", []))
+	instance["context_data"] = context.get("context_data", instance.get("context_data", {}))
+	
+	# Форматирование шаблонов {key} в заголовке и описании
+	if not context.is_empty() and context.has("context_data"):
+		var c_data = context["context_data"]
+		for key in ["title", "description"]:
+			if instance.has(key) and instance[key] is String:
+				var txt: String = instance[key]
+				for ctx_k in c_data:
+					txt = txt.replace("{" + ctx_k + "}", str(c_data[ctx_k]))
+				instance[key] = txt
+
 	active_event = instance.duplicate(true)
 	event_instances[instance_id] = instance
 	if not triggered_events.has(template_id):
@@ -122,13 +165,16 @@ func trigger_event(ev: Dictionary) -> void:
 	event_triggered.emit(active_event)
 	if EventBus:
 		EventBus.civilization_event_triggered.emit(active_event)
+	return instance_id
 
 func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary = {}) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})
 	if ev.is_empty() or ev.get("status", "") != "pending":
 		return
-	var settlement: RefCounted = GameManager.settlements.get(GameManager.player_faction_id + "_settlement", null)
-	if not _check_event_conditions(ev.get("conditions", {}), GameManager.total_simulation_days, settlement):
+	var cur_settlement: RefCounted = settlement
+	if cur_settlement == null:
+		cur_settlement = GameManager.settlements.get(GameManager.player_faction_id + "_settlement", null)
+	if not _check_event_conditions(ev.get("conditions", {}), GameManager.total_simulation_days, cur_settlement):
 		ev["status"] = "obsolete"
 		ev["resolved_day"] = GameManager.total_simulation_days
 		event_instances[instance_id] = ev
@@ -193,10 +239,15 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	if unlock_p != "":
 		culture.unlock_practice(unlock_p)
 		
-	# 5. Запись в глобальную историю игры
+	# 5. Применение реальных последствий (отношения, верность, память, жильё, ресурсы)
+	var consequences = chosen_choice.get("consequences", {})
+	if not consequences.is_empty():
+		_apply_choice_consequences(ev, chosen_choice, consequences, cur_settlement)
+		
+	# 6. Запись в глобальную историю игры
 	GameManager.add_history_entry(cur_year, title, "Народ постановил: «%s»" % choice_title, category)
 	
-	# 6. Всплывающее уведомление
+	# 7. Всплывающее уведомление
 	EventBus.notification_toast.emit("🏛 Выбор народа: %s" % title, "Принято решение: %s" % choice_title, "good")
 	
 	ev["status"] = "resolved"
@@ -208,14 +259,109 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 		active_event.clear()
 	choice_applied.emit(instance_id, choice_id)
 
+func _find_citizen(pop: RefCounted, cit_id: String) -> CitizenNPC:
+	if not pop or not ("citizens" in pop):
+		return null
+	for c in pop.citizens:
+		if c.id == cit_id:
+			return c
+	return null
+
+func _resolve_placeholder_str(val: String, ev: Dictionary) -> String:
+	var actor_ids = ev.get("actor_ids", [])
+	for idx in range(actor_ids.size()):
+		val = val.replace("{actor_%d}" % idx, str(actor_ids[idx]))
+	var ctx = ev.get("context_data", {})
+	for k in ctx:
+		val = val.replace("{" + k + "}", str(ctx[k]))
+	return val
+
+func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences: Dictionary, settlement: RefCounted) -> void:
+	var pop = settlement.population if settlement and "population" in settlement else null
+	
+	# Отношения между участниками
+	if consequences.has("modify_relations") and pop:
+		for rel_mod in consequences["modify_relations"]:
+			var a_id = _resolve_placeholder_str(rel_mod.get("actor_a", rel_mod.get("from", "")), ev)
+			var b_id = _resolve_placeholder_str(rel_mod.get("actor_b", rel_mod.get("to", "")), ev)
+			var delta_aff = float(rel_mod.get("delta_affinity", rel_mod.get("delta", 0.0)))
+			var delta_resp = float(rel_mod.get("delta_respect", 0.0))
+			var cit_a = _find_citizen(pop, a_id)
+			var cit_b = _find_citizen(pop, b_id)
+			if cit_a and cit_b:
+				cit_a.modify_relationship(b_id, delta_aff, delta_resp)
+				cit_b.modify_relationship(a_id, delta_aff, delta_resp)
+				
+	# Изменение верности участников
+	if consequences.has("modify_loyalty") and pop:
+		for loy_mod in consequences["modify_loyalty"]:
+			var act_id = _resolve_placeholder_str(loy_mod.get("actor_id", ""), ev)
+			var delta_loy = float(loy_mod.get("delta", 0.0))
+			var cit = _find_citizen(pop, act_id)
+			if cit:
+				cit.loyalty = clampf(cit.loyalty + delta_loy, 0.0, 100.0)
+				
+	# Добавление памяти участникам
+	if consequences.has("modify_memory") and pop:
+		for mem_data in consequences["modify_memory"]:
+			var act_id = _resolve_placeholder_str(mem_data.get("actor_id", ""), ev)
+			var cit = _find_citizen(pop, act_id)
+			if cit:
+				cit.add_memory(
+					mem_data.get("type", "social"),
+					mem_data.get("actor", "ruler"),
+					mem_data.get("target", ev.get("target_building_id", "")),
+					float(mem_data.get("importance", 1.0)),
+					mem_data.get("desc", ""),
+					mem_data.get("permanent", false)
+				)
+				
+	# Изменение статуса владения зданием (housing_tenure)
+	if consequences.has("housing_tenure"):
+		var tenure = consequences["housing_tenure"]
+		var b_id = ev.get("target_building_id", "")
+		if GameManager and GameManager.building_instances:
+			for b_inst in GameManager.building_instances.values():
+				if b_inst and (b_inst.id == b_id or b_id == ""):
+					if tenure is Dictionary:
+						if tenure.has("owner_id"):
+							var owner_id = _resolve_placeholder_str(str(tenure["owner_id"]), ev)
+							b_inst.household_head_id = owner_id
+							b_inst.resident_roles[owner_id] = "Владелец"
+						if tenure.has("tenant_ids"):
+							for tid in tenure["tenant_ids"]:
+								var res_tid = _resolve_placeholder_str(str(tid), ev)
+								b_inst.resident_roles[res_tid] = "Жилец"
+						if tenure.has("co_owners"):
+							for co_id in tenure["co_owners"]:
+								var res_coid = _resolve_placeholder_str(str(co_id), ev)
+								b_inst.resident_roles[res_coid] = "Совладелец"
+					else:
+						b_inst.active_modifiers["housing_tenure"] = tenure
+					b_inst.add_history_entry(GameManager.current_year, "Установлен статус владения: %s" % str(tenure))
+					
+	# Изменение ресурсов поселения
+	if consequences.has("modify_resources") and settlement and "economy" in settlement:
+		for res_k in consequences["modify_resources"]:
+			var amt = float(consequences["modify_resources"][res_k])
+			if amt > 0.0:
+				settlement.deposit_resource(res_k, amt, "Решение: " + choice.get("title", ""))
+			elif amt < 0.0:
+				settlement.economy.resources[res_k] = maxf(0.0, settlement.economy.get_resource(res_k) + amt)
+		if settlement.faction_id == GameManager.player_faction_id:
+			EventBus.resources_updated.emit(settlement.faction_id, settlement.economy.resources)
+
 func defer_event(instance_id: String) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})
 	if ev.is_empty() or ev.get("status", "") != "pending":
 		return
-	ev["deferred"] = true
+	ev["status"] = "deferred"
+	ev["deferred_until_day"] = GameManager.total_simulation_days + 3
 	event_instances[instance_id] = ev
 	if active_event.get("instance_id", "") == instance_id:
 		active_event.clear()
+	GameManager.add_history_entry(GameManager.current_year, ev.get("title", "Событие"), "Решение отложено на 3 дня.", ev.get("category", "Общее"))
+	choice_applied.emit(instance_id, "deferred")
 
 func resolve_without_intervention(instance_id: String) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})
@@ -223,13 +369,44 @@ func resolve_without_intervention(instance_id: String) -> void:
 		return
 	ev["status"] = "resolved"
 	ev["resolved_day"] = GameManager.total_simulation_days
-	ev["chosen_choice_id"] = ""
-	ev["outcome"] = "no_intervention"
+	ev["chosen_choice_id"] = "no_intervention"
+	ev["outcome"] = "unresolved_tension"
+	
+	# Негативные последствия бездействия: напряжение между участниками
+	var cur_settlement: RefCounted = settlement
+	if cur_settlement == null:
+		cur_settlement = GameManager.settlements.get(GameManager.player_faction_id + "_settlement", null)
+	var pop = cur_settlement.population if cur_settlement and "population" in cur_settlement else null
+	var actor_ids = ev.get("actor_ids", [])
+	if pop and actor_ids.size() >= 2:
+		for i in range(actor_ids.size()):
+			for j in range(i + 1, actor_ids.size()):
+				var c1 = _find_citizen(pop, actor_ids[i])
+				var c2 = _find_citizen(pop, actor_ids[j])
+				if c1 and c2:
+					c1.modify_relationship(c2.id, -15.0, -10.0)
+					c2.modify_relationship(c1.id, -15.0, -10.0)
+	if pop:
+		for act_id in actor_ids:
+			var c = _find_citizen(pop, act_id)
+			if c:
+				c.loyalty = maxf(0.0, c.loyalty - 5.0)
+				c.add_memory("disappointment", "ruler", ev.get("target_building_id", ""), 0.8, "Правитель уклонился от решения спора в нашем доме", false)
+				c.last_status_reason = "Недовольство: спор остался неразрешённым"
+
+	var b_id = ev.get("target_building_id", "")
+	if GameManager and GameManager.building_instances:
+		for b_inst in GameManager.building_instances.values():
+			if b_inst and b_inst.id == b_id:
+				b_inst.active_modifiers["unresolved_housing_dispute"] = true
+				b_inst.add_history_entry(GameManager.current_year, "Спор остался неразрешённым (правитель не вмешался)")
+
 	event_instances[instance_id] = ev
 	resolved_events.append(ev.duplicate(true))
 	if active_event.get("instance_id", "") == instance_id:
 		active_event.clear()
-	GameManager.add_history_entry(GameManager.current_year, ev.get("title", "Событие"), "Правитель не вмешался.", ev.get("category", "Общее"))
+	GameManager.add_history_entry(GameManager.current_year, ev.get("title", "Событие"), "Правитель не вмешался (сохраняется напряжение).", ev.get("category", "Общее"))
+	choice_applied.emit(instance_id, "no_intervention")
 
 func serialize() -> Dictionary:
 	return {

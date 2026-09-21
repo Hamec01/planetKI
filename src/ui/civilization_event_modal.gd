@@ -13,6 +13,8 @@ var selected_choice_id: String = ""
 var category_badge: Label
 var title_label: Label
 var story_desc: Label
+var context_container: PanelContainer
+var context_lbl: Label
 var choices_container: VBoxContainer
 var confirm_btn: Button
 var extra_input_container: HBoxContainer
@@ -87,6 +89,24 @@ func _build_ui() -> void:
 	story_panel.add_child(story_desc)
 	main_vbox.add_child(story_panel)
 	
+	# Контекстная информация (участники, причины, факты мира)
+	context_container = PanelContainer.new()
+	var ctx_sbox = StyleBoxFlat.new()
+	ctx_sbox.bg_color = Color(0.10, 0.13, 0.18, 0.9)
+	ctx_sbox.border_color = Color(0.3, 0.5, 0.7, 0.5)
+	ctx_sbox.set_border_width_all(1)
+	ctx_sbox.set_corner_radius_all(6)
+	ctx_sbox.set_content_margin_all(8)
+	context_container.add_theme_stylebox_override("panel", ctx_sbox)
+	context_container.visible = false
+	main_vbox.add_child(context_container)
+	
+	context_lbl = Label.new()
+	context_lbl.add_theme_font_size_override("font_size", 10)
+	context_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+	context_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	context_container.add_child(context_lbl)
+	
 	# Дополнительное поле ввода (например, имя бога или пантеона)
 	extra_input_container = HBoxContainer.new()
 	extra_input_container.add_theme_constant_override("separation", 8)
@@ -150,6 +170,24 @@ func open_event(ev: Dictionary) -> void:
 	category_badge.text = "🏛 %s" % ev.get("category", "СУДЬБА ЦИВИЛИЗАЦИИ").to_upper()
 	title_label.text = ev.get("title", "Историческое решение")
 	story_desc.text = ev.get("description", "")
+	
+	# Контекстная информация (участники, причины, дом)
+	var ctx_text = ""
+	var causes = ev.get("causes", [])
+	if not causes.is_empty():
+		ctx_text += "Причины: " + ", ".join(causes) + "\n"
+	var actor_names = ev.get("actor_names", [])
+	if not actor_names.is_empty():
+		ctx_text += "Участники: " + ", ".join(actor_names) + "\n"
+	var target_b = ev.get("target_building_id", "")
+	if target_b != "":
+		ctx_text += "Место действия: " + target_b
+		
+	if ctx_text.strip_edges() != "":
+		context_lbl.text = "🔍 Факты ситуации:\n" + ctx_text.strip_edges()
+		context_container.visible = true
+	else:
+		context_container.visible = false
 	
 	# Очищаем старые кнопки
 	for ch in choices_container.get_children():

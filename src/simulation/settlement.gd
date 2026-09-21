@@ -530,12 +530,25 @@ func cancel_building_upgrade(b_inst: BuildingInstance, is_player_mandate: bool =
 			deposit_resource(res, amt, "Возврат отмененного улучшения")
 	if is_player_mandate and b_inst.is_residential():
 		for r_id in b_inst.residents:
-			var c = population.find_citizen(r_id) if population else null
+			var c: CitizenNPC = null
+			if population and "citizens" in population:
+				for cit in population.citizens:
+					if cit.id == r_id:
+						c = cit
+						break
 			if c:
 				c.loyalty = maxf(0.0, c.loyalty - 10.0)
 				c.add_memory("outrage", "ruler", b_inst.id, 1.0, "Правитель запретил обустройство нашего дома", false)
 				c.last_status_reason = "Возмущён: правитель запретил обустройство дома"
 	return up_data
+
+func get_citizen_by_id(c_id: String) -> CitizenNPC:
+	if not population or not ("citizens" in population):
+		return null
+	for c in population.citizens:
+		if c.id == c_id:
+			return c
+	return null
 
 func check_family_private_improvements() -> bool:
 	if not GameManager or not GameManager.building_instances:
