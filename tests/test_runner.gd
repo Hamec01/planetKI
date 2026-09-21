@@ -2512,6 +2512,84 @@ func _ready() -> void:
 	assert(t_avg_step_ms > 0.0, "P12 T98: 500 citizens benchmark executes stably")
 	print("OK 98. P12 / A33 500-citizen performance benchmark and memory stability verified.")
 
+	# 99. P01.2: Состояние NPC — эффективные параметры, 9 шкал характера, память, затухание и радиус наблюдения
+	var p01_npc = CitizenNPC.new("test_p01_cit", "Добрыня", "m", 28, "adult")
+	p01_npc.strength_level = 5
+	p01_npc.endurance_level = 4
+	p01_npc.agility_level = 6
+	p01_npc.hunger = 100.0
+	p01_npc.energy = 100.0
+	p01_npc.health = 100.0
+
+	# 1. При полном здоровье и сытости витальный множитель 1.0
+	assert(p01_npc.get_vitality_multiplier() == 1.0, "P01.2: Vitality multiplier is 1.0 when healthy and fed")
+	var full_str = p01_npc.get_effective_strength()
+	var full_spd = p01_npc.get_speed()
+	assert(full_str >= 5.0, "P01.2: Effective strength reflects level")
+	var desc_full = p01_npc.get_physical_status_descriptors()
+	assert(desc_full.has("силач") and desc_full.has("выносливый") and desc_full.has("ловкий"), "P01.2: Descriptors reflect high physical form")
+
+	# 2. Голод и истощение энергии снижают эффективные параметры и скорость без потери уровня
+	p01_npc.hunger = 10.0 # Сильный голод
+	p01_npc.energy = 10.0 # Валится с ног
+	assert(p01_npc.get_vitality_multiplier() < 0.3, "P01.2: Hunger + exhaustion drastically drop vitality multiplier")
+	assert(p01_npc.get_effective_strength() < full_str * 0.5, "P01.2: Effective strength is halved or more during severe exhaustion")
+	assert(p01_npc.get_speed() < full_spd, "P01.2: Movement speed drops when exhausted")
+	var desc_exhausted = p01_npc.get_physical_status_descriptors()
+	assert(desc_exhausted.has("истощён") and desc_exhausted.has("валится с ног"), "P01.2: Status shows clear human-readable indicators")
+	assert(p01_npc.strength_level == 5, "P01.2: Base strength level not lost due to temporary exhaustion")
+
+	# 3. Восстановление параметров после еды и отдыха
+	p01_npc.hunger = 100.0
+	p01_npc.energy = 100.0
+	assert(p01_npc.get_vitality_multiplier() == 1.0, "P01.2: Full vitality restored after food and rest")
+	assert(p01_npc.get_effective_strength() == full_str, "P01.2: Effective strength restored")
+
+	# 4. 9 шкал личности и наследование новорождённым
+	assert(p01_npc.traits.has("diligence") and p01_npc.traits.has("bravery") and p01_npc.traits.has("empathy"), "P01.2: Core traits present")
+	assert(p01_npc.traits.has("sociability") and p01_npc.traits.has("temper") and p01_npc.traits.has("honesty"), "P01.2: Social traits present")
+	assert(p01_npc.traits.has("ambition") and p01_npc.traits.has("tradition") and p01_npc.traits.has("curiosity"), "P01.2: Ambition, tradition and curiosity present")
+
+	var mother_npc = CitizenNPC.new("test_mother", "Любомира", "f", 24, "adult")
+	mother_npc.traits["diligence"] = 90.0
+	mother_npc.traits["bravery"] = 80.0
+	var father_npc = CitizenNPC.new("test_father", "Любомир", "m", 26, "adult")
+	father_npc.traits["diligence"] = 70.0
+	father_npc.traits["bravery"] = 60.0
+	var child_npc = CitizenNPC.new("test_child", "Младенец", "m", 0, "child")
+	child_npc.inherit_traits_from_parents(mother_npc, father_npc)
+	assert(child_npc.traits["diligence"] >= 60.0 and child_npc.traits["diligence"] <= 100.0, "P01.2: Child inherits diligence from parents with spread")
+
+	# 5. Память: добавление, поиск, затухание и радиус наблюдения
+	p01_npc.pos = Vector2(100.0, 100.0)
+	p01_npc.add_memory("rescued", "cit_2", p01_npc.citizen_id, 1.0, "Брок спас из пасти волка", true)
+	p01_npc.add_memory("minor_insult", "cit_3", p01_npc.citizen_id, 0.1, "Ратибор толкнул у костра", false)
+	assert(p01_npc.has_memory_of("cit_2", "rescued"), "P01.2: Memory of rescue is registered")
+	assert(p01_npc.has_memory_of("cit_3", "minor_insult"), "P01.2: Memory of minor insult registered")
+
+	# Затухание: незначительная обида слабеет, спасение жизни остаётся постоянным
+	p01_npc.update_memories(30.0) # Прошло 30 дней
+	assert(p01_npc.has_memory_of("cit_2", "rescued"), "P01.2: Permanent life-saving memory never fades")
+	assert(not p01_npc.has_memory_of("cit_3", "minor_insult"), "P01.2: Minor temporary memory fades completely over time")
+
+	# Радиус наблюдения: тихий (<=64px), нормальный (<=160px), громкий (<=320px)
+	assert(p01_npc.can_observe_event(Vector2(140.0, 100.0), "quiet"), "P01.2: Quiet action 40px away observed")
+	assert(not p01_npc.can_observe_event(Vector2(200.0, 100.0), "quiet"), "P01.2: Quiet action 100px away NOT observed")
+	assert(p01_npc.can_observe_event(Vector2(200.0, 100.0), "normal"), "P01.2: Normal action 100px away observed")
+	assert(not p01_npc.can_observe_event(Vector2(350.0, 100.0), "normal"), "P01.2: Normal action 250px away NOT observed")
+	assert(p01_npc.can_observe_event(Vector2(350.0, 100.0), "loud"), "P01.2: Loud shout 250px away observed")
+	assert(not p01_npc.can_observe_event(Vector2(500.0, 100.0), "loud"), "P01.2: Loud shout 400px away NOT observed")
+
+	# 6. Сохранение и загрузка ловкости, шкал характера и памяти
+	var p01_serialized = p01_npc.serialize()
+	assert(p01_serialized.has("agility_xp") and p01_serialized.has("memories"), "P01.2: Serialized contains agility and memories")
+	var p01_restored = CitizenNPC.new()
+	p01_restored.deserialize(p01_serialized)
+	assert(p01_restored.agility_level == p01_npc.agility_level, "P01.2: Restored agility level matches")
+	assert(p01_restored.has_memory_of("cit_2", "rescued"), "P01.2: Restored memory of rescue preserved")
+	assert(p01_restored.traits["temper"] == p01_npc.traits["temper"], "P01.2: Restored personality trait matches")
+	print("OK 99. P01.2 Citizen effective parameters, personality scales, memories and observation radius verified.")
+
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-98) COMPLETED SUCCESSFULLY!")
 	print("========================================")

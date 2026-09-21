@@ -231,6 +231,9 @@ func add_newborn(parent_settlement_id: String = "", spawn_pos: Vector2 = Vector2
 		if father_cit:
 			father_cit.add_relationship(c_id, "child", 100.0)
 	
+	if mother_id != "" or father_id != "":
+		child.inherit_traits_from_parents(find_citizen(mother_id), find_citizen(father_id))
+	
 	child.last_status_reason = "Новорождённый"
 	citizens.append(child)
 	sync_cohorts()

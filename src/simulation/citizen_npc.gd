@@ -86,12 +86,14 @@ var energy: float = 100.0 # 100 = бодр, 0 = валится с ног
 var loyalty: float = 85.0
 var experience: Dictionary = {}
 
-# --- 4 ВЕКТОРА РАЗВИТИЯ И ЭКИПИРОВКА (PLANETKI v2 / ТЗ РАЗДЕЛЫ 21-32) ---
-# 1. Физическая форма (S: 0..20, E: 0..20)
+# --- 4 ВЕКТОРА РАЗВИТИЯ И ЭКИПИРОВКА (PLANETKI v2 / ТЗ РАЗДЕЛЫ 21-32 / P01.2) ---
+# 1. Физическая форма (S: 0..20, E: 0..20, A: 0..20)
 var strength_xp: float = 0.0
 var strength_level: int = 0
 var endurance_xp: float = 0.0
 var endurance_level: int = 0
+var agility_xp: float = 0.0
+var agility_level: int = 0
 var stamina_current: float = 100.0
 var stamina_max: float = 100.0
 
@@ -124,20 +126,31 @@ var daily_physical_hours: float = 0.0
 var daily_profession_hours: float = 0.0
 var daily_hunt_xp: float = 0.0
 
-# --- ЛИЧНОСТЬ, ХАРАКТЕР И УСТОЙЧИВОСТЬ ВЫБОРА (S08 / ТЗ РАЗДЕЛ 7) ---
+# --- ЛИЧНОСТЬ, ХАРАКТЕР И ПАМЯТЬ (P01.2 / ТЗ РАЗДЕЛ 4) ---
+# 9 скрытых шкал личности + непредсказуемость + совместимость с S08
 var traits: Dictionary = {
 	"diligence": 50.0,       # Трудолюбие (0..100)
 	"bravery": 50.0,         # Храбрость (0..100)
-	"empathy": 50.0,         # Сочувствие / взаимовыручка к близким (0..100)
-	"pride": 50.0,           # Профессиональная гордость (0..100)
-	"loyalty_ruler": 50.0,   # Доверие правителю (0..100)
+	"empathy": 50.0,         # Сочувствие (0..100)
+	"sociability": 50.0,     # Общительность (0..100)
+	"temper": 20.0,          # Вспыльчивость (0..100)
+	"honesty": 50.0,         # Честность (0..100)
+	"ambition": 50.0,        # Честолюбие (0..100)
 	"tradition": 50.0,       # Приверженность традициям (0..100)
-	"tolerance": 50.0,       # Терпимость (0..100)
-	"aggression": 20.0       # Агрессивность (0..100)
+	"curiosity": 50.0,       # Любопытство (0..100)
+	"unpredictable": false,  # Редкая черта: нестабильные поступки при сильном стрессе
+	# Совместимость с S08:
+	"pride": 50.0,
+	"loyalty_ruler": 50.0,
+	"tolerance": 50.0,
+	"aggression": 20.0
 }
 var commitment_timer: float = 0.0 # Таймер устойчивости выбора (защита от метания)
 var ongoing_task_kind: String = "" # Текущий закрепленный тип задачи
 var social_cooldown: float = 0.0 # Кулдаун на повторные социальные диалоги
+
+# Память о значимых событиях (P01.2 / ТЗ 4.3): спасение, жильё, выселение, предательство
+var memories: Array[Dictionary] = []
 
 func take_damage(amount: float, source_name: String = "") -> bool:
 	health = maxf(0.0, health - amount)
@@ -165,33 +178,37 @@ func add_work_xp(activity: String, hours: float) -> void:
 	
 	var s_rate = 0.0
 	var e_rate = 0.0
+	var a_rate = 0.0
 	var prof_key = ""
 	var prof_rate = 0.0
 	
 	match activity:
 		"woodcutting":
-			s_rate = 2.0; e_rate = 1.5; prof_key = "woodcutter"; prof_rate = 3.0
+			s_rate = 2.0; e_rate = 1.5; a_rate = 0.5; prof_key = "woodcutter"; prof_rate = 3.0
 		"stone_mining":
-			s_rate = 2.2; e_rate = 1.5; prof_key = "stonecutter"; prof_rate = 3.0
+			s_rate = 2.2; e_rate = 1.5; a_rate = 0.2; prof_key = "stonecutter"; prof_rate = 3.0
 		"ore_mining":
-			s_rate = 2.0; e_rate = 1.5; prof_key = "miner"; prof_rate = 3.0
+			s_rate = 2.0; e_rate = 1.5; a_rate = 0.2; prof_key = "miner"; prof_rate = 3.0
 		"building":
-			s_rate = 1.5; e_rate = 1.5; prof_key = "builder"; prof_rate = 3.0
+			s_rate = 1.5; e_rate = 1.5; a_rate = 0.8; prof_key = "builder"; prof_rate = 3.0
 		"carrying":
-			s_rate = 1.0; e_rate = 2.0
+			s_rate = 1.0; e_rate = 2.0; a_rate = 0.4
 		"gathering", "farming":
-			s_rate = 0.4; e_rate = 1.2; prof_key = "gatherer"; prof_rate = 3.0
+			s_rate = 0.4; e_rate = 1.2; a_rate = 1.2; prof_key = "gatherer"; prof_rate = 3.0
 		"hunting_tracking":
-			s_rate = 0.2; e_rate = 1.8; prof_key = "hunter"; prof_rate = 2.0
+			s_rate = 0.2; e_rate = 1.8; a_rate = 2.0; prof_key = "hunter"; prof_rate = 2.0
 		"combat_training":
-			s_rate = 1.0; e_rate = 1.5
+			s_rate = 1.0; e_rate = 1.5; a_rate = 1.5
 			
-	# Начисление силы и выносливости (порог L: 200 * L^2)
+	# Начисление силы, выносливости и ловкости (порог L: 200 * L^2)
 	strength_xp += s_rate * usable_hours
 	strength_level = mini(20, int(floor(sqrt(strength_xp / 200.0))))
 	
 	endurance_xp += e_rate * usable_hours
 	endurance_level = mini(20, int(floor(sqrt(endurance_xp / 200.0))))
+	
+	agility_xp += a_rate * usable_hours
+	agility_level = mini(20, int(floor(sqrt(agility_xp / 200.0))))
 	
 	# Профессиональный опыт (порог L: 50 * L^2)
 	if prof_key != "" and prof_rate > 0.0:
@@ -275,6 +292,8 @@ func _init(p_id: String = "", p_name: String = "", p_gender: String = "m", p_age
 	seed_val = abs((p_id + p_name).hash())
 	schedule_offset_hours = randf_range(-0.4, 0.4)
 	_pick_initial_appearance()
+	if p_id != "":
+		init_personality(seed_val)
 
 func _pick_initial_appearance() -> void:
 	if appearance_role != "" and appearance_role != "villager_brown_m":
@@ -338,16 +357,176 @@ func set_workplace(p_work_id: String, p_coord: Vector2i) -> void:
 	workplace_coord = p_coord
 
 func get_speed() -> float:
-	var spd = base_speed
+	var spd = base_speed * (0.9 + float(agility_level) * 0.02)
 	if cohort == "elder":
 		spd *= 0.8
 	elif cohort == "child":
 		spd *= 0.9
+	if hunger < 25.0:
+		spd *= 0.8
 	if energy < 20.0:
 		spd *= 0.75
 	if health < 40.0:
 		spd *= 0.65
-	return spd
+	return maxf(6.0, spd)
+
+# --- ЭФФЕКТИВНЫЕ ПАРАМЕТРЫ И ВИТАЛЬНЫЙ МНОЖИТЕЛЬ (P01.2 / ТЗ 4.1) ---
+func get_vitality_multiplier() -> float:
+	var mult = 1.0
+	if hunger < 20.0:
+		mult *= 0.4
+	elif hunger < 50.0:
+		mult *= 0.75
+	if energy < 15.0:
+		mult *= 0.5
+	elif energy < 40.0:
+		mult *= 0.8
+	if health < 30.0:
+		mult *= 0.5
+	elif health < 70.0:
+		mult *= 0.85
+	return mult
+
+func get_effective_strength() -> float:
+	return maxf(0.2, (float(strength_level) + 1.0) * get_vitality_multiplier())
+
+func get_effective_endurance() -> float:
+	return maxf(0.2, (float(endurance_level) + 1.0) * get_vitality_multiplier())
+
+func get_effective_agility() -> float:
+	return maxf(0.2, (float(agility_level) + 1.0) * get_vitality_multiplier())
+
+func get_effective_max_carry() -> float:
+	var base = max_carry + (float(strength_level) * 0.5)
+	return maxf(2.0, base * get_vitality_multiplier())
+
+func get_physical_status_descriptors() -> Array[String]:
+	var desc: Array[String] = []
+	if strength_level >= 4:
+		desc.append("силач")
+	elif strength_level == 0 and get_vitality_multiplier() < 0.7:
+		desc.append("хилый")
+	if endurance_level >= 4:
+		desc.append("выносливый")
+	if agility_level >= 4:
+		desc.append("ловкий")
+	if hunger < 20.0:
+		desc.append("истощён")
+	elif hunger < 50.0:
+		desc.append("голоден")
+	if energy < 20.0:
+		desc.append("валится с ног")
+	elif energy < 45.0:
+		desc.append("не выспался")
+	if health < 35.0:
+		desc.append("тяжело ранен")
+	elif health < 75.0:
+		desc.append("ранен")
+	if get_vitality_multiplier() < 0.7 and not desc.has("истощён") and not desc.has("голоден"):
+		desc.append("ослаблен")
+	return desc
+
+# --- ХАРАКТЕР И ЛИЧНОСТЬ (P01.2 / ТЗ 4.2) ---
+func init_personality(seed_num: int = 0) -> void:
+	var s = seed_num if seed_num != 0 else seed_val
+	var rng = RandomNumberGenerator.new()
+	rng.seed = s
+	traits["diligence"] = rng.randf_range(20.0, 80.0)
+	traits["bravery"] = rng.randf_range(20.0, 80.0)
+	traits["empathy"] = rng.randf_range(20.0, 80.0)
+	traits["sociability"] = rng.randf_range(20.0, 80.0)
+	traits["temper"] = rng.randf_range(10.0, 70.0)
+	traits["honesty"] = rng.randf_range(30.0, 85.0)
+	traits["ambition"] = rng.randf_range(15.0, 75.0)
+	traits["tradition"] = rng.randf_range(30.0, 80.0)
+	traits["curiosity"] = rng.randf_range(25.0, 85.0)
+	traits["unpredictable"] = rng.randf() < 0.05
+	traits["aggression"] = traits["temper"]
+	traits["pride"] = traits["ambition"]
+
+func inherit_traits_from_parents(mother: CitizenNPC, father: CitizenNPC) -> void:
+	var rng = RandomNumberGenerator.new()
+	rng.seed = seed_val
+	var m_traits = mother.traits if mother != null else {}
+	var f_traits = father.traits if father != null else {}
+	
+	for key in ["diligence", "bravery", "empathy", "sociability", "temper", "honesty", "ambition", "tradition", "curiosity"]:
+		var m_val = float(m_traits.get(key, 50.0))
+		var f_val = float(f_traits.get(key, 50.0))
+		var avg = (m_val + f_val) * 0.5 if (mother and father) else (m_val if mother else f_val)
+		var spread = rng.randf_range(-15.0, 15.0)
+		traits[key] = clampf(avg + spread, 0.0, 100.0)
+	traits["unpredictable"] = (mother and mother.traits.get("unpredictable", false)) or (father and father.traits.get("unpredictable", false)) or (rng.randf() < 0.03)
+	traits["aggression"] = traits["temper"]
+	traits["pride"] = traits["ambition"]
+
+# --- ПАМЯТЬ И ЗНАНИЕ О МИРЕ (P01.2 / ТЗ 4.3) ---
+func add_memory(p_type: String, p_actor_id: String, p_target_id: String, p_importance: float, p_desc: String, p_permanent: bool = false) -> void:
+	var mem_id = "mem_%d_%d" % [int(Time.get_ticks_msec()), randi() % 1000]
+	var current_year = GameManager.current_year if GameManager else 1
+	var current_time = GameManager.sim_time_total if GameManager else 0.0
+	memories.append({
+		"id": mem_id,
+		"type": p_type,
+		"actor_id": p_actor_id,
+		"target_id": p_target_id,
+		"importance": clampf(p_importance, 0.0, 1.0),
+		"strength": 100.0,
+		"is_permanent": p_permanent,
+		"created_year": current_year,
+		"created_time": current_time,
+		"description": p_desc
+	})
+	if memories.size() > 30:
+		_prune_memories()
+
+func has_memory_of(p_actor_id: String, p_type: String = "") -> bool:
+	for m in memories:
+		if m.get("actor_id", "") == p_actor_id:
+			if p_type == "" or m.get("type", "") == p_type:
+				return true
+	return false
+
+func get_memories_about(p_actor_id: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for m in memories:
+		if m.get("actor_id", "") == p_actor_id or m.get("target_id", "") == p_actor_id:
+			result.append(m)
+	return result
+
+func update_memories(delta_days: float) -> void:
+	if delta_days <= 0.0 or memories.is_empty():
+		return
+	var i = memories.size() - 1
+	while i >= 0:
+		var m = memories[i]
+		if not m.get("is_permanent", false):
+			var fade_rate = 5.0 * (1.0 - float(m.get("importance", 0.5)) * 0.5)
+			m["strength"] = float(m.get("strength", 100.0)) - (fade_rate * delta_days)
+			if m["strength"] <= 0.0:
+				memories.remove_at(i)
+		i -= 1
+
+func _prune_memories() -> void:
+	memories.sort_custom(func(a, b):
+		var a_p = 1.0 if a.get("is_permanent", false) else 0.0
+		var b_p = 1.0 if b.get("is_permanent", false) else 0.0
+		if a_p != b_p:
+			return a_p > b_p
+		return float(a.get("importance", 0.5)) * float(a.get("strength", 100.0)) > float(b.get("importance", 0.5)) * float(b.get("strength", 100.0))
+	)
+	if memories.size() > 30:
+		memories.resize(30)
+
+func can_observe_event(event_world_pos: Vector2, sound_level: String = "normal") -> bool:
+	var dist = pos.distance_to(event_world_pos)
+	match sound_level:
+		"quiet", "subtle":
+			return dist <= 64.0  # 2 тайла
+		"loud", "shout", "fight":
+			return dist <= 320.0 # 10 тайлов
+		_:
+			return dist <= 160.0 # 5 тайлов (нормальный разговор/действие)
 
 func shout(text: String, duration: float = 2.5) -> void:
 	speech_bubble = text
@@ -442,6 +621,8 @@ func serialize() -> Dictionary:
 		"strength_level": strength_level,
 		"endurance_xp": endurance_xp,
 		"endurance_level": endurance_level,
+		"agility_xp": agility_xp,
+		"agility_level": agility_level,
 		"stamina_current": stamina_current,
 		"stamina_max": stamina_max,
 		"weapon_skills": weapon_skills,
@@ -452,6 +633,7 @@ func serialize() -> Dictionary:
 		"guardian_id": guardian_id,
 		"pregnancy": pregnancy.duplicate(),
 		"traits": traits.duplicate(),
+		"memories": memories.duplicate(true),
 		"commitment_timer": commitment_timer,
 		"social_cooldown": social_cooldown,
 		"profession_levels": profession_levels.duplicate()
@@ -482,10 +664,14 @@ func deserialize(data: Dictionary) -> void:
 	relationships = data.get("relationships", {}).duplicate(true)
 	guardian_id = data.get("guardian_id", "")
 	pregnancy = data.get("pregnancy", {}).duplicate()
-	traits = data.get("traits", {
-		"diligence": 50.0, "bravery": 50.0, "empathy": 50.0, "pride": 50.0,
-		"loyalty_ruler": 50.0, "tradition": 50.0, "tolerance": 50.0, "aggression": 20.0
-	}).duplicate()
+	var loaded_traits = data.get("traits", {})
+	if loaded_traits is Dictionary:
+		for k in loaded_traits:
+			traits[k] = loaded_traits[k]
+	memories.clear()
+	for m in data.get("memories", []):
+		if m is Dictionary:
+			memories.append(m.duplicate(true))
 	commitment_timer = float(data.get("commitment_timer", 0.0))
 	social_cooldown = float(data.get("social_cooldown", 0.0))
 	profession_levels = data.get("profession_levels", {}).duplicate()
@@ -509,6 +695,8 @@ func deserialize(data: Dictionary) -> void:
 	strength_level = data.get("strength_level", 0)
 	endurance_xp = data.get("endurance_xp", 0.0)
 	endurance_level = data.get("endurance_level", 0)
+	agility_xp = float(data.get("agility_xp", 0.0))
+	agility_level = int(data.get("agility_level", 0))
 	stamina_current = data.get("stamina_current", 100.0)
 	stamina_max = data.get("stamina_max", 100.0)
 	weapon_skills = data.get("weapon_skills", {
