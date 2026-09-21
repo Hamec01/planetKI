@@ -3057,8 +3057,134 @@ func _ready() -> void:
 
 	print("OK 103. P01.6 HUT-01 housing precedent, 5-option resolution, council vote and persistent world consequences verified.")
 
+	# --------------------------------------------------------------------------
+	# TEST 104: P01.7 HUT-02 «Крыша и долг» (Re-occurring dispute, 4 branches)
+	# --------------------------------------------------------------------------
+	var p01_7_settlement = SettlementData.new("settlement_p01_7", "Поселок P01.7", "player_faction", Vector2i(30, 30))
+	p01_7_settlement.economy.resources["food"] = 30.0
+	p01_7_settlement.economy.resources["wood"] = 20.0
+	GameManager.settlements[p01_7_settlement.id] = p01_7_settlement
+	var p01_7_ev_mgr = CivilizationEventManager.new()
+	p01_7_ev_mgr.settlement = p01_7_settlement
+	p01_7_ev_mgr.triggered_events.append("HUT-01")
+
+	var cit_owner_104 = CitizenNPC.new("owner_104", "Борислав Хозяин", "m", 30)
+	var cit_tenant_104 = CitizenNPC.new("tenant_104", "Злата Жиличка", "f", 24)
+	p01_7_settlement.population.citizens.append(cit_owner_104)
+	p01_7_settlement.population.citizens.append(cit_tenant_104)
+
+	# Хижина со спором
+	var hut_104 = BuildingInstance.new("hut_p01_7", "hut", p01_7_settlement.id, Vector2i(15, 15))
+	var r_list_104: Array[String] = [cit_owner_104.id, cit_tenant_104.id]
+	hut_104.residents = r_list_104
+	hut_104.household_head_id = cit_owner_104.id
+	hut_104.resident_roles[cit_owner_104.id] = "Владелец"
+	hut_104.resident_roles[cit_tenant_104.id] = "Жилец"
+	cit_owner_104.home_id = hut_104.id
+	cit_tenant_104.home_id = hut_104.id
+	GameManager.building_instances[hut_104.id] = hut_104
+
+	# 1. Проверка причин триггера HUT-02:
+	# А) Припасы в доме на нуле (< 1.5)
+	hut_104.food_stockpile = 0.5
+	var ctx_low_food = p01_7_ev_mgr.check_hut_02_dispute_trigger(p01_7_settlement)
+	assert(not ctx_low_food.is_empty(), "P01.7: Low food in hut triggers HUT-02")
+	assert("Нехватка припасов" in ctx_low_food["causes"][0], "P01.7: Cause is low food in house")
+
+	# Б) Перенаселение
+	hut_104.food_stockpile = 10.0
+	var old_cap = hut_104.comfort_capacity
+	hut_104.comfort_capacity = 1 # 2 жильца при капасити 1 = is_crowded()
+	var ctx_crowd = p01_7_ev_mgr.check_hut_02_dispute_trigger(p01_7_settlement)
+	assert(not ctx_crowd.is_empty(), "P01.7: Crowding in hut triggers HUT-02")
+	assert("Теснота" in ctx_crowd["causes"][0], "P01.7: Cause is crowding")
+	hut_104.comfort_capacity = old_cap
+
+	# В) Нерешённый старый спор
+	hut_104.active_modifiers["unresolved_housing_dispute"] = true
+	var ctx_dispute = p01_7_ev_mgr.check_hut_02_dispute_trigger(p01_7_settlement)
+	assert(not ctx_dispute.is_empty(), "P01.7: Unresolved dispute triggers HUT-02")
+	assert("Старая неприязнь" in ctx_dispute["causes"][0], "P01.7: Cause is unresolved dispute")
+
+	# 2. Тестирование Варианта A: «Защитить права и покой хозяев дома» (EVICTION)
+	var hut_ev_template = CivilizationEventDB.get_event("HUT-02")
+	var ev_a_id = p01_7_ev_mgr.trigger_event(hut_ev_template, ctx_dispute)
+	assert("Борислав Хозяин" in p01_7_ev_mgr.active_event["description"], "P01.7: Owner name in description")
+	assert("Злата Жиличка" in p01_7_ev_mgr.active_event["description"], "P01.7: Tenant name in description")
+	p01_7_ev_mgr.apply_choice(ev_a_id, "A")
+	assert(not hut_104.residents.has(cit_tenant_104.id), "P01.7 (Choice A): Tenant removed from hut residents")
+	assert(cit_tenant_104.home_id == "", "P01.7 (Choice A): Evicted tenant is now homeless")
+	assert(cit_tenant_104.has_memory_of("ruler", "outrage"), "P01.7 (Choice A): Evicted tenant remembers outrage toward ruler")
+	assert(cit_owner_104.has_memory_of("ruler", "gratitude"), "P01.7 (Choice A): Owner remembers gratitude toward ruler")
+	assert(not hut_104.has_unresolved_dispute(), "P01.7 (Choice A): Dispute resolved on hut")
+
+	# 3. Тестирование Варианта B: «Защитить жильцов от произвола» (PROTECT_TENANTS + FOOD AID)
+	var hut_104_b = BuildingInstance.new("hut_b_104", "hut", p01_7_settlement.id, Vector2i(16, 16))
+	var r_list_b: Array[String] = [cit_owner_104.id, cit_tenant_104.id]
+	hut_104_b.residents = r_list_b
+	hut_104_b.active_modifiers["unresolved_housing_dispute"] = true
+	GameManager.building_instances[hut_104_b.id] = hut_104_b
+	var initial_food_104 = p01_7_settlement.economy.get_resource("food")
+	var ev_b_id = p01_7_ev_mgr.trigger_event(hut_ev_template, {
+		"actor_ids": [cit_owner_104.id, cit_tenant_104.id],
+		"actor_names": [cit_owner_104.name, cit_tenant_104.name],
+		"target_building_id": hut_104_b.id,
+		"causes": ["Нехватка припасов и спор о доле в котле"],
+		"context_data": {"building_id": hut_104_b.id, "actor_0": cit_owner_104.name, "actor_1": cit_tenant_104.name, "dispute_cause": "Нехватка припасов"}
+	})
+	p01_7_ev_mgr.apply_choice(ev_b_id, "B")
+	assert(hut_104_b.active_modifiers.get("protected_tenancy", false), "P01.7 (Choice B): Protected tenancy modifier applied")
+	assert(p01_7_settlement.economy.get_resource("food") == initial_food_104 - 5.0, "P01.7 (Choice B): 5 food deducted from settlement")
+	assert(cit_owner_104.has_memory_of("ruler", "resentment"), "P01.7 (Choice B): Owner has resentment memory toward ruler")
+	assert(not hut_104_b.has_unresolved_dispute(), "P01.7 (Choice B): Dispute resolved on hut_b")
+
+	# 4. Тестирование Варианта C: «Разделить дом перегородкой» (PARTITION_HUT)
+	var hut_104_c = BuildingInstance.new("hut_c_104", "hut", p01_7_settlement.id, Vector2i(17, 17))
+	var r_list_c: Array[String] = [cit_owner_104.id, cit_tenant_104.id]
+	hut_104_c.residents = r_list_c
+	hut_104_c.active_modifiers["unresolved_housing_dispute"] = true
+	GameManager.building_instances[hut_104_c.id] = hut_104_c
+	var initial_wood_104 = p01_7_settlement.economy.get_resource("wood")
+	var initial_cap_104 = hut_104_c.get_comfort_capacity()
+	var ev_c_id = p01_7_ev_mgr.trigger_event(hut_ev_template, {
+		"actor_ids": [cit_owner_104.id, cit_tenant_104.id],
+		"actor_names": [cit_owner_104.name, cit_tenant_104.name],
+		"target_building_id": hut_104_c.id,
+		"causes": ["Теснота и спор о личном пространстве"],
+		"context_data": {"building_id": hut_104_c.id, "actor_0": cit_owner_104.name, "actor_1": cit_tenant_104.name, "dispute_cause": "Теснота"}
+	})
+	p01_7_ev_mgr.apply_choice(ev_c_id, "C")
+	assert(hut_104_c.active_modifiers.get("partitioned", false), "P01.7 (Choice C): Partitioned modifier set")
+	assert(p01_7_settlement.economy.get_resource("wood") == initial_wood_104 - 5.0, "P01.7 (Choice C): 5 wood deducted from settlement")
+	assert(hut_104_c.get_comfort_capacity() == initial_cap_104 + 1, "P01.7 (Choice C): Comfort capacity increased by partition")
+	assert(cit_owner_104.has_memory_of("ruler", "peace"), "P01.7 (Choice C): Owner has peace memory")
+	assert(not hut_104_c.has_unresolved_dispute(), "P01.7 (Choice C): Dispute resolved on hut_c")
+
+	# 5. Тестирование Варианта D: «Не вмешиваться / бытовая драка» (DOMESTIC_BRAWL)
+	var hut_104_d = BuildingInstance.new("hut_d_104", "hut", p01_7_settlement.id, Vector2i(18, 18))
+	var r_list_d: Array[String] = [cit_owner_104.id, cit_tenant_104.id]
+	hut_104_d.residents = r_list_d
+	GameManager.building_instances[hut_104_d.id] = hut_104_d
+	var initial_health_owner_104 = cit_owner_104.health
+	var initial_health_tenant_104 = cit_tenant_104.health
+	var ev_d_id = p01_7_ev_mgr.trigger_event(hut_ev_template, {
+		"actor_ids": [cit_owner_104.id, cit_tenant_104.id],
+		"actor_names": [cit_owner_104.name, cit_tenant_104.name],
+		"target_building_id": hut_104_d.id,
+		"causes": ["Старая неприязнь и нерешённый спор о правах на дом"],
+		"context_data": {"building_id": hut_104_d.id, "actor_0": cit_owner_104.name, "actor_1": cit_tenant_104.name, "dispute_cause": "Старая неприязнь"}
+	})
+	p01_7_ev_mgr.apply_choice(ev_d_id, "D")
+	assert(hut_104_d.has_unresolved_dispute(), "P01.7 (Choice D): Hut retains unresolved dispute")
+	assert(cit_owner_104.health == initial_health_owner_104 - 15.0, "P01.7 (Choice D): Owner lost 15 health in brawl")
+	assert(cit_tenant_104.health == initial_health_tenant_104 - 15.0, "P01.7 (Choice D): Tenant lost 15 health in brawl")
+	assert(cit_owner_104.has_memory_of("brawl", "injury"), "P01.7 (Choice D): Owner has injury memory from brawl")
+	assert(cit_tenant_104.has_memory_of("brawl", "injury"), "P01.7 (Choice D): Tenant has injury memory from brawl")
+
+	print("OK 104. P01.7 HUT-02 re-occurring housing dispute, 4 branches (eviction, food aid, partition, domestic brawl) verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-103) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-104) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 

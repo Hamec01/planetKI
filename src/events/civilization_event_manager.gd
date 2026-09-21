@@ -67,6 +67,10 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 				var hut_ctx = check_hut_dispute_trigger(settlement)
 				if hut_ctx.is_empty():
 					continue
+			elif ev_id == "HUT-02":
+				var hut2_ctx = check_hut_02_dispute_trigger(settlement)
+				if hut2_ctx.is_empty():
+					continue
 			eligible.append(ev)
 			
 	if eligible.is_empty():
@@ -79,6 +83,8 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 	var event_context = {}
 	if chosen_event.get("id", "") == "HUT-01":
 		event_context = check_hut_dispute_trigger(settlement)
+	elif chosen_event.get("id", "") == "HUT-02":
+		event_context = check_hut_02_dispute_trigger(settlement)
 	trigger_event(chosen_event, event_context)
 
 func check_hut_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
@@ -104,6 +110,41 @@ func check_hut_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
 						"actor_1": c1.name
 					}
 				}
+	return {}
+
+func check_hut_02_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement or not ("id" in p_settlement):
+		return {}
+	if not GameManager or not GameManager.building_instances:
+		return {}
+	for b in GameManager.building_instances.values():
+		if not b or b.settlement_id != p_settlement.id or b.type != "hut":
+			continue
+		if b.residents.size() >= 2:
+			var cause = ""
+			if b.food_stockpile < 1.5:
+				cause = "Нехватка припасов и спор о доле в котле"
+			elif b.is_crowded():
+				cause = "Теснота и спор о личном пространстве"
+			elif b.has_unresolved_dispute():
+				cause = "Старая неприязнь и нерешённый спор о правах на дом"
+			
+			if cause != "":
+				var c0 = _find_citizen(p_settlement.population, b.residents[0])
+				var c1 = _find_citizen(p_settlement.population, b.residents[1])
+				if c0 and c1:
+					return {
+						"target_building_id": b.id,
+						"actor_ids": [c0.id, c1.id],
+						"actor_names": [c0.name, c1.name],
+						"causes": [cause],
+						"context_data": {
+							"building_id": b.id,
+							"actor_0": c0.name,
+							"actor_1": c1.name,
+							"dispute_cause": cause
+						}
+					}
 	return {}
 
 func _check_event_conditions(conds: Dictionary, total_days: int, settlement: RefCounted) -> bool:
@@ -276,6 +317,9 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	if not consequences.is_empty():
 		_apply_choice_consequences(ev, chosen_choice, consequences, cur_settlement)
 		
+	if ev.get("status", "") == "resolved":
+		return
+
 	# 6. Запись в глобальную историю игры
 	GameManager.add_history_entry(cur_year, title, "Народ постановил: «%s»" % choice_title, category)
 	
@@ -435,6 +479,57 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 					cit_0.modify_relationship(act_1_id, -10.0, 0.0)
 					cit_1.add_memory("gratitude", "council", b_id, 1.0, "Совет племени защитил наш кров в общем доме", true)
 					cit_0.add_memory("disappointment", "council", b_id, 0.8, "Совет племени не отдал дом в единоличную собственность", false)
+
+	# Выселение жильцов (evict_tenants)
+	if consequences.has("evict_tenants"):
+		var b_id = ev.get("target_building_id", "")
+		var b_inst = GameManager.building_instances.get(b_id, null) if GameManager and GameManager.building_instances else null
+		for raw_t in consequences["evict_tenants"]:
+			var tid = _resolve_placeholder_str(str(raw_t), ev)
+			if b_inst:
+				b_inst.remove_resident(tid)
+				b_inst.add_history_entry(GameManager.current_year if GameManager else 1, "Жилец %s выселен по указу вождя" % tid)
+			var c = _find_citizen(pop, tid) if pop else null
+			if c:
+				c.home_id = ""
+				c.last_status_reason = "Выселен из дома, без крова"
+		if b_inst:
+			b_inst.active_modifiers.erase("unresolved_housing_dispute")
+
+	# Защита прав жильцов (protect_tenants)
+	if consequences.get("protect_tenants", false):
+		var b_id = ev.get("target_building_id", "")
+		var b_inst = GameManager.building_instances.get(b_id, null) if GameManager and GameManager.building_instances else null
+		if b_inst:
+			b_inst.active_modifiers["protected_tenancy"] = true
+			b_inst.active_modifiers.erase("unresolved_housing_dispute")
+			b_inst.add_history_entry(GameManager.current_year if GameManager else 1, "Вождь защитил право жильцов на кров")
+
+	# Приказ разделить дом перегородкой (partition_hut)
+	if consequences.get("partition_hut", false):
+		var b_id = ev.get("target_building_id", "")
+		var b_inst = GameManager.building_instances.get(b_id, null) if GameManager and GameManager.building_instances else null
+		if b_inst:
+			b_inst.active_modifiers["partitioned"] = true
+			b_inst.active_modifiers.erase("unresolved_housing_dispute")
+			b_inst.add_history_entry(GameManager.current_year if GameManager else 1, "В доме возведена внутренняя перегородка за счёт общины")
+
+	# Бытовая драка при невмешательстве (domestic_brawl)
+	if consequences.get("domestic_brawl", false):
+		var b_id = ev.get("target_building_id", "")
+		var b_inst = GameManager.building_instances.get(b_id, null) if GameManager and GameManager.building_instances else null
+		if b_inst:
+			b_inst.active_modifiers["unresolved_housing_dispute"] = true
+			b_inst.add_history_entry(GameManager.current_year if GameManager else 1, "В доме произошла драка жильцов")
+		var actor_ids = ev.get("actor_ids", [])
+		if pop:
+			for raw_act in actor_ids:
+				var a_id = _resolve_placeholder_str(str(raw_act), ev)
+				var c = _find_citizen(pop, a_id)
+				if c:
+					c.health = maxf(1.0, c.health - 15.0)
+					c.last_status_reason = "Пострадал в домашней драке"
+					c.add_memory("injury", "brawl", b_id, 1.0, "Пострадал в домашней драке из-за спорной крыши", false)
 
 	# Невмешательство из карточки выбора
 	if consequences.get("no_intervention", false):

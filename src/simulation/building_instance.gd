@@ -178,6 +178,8 @@ func get_comfort_capacity() -> int:
 		var cap = comfort_capacity
 		if is_upgrade_unlocked("hut_annex"):
 			cap += 2
+		if active_modifiers.get("partitioned", false):
+			cap += 1
 		return cap
 	return comfort_capacity
 

@@ -995,38 +995,7 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 	ctx_action_btn.disabled = false
 	ctx_action_btn.visible = true
 	
-	# 1. Проверяем, есть ли на клетке природный объект (дерево, камень, куст)
-	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
-		var node = GameManager.resource_manager.nodes[coord]
-		var spr_name = node.get("sprite_name", "")
-		var cat = node.get("category", "tree")
-		var info = {
-			"coord": coord,
-			"n_data": {
-				"name": spr_name,
-				"category": cat
-			}
-		}
-		_on_nature_object_selected(info, screen_pos)
-		return
-	
-	# 2. Проверяем, есть ли поселение
-	if tile_data.get("settlement_id", "") != "":
-		var s = GameManager.settlements.get(tile_data["settlement_id"], null)
-		if s:
-			var is_player = (s.id == "player_tribe_settlement")
-			ctx_icon_rect.texture = BuildingTextureManager.get_texture("great_lodge")
-			ctx_title_lbl.text = "🏛 %s" % s.name
-			ctx_coords_lbl.text = "Столица племени (%d:%d)" % [coord.x, coord.y] if is_player else "Соседнее племя (%d:%d)" % [coord.x, coord.y]
-			ctx_desc_lbl.text = "👥 Жители: %d (свободно: %d)\n🛡 Оборона: %.1f" % [
-				s.population.get_total_population(), s.get_idle_workforce(), s.get_defense_rating()
-			]
-			ctx_action_btn.text = "🏛 Управление поселением"
-			ctx_action_btn.pressed.connect(_open_settlement_panel)
-			_position_cursor_menu(screen_pos)
-			return
-			
-	# 3. Проверяем здание на клетке
+	# 1. ПЕРВЫМ ДЕЛОМ проверяем здание на клетке (здание всегда имеет приоритет клика над природными объектами)
 	if GameManager.tile_buildings.has(coord):
 		var b_data = GameManager.tile_buildings[coord]
 		var b_id = b_data.get("id", "")
@@ -1080,6 +1049,39 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 			
 		_position_cursor_menu(screen_pos)
 		return
+
+	# 2. Проверяем, есть ли центр поселения
+	if tile_data.get("settlement_id", "") != "":
+		var s = GameManager.settlements.get(tile_data["settlement_id"], null)
+		if s:
+			var is_player = (s.id == "player_tribe_settlement")
+			ctx_icon_rect.texture = BuildingTextureManager.get_texture("great_lodge")
+			ctx_title_lbl.text = "🏛 %s" % s.name
+			ctx_coords_lbl.text = "Столица племени (%d:%d)" % [coord.x, coord.y] if is_player else "Соседнее племя (%d:%d)" % [coord.x, coord.y]
+			ctx_desc_lbl.text = "👥 Жители: %d (свободно: %d)\n🛡 Оборона: %.1f" % [
+				s.population.get_total_population(), s.get_idle_workforce(), s.get_defense_rating()
+			]
+			ctx_action_btn.text = "🏛 Управление поселением"
+			ctx_action_btn.pressed.connect(_open_settlement_panel)
+			_position_cursor_menu(screen_pos)
+			return
+
+	# 3. Проверяем природный объект (только если ресурс активен или виден)
+	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
+		var node = GameManager.resource_manager.nodes[coord]
+		var is_tree_depleted = (node.get("category", "") == "wood" and (node.get("depleted", false) or node.get("amount", 0.0) <= 0.0))
+		if not is_tree_depleted:
+			var spr_name = node.get("sprite_name", "")
+			var cat = node.get("category", "tree")
+			var info = {
+				"coord": coord,
+				"n_data": {
+					"name": spr_name,
+					"category": cat
+				}
+			}
+			_on_nature_object_selected(info, screen_pos)
+			return
 		
 	# 4. Пустая земля / геологический ресурс / вода
 	var biome_info = BiomeDefinitions.get_biome_info(tile_data.get("biome", 0))

@@ -885,6 +885,82 @@ const EVENTS: Dictionary = {
 				}
 			}
 		]
+	},
+	# --------------------------------------------------------------------------
+	# 22. ПОВТОРНЫЙ СПОР И ДОЛГ (HUT-02: «Крыша и долг»)
+	# --------------------------------------------------------------------------
+	"HUT-02": {
+		"id": "HUT-02",
+		"chain_id": "HOUSING_DISPUTE_BRANCH",
+		"title": "Крыша и долг",
+		"category": "Община и кров",
+		"icon": "building_hut",
+		"priority": 92,
+		"once": true,
+		"description": "В доме {building_id} вспыхнул новый конфликт между семьей {actor_0} и жильцами {actor_1}. Повод: {dispute_cause}. Обе стороны требуют суда вождя.",
+		"conditions": {
+			"required_event_resolved": "HUT-01",
+			"min_huts": 1
+		},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Защитить права и покой хозяев дома",
+				"desc": "Хозяева вправе выселить нежелательных жильцов или потребовать повышенный вклад.",
+				"effects_desc": "🏠 Укрепление прав собственника. Жильцы выселяются или подчиняются регламенту.",
+				"consequences": {
+					"evict_tenants": ["{actor_1}"],
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": 15.0}, {"actor_id": "{actor_1}", "delta": -20.0}],
+					"modify_relations": [{"from": "{actor_1}", "to": "{actor_0}", "delta": -30.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "gratitude", "desc": "Вождь утвердил нашу власть над нашим кровом", "permanent": true},
+						{"actor_id": "{actor_1}", "type": "outrage", "desc": "Нас выставили из дома по велению вождя", "permanent": true}
+					]
+				}
+			},
+			{
+				"id": "B",
+				"title": "Защитить жильцов от произвола и выселения",
+				"desc": "Запретить выселение соплеменников без предоставления иной крыши; выделить общинную помощь.",
+				"effects_desc": "🤝 Общинная солидарность. Выселение запрещено, из казны выделяется 5 еды на поддержку мира.",
+				"consequences": {
+					"protect_tenants": true,
+					"modify_resources": {"food": -5.0},
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": -10.0}, {"actor_id": "{actor_1}", "delta": 20.0}],
+					"modify_relations": [{"from": "{actor_1}", "to": "{actor_0}", "delta": 15.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "resentment", "desc": "Вождь ущемил наши хозяйские права в пользу чужаков", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "gratitude", "desc": "Вождь не дал нам замерзнуть на улице", "permanent": true}
+					]
+				}
+			},
+			{
+				"id": "C",
+				"title": "Приказать разделить дом перегородкой за счет общины",
+				"desc": "Вложить материалы и разделить пространство, создав два изолированных очага.",
+				"effects_desc": "🔨 Перепланировка. Расходуется 5 древесины, снимается теснота и напряжение в доме.",
+				"consequences": {
+					"modify_resources": {"wood": -5.0},
+					"partition_hut": true,
+					"modify_loyalty": [{"actor_id": "{actor_0}", "delta": 10.0}, {"actor_id": "{actor_1}", "delta": 10.0}],
+					"modify_relations": [{"from": "{actor_0}", "to": "{actor_1}", "delta": 10.0}, {"from": "{actor_1}", "to": "{actor_0}", "delta": 10.0}],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "peace", "desc": "В доме появилась своя перегородка и отдельный угол", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "peace", "desc": "Теперь у нас отдельный очаг за стеной", "permanent": false}
+					]
+				}
+			},
+			{
+				"id": "D",
+				"title": "Не вмешиваться в домашнюю распрю",
+				"desc": "Пусть сами выясняют отношения кулаками или миром. Вождю некогда следить за каждой ссорой.",
+				"effects_desc": "⚠️ Бездействие. В доме вспыхивает драка, жильцы страдают, взаимная ненависть.",
+				"consequences": {
+					"no_intervention": true,
+					"domestic_brawl": true
+				}
+			}
+		]
 	}
 }
 

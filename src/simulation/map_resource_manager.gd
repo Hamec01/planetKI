@@ -191,6 +191,10 @@ func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 		if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
 			tiles[coord.y][coord.x]["nature_object"] = node["depleted_sprite"]
 			
+		# Если дерево срублено под корень (дерево удаляется с карты по AGENTS.md), удаляем узел
+		if node["category"] == "wood" and node["depleted_sprite"] == "none":
+			nodes.erase(coord)
+			
 	return gathered
 
 func find_plantable_tile(center_coord: Vector2i, max_radius: int) -> Vector2i:
