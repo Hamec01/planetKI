@@ -17,6 +17,7 @@ extends CanvasLayer
 @onready var speed1_btn: Button = $TopBar/MarginContainer/HBoxContainer/SpeedContainer/Speed1Btn
 @onready var speed2_btn: Button = $TopBar/MarginContainer/HBoxContainer/SpeedContainer/Speed2Btn
 @onready var speed4_btn: Button = $TopBar/MarginContainer/HBoxContainer/SpeedContainer/Speed4Btn
+@onready var speed10_btn: Button = $TopBar/MarginContainer/HBoxContainer/SpeedContainer/Speed10Btn
 
 @onready var tile_info_panel: PanelContainer = $TileInfoPanel
 @onready var tile_title_label: Label = $TileInfoPanel/MarginContainer/VBox/Title
@@ -63,6 +64,13 @@ func _ready() -> void:
 	speed1_btn.pressed.connect(func(): GameManager.set_speed(1.0))
 	speed2_btn.pressed.connect(func(): GameManager.set_speed(2.0))
 	speed4_btn.pressed.connect(func(): GameManager.set_speed(4.0))
+	# x10 — одиночный клик; x50 — двойной клик (повторный при уже активной x10)
+	speed10_btn.pressed.connect(func():
+		if GameManager.game_speed >= 10.0 and not GameManager.is_paused:
+			GameManager.set_speed(50.0)
+		else:
+			GameManager.set_speed(10.0)
+	)
 	
 	# Скрываем старый BottomBar если он есть в дереве
 	if has_node("BottomBar"):
@@ -217,6 +225,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				GameManager.set_speed(2.0)
 			KEY_3, KEY_4:
 				GameManager.set_speed(4.0)
+			KEY_5:
+				# 5 — x10, повторное нажатие при x10 → x50
+				if GameManager.game_speed >= 10.0 and not GameManager.is_paused:
+					GameManager.set_speed(50.0)
+				else:
+					GameManager.set_speed(10.0)
 			KEY_B:
 				if rts_build_menu:
 					rts_build_menu.toggle_menu()
@@ -554,7 +568,13 @@ func _on_speed_changed(new_speed: float, is_paused: bool) -> void:
 	pause_btn.modulate = Color(1.4, 0.6, 0.6) if is_paused else Color.WHITE
 	speed1_btn.modulate = Color(1.3, 1.2, 0.8) if (new_speed == 1.0 and not is_paused) else Color.WHITE
 	speed2_btn.modulate = Color(1.3, 1.2, 0.8) if (new_speed == 2.0 and not is_paused) else Color.WHITE
-	speed4_btn.modulate = Color(1.3, 1.2, 0.8) if (new_speed >= 4.0 and not is_paused) else Color.WHITE
+	speed4_btn.modulate = Color(1.3, 1.2, 0.8) if (new_speed == 4.0 and not is_paused) else Color.WHITE
+	speed10_btn.modulate = Color(1.3, 1.2, 0.8) if (new_speed >= 10.0 and not is_paused) else Color.WHITE
+	# Текст кнопки меняется чтобы показать текущий режим
+	if new_speed >= 50.0 and not is_paused:
+		speed10_btn.text = "50x"
+	else:
+		speed10_btn.text = "10x"
 
 func _update_ui() -> void:
 	date_label.text = GameManager.get_formatted_date()
@@ -995,7 +1015,45 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 	ctx_action_btn.disabled = false
 	ctx_action_btn.visible = true
 	
-	# 1. ПЕРВЫМ ДЕЛОМ проверяем здание на клетке (здание всегда имеет приоритет клика над природными объектами)
+	# 0. ПЕРВЫМ ДЕЛОМ проверяем, является ли клетка центром стоянки (Главный костёр поселения)
+	var settlement_at_pos: SettlementData = null
+	for s_val in GameManager.settlements.values():
+		if s_val and s_val.pos == coord:
+			settlement_at_pos = s_val
+			break
+	if settlement_at_pos == null and tile_data.get("settlement_id", "") != "":
+		var s_data = GameManager.settlements.get(tile_data["settlement_id"], null)
+		if s_data and s_data.pos == coord:
+			settlement_at_pos = s_data
+
+	if settlement_at_pos != null:
+		var s = settlement_at_pos
+		ctx_title_lbl.text = "🔥 Главный костёр · %s" % s.name
+		ctx_coords_lbl.text = "Стоянка племени (%d:%d)" % [coord.x, coord.y]
+		ctx_icon_rect.texture = BuildingTextureManager.get_texture("fire_square")
+		if ctx_icon_rect.texture == null:
+			ctx_icon_rect.texture = BuildingTextureManager.get_texture("great_lodge")
+		
+		var pop = s.population
+		var pop_total = pop.get_total_population() if pop else 0
+		var idle_w = s.get_idle_workforce() if s else 0
+		var housing_cap = s.get_housing_capacity() if s else 0
+		var food_amt = s.economy.get_resource("food") if s and s.economy else 0.0
+		var wood_amt = s.economy.get_resource("wood") if s and s.economy else 0.0
+		var loyalty = s.economy.loyalty if s and s.economy else 80.0
+		
+		ctx_desc_lbl.text = "Священный очаг и совет племени.\n👥 Население: %d чел. (свободно: %d) | 🏠 Жильё: %d мест\n🍞 Пища: %d | 🪵 Древесина: %d\n❤️ Лояльность: %d%%" % [
+			pop_total, idle_w, housing_cap, int(food_amt), int(wood_amt), int(loyalty)
+		]
+		ctx_action_btn.text = "🏕 Обзор стоянки и народа"
+		ctx_action_btn.pressed.connect(func():
+			cursor_context_menu.visible = false
+			EventBus.settlement_selected.emit(s)
+		)
+		_position_cursor_menu(screen_pos)
+		return
+
+	# 1. Проверяем здание на клетке
 	if GameManager.tile_buildings.has(coord):
 		var b_data = GameManager.tile_buildings[coord]
 		var b_id = b_data.get("id", "")

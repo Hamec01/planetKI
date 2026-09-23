@@ -264,12 +264,16 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	
 	# От старости
 	for c in citizens:
+		if c.is_ruler:
+			continue
 		if c.age >= 60 and randf() < 0.12:
-			to_kill.append(c.citizen_id)
-			death_reasons.append("преклонный возраст (%s)" % c.name)
+			if not to_kill.has(c.citizen_id):
+				to_kill.append(c.citizen_id)
+				death_reasons.append("преклонный возраст (%s)" % c.name)
 		elif c.age >= 46 and c.cohort == "elder" and randf() < 0.03:
-			to_kill.append(c.citizen_id)
-			death_reasons.append("болезни преклонных лет (%s)" % c.name)
+			if not to_kill.has(c.citizen_id):
+				to_kill.append(c.citizen_id)
+				death_reasons.append("болезни преклонных лет (%s)" % c.name)
 			
 	# От голода
 	if food_ratio < 0.9:
@@ -278,7 +282,7 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 		for i in range(starve_deaths):
 			if citizens.size() > 2:
 				var victim = citizens[randi() % citizens.size()]
-				if not to_kill.has(victim.citizen_id):
+				if not victim.is_ruler and not to_kill.has(victim.citizen_id):
 					to_kill.append(victim.citizen_id)
 					death_reasons.append("голод (%s)" % victim.name)
 		health_index = clampf(health_index - 15.0, 10.0, 100.0)
@@ -289,14 +293,15 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	if season == "Зима" and total_pop > housing_capacity:
 		if randf() < 0.35:
 			for c in citizens:
-				if c.cohort == "child" and not to_kill.has(c.citizen_id):
+				if not c.is_ruler and c.cohort == "child" and not to_kill.has(c.citizen_id):
 					to_kill.append(c.citizen_id)
 					death_reasons.append("зимняя стужа и нехватка крова (%s)" % c.name)
 					break
 					
 	for cid in to_kill:
-		remove_citizen(cid)
-		deaths += 1
+		var removed = remove_citizen(cid)
+		if removed != null:
+			deaths += 1
 		
 	return {
 		"births": births,

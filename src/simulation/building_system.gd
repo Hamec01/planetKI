@@ -345,6 +345,78 @@ const UPGRADES: Dictionary = {
 		"category": "food", "unlock_type": "ordinary",
 		"cost": {"wood": 4}, "prerequisites": [],
 		"effects": {"garden_food": true}
+	},
+
+	# 11. БОЛЬШОЙ ДОМ РОДА (GREAT LODGE) — 10 ВЕТВЯЩИХСЯ УЛУЧШЕНИЙ
+	"great_hearth": {
+		"id": "great_hearth", "building_type": "great_lodge",
+		"name": "🔥 Большой общий очаг", "desc": "Центральный очаг и место вечернего сбора. Настроение +5%, укрепляет связи, вечерние посиделки со сказителями.",
+		"category": "social", "unlock_type": "ordinary",
+		"cost": {"wood": 15, "stone": 5}, "prerequisites": [],
+		"effects": {"mood_bonus": 5.0, "evening_gatherings": true}
+	},
+	"partitions": {
+		"id": "partitions", "building_type": "great_lodge",
+		"name": "🛏 Спальные перегородки", "desc": "Примитивные перегородки из дерева и шкур. Конфликты -20%, сон +10%, приватность семейных зон.",
+		"category": "living", "unlock_type": "ordinary",
+		"cost": {"wood": 12, "hides": 6}, "prerequisites": [],
+		"effects": {"conflict_reduction": 0.20, "sleep_quality": 0.10}
+	},
+	"nursery_corner": {
+		"id": "nursery_corner", "building_type": "great_lodge",
+		"name": "👶 Детский угол", "desc": "Безопасное место внутри дома для совместной заботы о детях несколькими семьями.",
+		"category": "childcare", "unlock_type": "ordinary",
+		"cost": {"wood": 10, "hides": 4}, "prerequisites": [],
+		"effects": {"shared_childcare": true}
+	},
+	"caretaker_quarters": {
+		"id": "caretaker_quarters", "building_type": "great_lodge",
+		"name": "👩🍼 Место опекуна", "desc": "Открывает общественную роль: Опекун детей (следит за детьми до 8 чел., освобождает родителей для работы).",
+		"category": "childcare", "unlock_type": "ordinary",
+		"cost": {"wood": 12, "hides": 6}, "prerequisites": ["nursery_corner"],
+		"effects": {"unlock_role_caretaker": true}
+	},
+	"elders_quarters": {
+		"id": "elders_quarters", "building_type": "great_lodge",
+		"name": "👴 Место старших", "desc": "Особая зона для одиноких стариков: помощь общине, присмотр за очагом и наставления молодым.",
+		"category": "eldercare", "unlock_type": "ordinary",
+		"cost": {"wood": 8, "stone": 8, "hides": 4}, "prerequisites": [],
+		"effects": {"elder_shelter": true}
+	},
+	"knowledge_circle": {
+		"id": "knowledge_circle", "building_type": "great_lodge",
+		"name": "📚 Круг знаний", "desc": "Открывает роль: Хранитель знаний. Передача накопленного жизненного и ремесленного опыта молодым соплеменникам.",
+		"category": "knowledge", "unlock_type": "ordinary",
+		"cost": {"wood": 15, "stone": 10}, "prerequisites": ["elders_quarters"],
+		"effects": {"unlock_role_knowledge_keeper": true}
+	},
+	"clan_totems": {
+		"id": "clan_totems", "building_type": "great_lodge",
+		"name": "🪶 Родовые знаки", "desc": "Стены украшаются шкурами, рогами и символами предков. Лояльность традициям +10, сплоченность +5.",
+		"category": "tradition", "unlock_type": "ordinary",
+		"cost": {"wood": 6, "bones": 4, "hides": 4}, "prerequisites": [],
+		"effects": {"tradition_loyalty": 10.0, "cohesion": 5.0}
+	},
+	"clan_council": {
+		"id": "clan_council", "building_type": "great_lodge",
+		"name": "🗣 Круг рода", "desc": "Открывает роль: Старейшина рода. Разрешение внутренних семейных конфликтов и защита интересов дома.",
+		"category": "governance", "unlock_type": "ordinary",
+		"cost": {"wood": 14, "stone": 6}, "prerequisites": [],
+		"effects": {"unlock_role_clan_elder": true}
+	},
+	"communal_store": {
+		"id": "communal_store", "building_type": "great_lodge",
+		"name": "🧺 Общие запасы", "desc": "Внутренняя кладовая дома для семейного или коллективного распределения еды и припасов.",
+		"category": "storage", "unlock_type": "ordinary",
+		"cost": {"wood": 12}, "prerequisites": [],
+		"effects": {"domestic_storage": 30.0}
+	},
+	"infirmary_corner": {
+		"id": "infirmary_corner", "building_type": "great_lodge",
+		"name": "🩹 Место ухода", "desc": "Лежанки для раненых, больных и рожениц (+15% к восстановлению здоровья, зарождение целительства).",
+		"category": "medicine", "unlock_type": "ordinary",
+		"cost": {"wood": 10, "hides": 6}, "prerequisites": [],
+		"effects": {"healing_speed": 0.15}
 	}
 }
 

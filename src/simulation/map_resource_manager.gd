@@ -133,13 +133,17 @@ func find_available_node(center_coord: Vector2i, category: String, max_radius: i
 			var chunk_k = Vector2i(cx, cy)
 			if not spatial_grid.has(chunk_k):
 				continue
+			var stale_coords: Array[Vector2i] = []
 			for coord in spatial_grid[chunk_k]:
+				if not nodes.has(coord):
+					stale_coords.append(coord)
+					continue
 				var node = nodes[coord]
-				if node["category"] != category:
+				if node.get("category", "") != category:
 					continue
-				if node["depleted"] or node["amount"] <= 0.0:
+				if node.get("depleted", false) or node.get("amount", 0.0) <= 0.0:
 					continue
-				if node["reserved_by"] != "" and node["reserved_by"] != citizen_id:
+				if node.get("reserved_by", "") != "" and node["reserved_by"] != citizen_id:
 					continue
 					
 				var dist = float(abs(coord.x - center_coord.x) + abs(coord.y - center_coord.y))
@@ -147,8 +151,17 @@ func find_available_node(center_coord: Vector2i, category: String, max_radius: i
 					if GameManager.nav_grid.is_tile_walkable(coord):
 						best_dist = dist
 						best_node = node
+			for sc in stale_coords:
+				spatial_grid[chunk_k].erase(sc)
 				
 	return best_node
+
+func remove_node(coord: Vector2i) -> void:
+	if nodes.has(coord):
+		nodes.erase(coord)
+	var chunk_k = Vector2i(int(floor(float(coord.x) / float(CHUNK_SIZE))), int(floor(float(coord.y) / float(CHUNK_SIZE))))
+	if spatial_grid.has(chunk_k):
+		spatial_grid[chunk_k].erase(coord)
 
 func reserve_node(coord: Vector2i, citizen_id: String) -> bool:
 	if not nodes.has(coord):
@@ -180,20 +193,23 @@ func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 	if node["amount"] <= 0.0:
 		node["depleted"] = true
 		node["reserved_by"] = ""
-		# Деревья исчезают насовсем и не вырастают сами по себе без лесопосадки
+		var dep_spr = node.get("depleted_sprite", "none")
 		if node["category"] == "wood":
-			node["regrowth_timer"] = 9999999.0
+			if dep_spr == "stump_fresh":
+				node["regrowth_timer"] = node.get("regrowth_duration", 300.0)
+			else:
+				node["regrowth_timer"] = 9999999.0
 		else:
-			node["regrowth_timer"] = node["regrowth_duration"]
+			node["regrowth_timer"] = node.get("regrowth_duration", 60.0)
 			
-		# Обновляем визуальный спрайт на карте (куст пустеет / дерево срублено под корень -> "none")
+		# Обновляем визуальный спрайт на карте (куст пустеет / дерево срублено под корень -> "none" или "stump_fresh")
 		var tiles = GameManager.planet_data.get("tiles", [])
 		if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
-			tiles[coord.y][coord.x]["nature_object"] = node["depleted_sprite"]
+			tiles[coord.y][coord.x]["nature_object"] = dep_spr
 			
-		# Если дерево срублено под корень (дерево удаляется с карты по AGENTS.md), удаляем узел
-		if node["category"] == "wood" and node["depleted_sprite"] == "none":
-			nodes.erase(coord)
+		# Если спрайт "none", удаляем узел физически из менеджера и пространственной сетки
+		if node["category"] == "wood" and dep_spr == "none":
+			remove_node(coord)
 			
 	return gathered
 
@@ -299,6 +315,29 @@ func update_regrowth(delta: float) -> void:
 				node["reserved_by"] = ""
 				if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
 					tiles[coord.y][coord.x]["nature_object"] = node["original_sprite"]
+
+	# 3. Естественное восстановление пней (P01.10)
+	var cleared_stumps: Array[Vector2i] = []
+	for coord in nodes.keys():
+		if not nodes.has(coord):
+			continue
+		var node = nodes[coord]
+		if node.get("category", "") == "wood" and node.get("depleted", false):
+			# Если на клетке пня построено здание, пень уничтожается безвозвратно
+			if GameManager and GameManager.tile_buildings.has(coord):
+				cleared_stumps.append(coord)
+				continue
+			var timer = float(node.get("regrowth_timer", 300.0)) - delta
+			node["regrowth_timer"] = timer
+			if timer <= 0.0:
+				node["depleted"] = false
+				node["amount"] = node["max_amount"]
+				node["reserved_by"] = ""
+				var orig_sp = node.get("original_sprite", "tree_pine")
+				if coord.y < tiles.size() and coord.x < tiles[0].size():
+					tiles[coord.y][coord.x]["nature_object"] = orig_sp
+	for sc in cleared_stumps:
+		remove_node(sc)
 
 # Сериализация для сохранений
 func serialize() -> Array[Dictionary]:

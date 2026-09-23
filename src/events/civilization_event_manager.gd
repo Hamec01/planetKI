@@ -14,6 +14,7 @@ var event_instances: Dictionary = {}
 var resolved_events: Array[Dictionary] = []
 var next_instance_number: int = 1
 var settlement: RefCounted = null
+var _last_cooldown_day: int = -1  # день последнего уменьшения кулдаунов
 
 signal event_triggered(event_data: Dictionary)
 signal choice_applied(event_id: String, choice_id: String)
@@ -27,17 +28,24 @@ func reset() -> void:
 	resolved_events.clear()
 	next_instance_number = 1
 
-# Ежедневная проверка условий запуска фундаментальных событий
-func process_daily_triggers(current_day: int, total_days: int, settlement: RefCounted) -> void:
+func process_daily_triggers(current_day: int, total_days: int, p_settlement: RefCounted = null) -> void:
+	var cur_settlement = p_settlement
+	if cur_settlement == null and GameManager:
+		cur_settlement = GameManager.get_player_settlement()
+	self.settlement = cur_settlement
+	
 	# Если уже есть активное ожидающее решение событие — не спамим
 	if not active_event.is_empty():
 		return
-		
-	# Уменьшаем кулдауны цепочек
-	for ch in chain_cooldowns.keys():
-		chain_cooldowns[ch] = max(0, chain_cooldowns[ch] - 1)
-		if chain_cooldowns[ch] <= 0:
-			chain_cooldowns.erase(ch)
+
+	# Уменьшаем кулдауны цепочек ТОЛЬКО раз в игровой день
+	var today = GameManager.total_simulation_days if GameManager else total_days
+	if today != _last_cooldown_day:
+		_last_cooldown_day = today
+		for ch in chain_cooldowns.keys():
+			chain_cooldowns[ch] = max(0, chain_cooldowns[ch] - 1)
+			if chain_cooldowns[ch] <= 0:
+				chain_cooldowns.erase(ch)
 			
 	var culture: CultureMemory = GameManager.culture_memory
 	if culture == null:
@@ -62,29 +70,58 @@ func process_daily_triggers(current_day: int, total_days: int, settlement: RefCo
 			continue
 			
 		var conds = ev.get("conditions", {})
-		if _check_event_conditions(conds, total_days, settlement):
+		if _check_event_conditions(conds, total_days, cur_settlement):
 			if ev_id == "HUT-01":
-				var hut_ctx = check_hut_dispute_trigger(settlement)
+				var hut_ctx = check_hut_dispute_trigger(cur_settlement)
 				if hut_ctx.is_empty():
 					continue
 			elif ev_id == "HUT-02":
-				var hut2_ctx = check_hut_02_dispute_trigger(settlement)
+				var hut2_ctx = check_hut_02_dispute_trigger(cur_settlement)
 				if hut2_ctx.is_empty():
+					continue
+			elif ev_id == "WC-01":
+				var wc1_ctx = check_wc_01_trigger(cur_settlement)
+				if wc1_ctx.is_empty():
+					continue
+			elif ev_id == "NPC-FEUD-01":
+				var feud_ctx = check_npc_feud_trigger(cur_settlement)
+				if feud_ctx.is_empty():
+					continue
+				# Глобальный кулдаун на NPC-события — не чаще раза в 30 дней
+				if chain_cooldowns.get("npc_event_global", 0) > 0:
+					continue
+			elif ev_id == "NPC-GOSSIP-01":
+				var gossip_ctx = check_npc_gossip_trigger(cur_settlement)
+				if gossip_ctx.is_empty():
+					continue
+				if chain_cooldowns.get("npc_event_global", 0) > 0:
 					continue
 			eligible.append(ev)
 			
 	if eligible.is_empty():
 		return
 		
-	# Сортируем по приоритету (наивысший в начале)
-	eligible.sort_custom(func(a, b): return a.get("priority", 50) > b.get("priority", 50))
+	# Сортируем по приоритету (строгий строгий порядок без мутации словарей базы данных)
+	eligible.sort_custom(func(a, b): 
+		var p_a = int(a.get("priority", 50))
+		var p_b = int(b.get("priority", 50))
+		if p_a != p_b:
+			return p_a > p_b
+		return String(a.get("id", "")) < String(b.get("id", ""))
+	)
 	
 	var chosen_event = eligible[0]
 	var event_context = {}
 	if chosen_event.get("id", "") == "HUT-01":
-		event_context = check_hut_dispute_trigger(settlement)
+		event_context = check_hut_dispute_trigger(cur_settlement)
 	elif chosen_event.get("id", "") == "HUT-02":
-		event_context = check_hut_02_dispute_trigger(settlement)
+		event_context = check_hut_02_dispute_trigger(cur_settlement)
+	elif chosen_event.get("id", "") == "WC-01":
+		event_context = check_wc_01_trigger(cur_settlement)
+	elif chosen_event.get("id", "") == "NPC-FEUD-01":
+		event_context = check_npc_feud_trigger(cur_settlement)
+	elif chosen_event.get("id", "") == "NPC-GOSSIP-01":
+		event_context = check_npc_gossip_trigger(cur_settlement)
 	trigger_event(chosen_event, event_context)
 
 func check_hut_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
@@ -147,10 +184,27 @@ func check_hut_02_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
 					}
 	return {}
 
+func check_wc_01_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement:
+		return {}
+	if not p_settlement.has_active_woodcutter_camp():
+		return {}
+	var camp = p_settlement.get_active_woodcutter_camp()
+	var b_id = camp.id if camp else ""
+	return {
+		"target_building_id": b_id,
+		"causes": ["Завершение строительства лагеря лесорубов", "Необходимость определить границы порубки"],
+		"context_data": {
+			"camp_id": b_id,
+			"settlement_name": p_settlement.name
+		}
+	}
+
 func _check_event_conditions(conds: Dictionary, total_days: int, settlement: RefCounted) -> bool:
 	if conds.is_empty():
 		return true
-	if conds.has("min_days") and total_days < int(conds["min_days"]):
+	var effective_days = maxf(float(total_days), (GameManager.sim_time_total / 300.0) if GameManager else float(total_days))
+	if conds.has("min_days") and effective_days < float(conds["min_days"]):
 		return false
 	if conds.has("required_event_resolved"):
 		var req_ev = conds["required_event_resolved"]
@@ -216,7 +270,7 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 	instance["causes"] = context.get("causes", instance.get("causes", []))
 	instance["context_data"] = context.get("context_data", instance.get("context_data", {}))
 	
-	# Форматирование шаблонов {key} в заголовке и описании
+	# Форматирование шаблонов {key} в заголовке, описании и вариантах выбора
 	if not context.is_empty() and context.has("context_data"):
 		var c_data = context["context_data"]
 		for key in ["title", "description"]:
@@ -225,6 +279,18 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 				for ctx_k in c_data:
 					txt = txt.replace("{" + ctx_k + "}", str(c_data[ctx_k]))
 				instance[key] = txt
+		# Форматируем тексты вариантов выбора
+		var formatted_choices: Array = []
+		for choice in instance.get("choices", []):
+			var ch: Dictionary = choice.duplicate(true)
+			for field in ["title", "desc", "effects_desc"]:
+				if ch.has(field) and ch[field] is String:
+					var ftxt: String = ch[field]
+					for ctx_k in c_data:
+						ftxt = ftxt.replace("{" + ctx_k + "}", str(c_data[ctx_k]))
+					ch[field] = ftxt
+			formatted_choices.append(ch)
+		instance["choices"] = formatted_choices
 
 	active_event = instance.duplicate(true)
 	event_instances[instance_id] = instance
@@ -234,6 +300,10 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 	var chain_id = instance.get("chain_id", "")
 	if chain_id != "":
 		chain_cooldowns[chain_id] = 10 # 10 дней кулдаун на следующую ступень цепочки
+
+	# Глобальный кулдаун для NPC-событий (Feud/Gossip) — не спамить
+	if template_id in ["NPC-FEUD-01", "NPC-GOSSIP-01"]:
+		chain_cooldowns["npc_event_global"] = 30
 		
 	event_triggered.emit(active_event)
 	if EventBus:
@@ -247,6 +317,8 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	var cur_settlement: RefCounted = settlement
 	if cur_settlement == null:
 		cur_settlement = GameManager.settlements.get(GameManager.player_faction_id + "_settlement", null)
+	if cur_settlement == null and GameManager and not GameManager.settlements.is_empty():
+		cur_settlement = GameManager.settlements.values()[0]
 		
 	var chosen_choice: Dictionary = {}
 	for c in ev.get("choices", []):
@@ -345,6 +417,11 @@ func _resolve_placeholder_str(val: String, ev: Dictionary) -> String:
 
 func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences: Dictionary, settlement: RefCounted) -> void:
 	var pop = settlement.population if settlement and "population" in settlement else null
+	if pop == null and GameManager and not GameManager.settlements.is_empty():
+		for s_cand in GameManager.settlements.values():
+			if s_cand and "population" in s_cand and s_cand.population:
+				pop = s_cand.population
+				break
 	
 	# Отношения между участниками
 	if consequences.has("modify_relations") and pop:
@@ -522,6 +599,115 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 					c.last_status_reason = "Пострадал в домашней драке"
 					c.add_memory("injury", "brawl", b_id, 1.0, "Пострадал в домашней драке из-за спорной крыши", false)
 
+	# Последствия WC-01 (Зоны вырубки леса)
+	if consequences.get("set_logging_zone_near", false) and settlement:
+		var camp = settlement.get_active_woodcutter_camp()
+		var center_tile = camp.pos if camp else settlement.pos
+		var near_tiles: Array[Vector2i] = []
+		if GameManager and GameManager.resource_manager:
+			for coord in GameManager.resource_manager.nodes:
+				var n = GameManager.resource_manager.nodes[coord]
+				if n.get("category", "") == "wood" and not n.get("depleted", false):
+					if maxi(abs(coord.x - center_tile.x), abs(coord.y - center_tile.y)) <= 8:
+						near_tiles.append(coord)
+		settlement.set_logging_zone(near_tiles)
+		if camp:
+			camp.add_history_entry(GameManager.current_year if GameManager else 1, "Утверждена ближняя зона вырубки леса (до 8 клеток)")
+
+	if consequences.get("set_logging_zone_far", false) and settlement:
+		var camp = settlement.get_active_woodcutter_camp()
+		var center_tile = camp.pos if camp else settlement.pos
+		var far_tiles: Array[Vector2i] = []
+		if GameManager and GameManager.resource_manager:
+			for coord in GameManager.resource_manager.nodes:
+				var n = GameManager.resource_manager.nodes[coord]
+				if n.get("category", "") == "wood" and not n.get("depleted", false):
+					var dist = maxi(abs(coord.x - center_tile.x), abs(coord.y - center_tile.y))
+					if dist > 8 and dist <= 24:
+						far_tiles.append(coord)
+		settlement.set_logging_zone(far_tiles)
+		if camp:
+			camp.add_history_entry(GameManager.current_year if GameManager else 1, "Утверждена дальняя зона вырубки леса (ближняя роща сохранена)")
+
+	if consequences.get("set_logging_zone_all", false) and settlement:
+		var camp = settlement.get_active_woodcutter_camp()
+		var all_tiles: Array[Vector2i] = []
+		if GameManager and GameManager.resource_manager:
+			for coord in GameManager.resource_manager.nodes:
+				var n = GameManager.resource_manager.nodes[coord]
+				if n.get("category", "") == "wood" and not n.get("depleted", false):
+					all_tiles.append(coord)
+		settlement.set_logging_zone(all_tiles)
+		if camp:
+			camp.add_history_entry(GameManager.current_year if GameManager else 1, "Объявлена свободная вырубка по всей округе")
+
+	if consequences.get("no_logging_zone", false) and settlement:
+		settlement.logging_zones.clear()
+		var camp = settlement.get_active_woodcutter_camp()
+		if camp:
+			camp.add_history_entry(GameManager.current_year if GameManager else 1, "Вырубка живого леса запрещена вождём")
+
+	# --- ПОСЛЕДСТВИЯ ДЛЯ БОЛЬШОГО ДОМА РОДА (GREAT LODGE) ---
+	var lodge_inst: BuildingInstance = null
+	var target_b_id = ev.get("target_building_id", "")
+	if GameManager and GameManager.building_instances:
+		for bi in GameManager.building_instances.values():
+			if bi and bi.is_great_lodge():
+				if target_b_id != "" and (bi.id == target_b_id or bi.instance_id == target_b_id):
+					lodge_inst = bi
+					break
+				elif lodge_inst == null:
+					lodge_inst = bi
+
+	if lodge_inst != null:
+		if consequences.has("modify_harmony"):
+			var d_harm = float(consequences["modify_harmony"])
+			lodge_inst.household_harmony = clampf(lodge_inst.household_harmony + d_harm, -100.0, 100.0)
+			lodge_inst.add_history_entry(GameManager.current_year if GameManager else 1, "Согласие в роду изменилось на %+d (Итог: %+d)" % [int(d_harm), int(lodge_inst.household_harmony)])
+		if consequences.get("unlock_upgrade_nursery", false):
+			lodge_inst.unlock_upgrade("nursery_corner")
+		if consequences.get("unlock_upgrade_elders", false):
+			lodge_inst.unlock_upgrade("elders_quarters")
+		if consequences.get("unlock_upgrade_knowledge", false):
+			lodge_inst.unlock_upgrade("knowledge_circle")
+		if consequences.get("unlock_upgrade_store", false):
+			lodge_inst.unlock_upgrade("communal_store")
+		if consequences.get("ward_of_lodge", false):
+			var ward_pop = pop
+			if lodge_inst and lodge_inst.settlement_id != "" and GameManager and GameManager.settlements.has(lodge_inst.settlement_id):
+				ward_pop = GameManager.settlements[lodge_inst.settlement_id].population
+			var actor_ids = ev.get("actor_ids", [])
+			if ward_pop:
+				if not actor_ids.is_empty():
+					for act in actor_ids:
+						var c = _find_citizen(ward_pop, _resolve_placeholder_str(str(act), ev))
+						if c:
+							c.is_ward_of_lodge = true
+							c.home_id = lodge_inst.id
+							lodge_inst.add_resident(c.citizen_id, "ward")
+				else:
+					for c in ward_pop.citizens:
+						if c.cohort == "child" and (c.is_ward_of_lodge or c.home_id == "" or c.family_id == "" or c.relationships.is_empty()):
+							c.is_ward_of_lodge = true
+							c.home_id = lodge_inst.id
+							lodge_inst.add_resident(c.citizen_id, "ward")
+		if consequences.get("replace_caretaker", false):
+			lodge_inst.caretaker_id = ""
+			for r_id in lodge_inst.residents:
+				var cand = pop.get_citizen_by_id(r_id) if pop else null
+				if cand and cand.cohort in ["adult", "elder"]:
+					lodge_inst.caretaker_id = cand.citizen_id
+					cand.job_id = "caretaker"
+					break
+
+	if consequences.has("young_skill_boost") and pop:
+		var boost_amt = float(consequences["young_skill_boost"])
+		for c in pop.citizens:
+			if c.age < 30 and c.cohort in ["youth", "adult"]:
+				c.skills["hunting"] = minf(100.0, float(c.skills.get("hunting", 10.0)) + boost_amt)
+				c.skills["woodcutting"] = minf(100.0, float(c.skills.get("woodcutting", 10.0)) + boost_amt)
+				c.skills["survival"] = minf(100.0, float(c.skills.get("survival", 10.0)) + boost_amt)
+
 	# Невмешательство из карточки выбора
 	if consequences.get("no_intervention", false):
 		resolve_without_intervention(ev.get("instance_id", ""))
@@ -611,3 +797,121 @@ func deserialize(data: Dictionary) -> void:
 			next_instance_number += 1
 			active_event = legacy_event
 			event_instances[legacy_event["instance_id"]] = legacy_event
+
+# --- ТРИГГЕР: Личный конфликт двух NPC (NPC-FEUD-01) ---
+# Ищет пару жителей с affinity < -50 — они поссорились публично
+func check_npc_feud_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement or not ("population" in p_settlement):
+		return {}
+	var pop = p_settlement.population
+	if not pop:
+		return {}
+
+	# Ищем пару с максимальной взаимной антипатией
+	var worst_a: CitizenNPC = null
+	var worst_b: CitizenNPC = null
+	var worst_aff: float = -49.0  # порог: только если реально плохо
+
+	for c in pop.citizens:
+		if not c.is_alive or c.cohort == "child":
+			continue
+		for other_id in c.relationships:
+			var aff = c.get_relationship_affinity(other_id)
+			if aff < worst_aff:
+				var other = _find_citizen(pop, other_id)
+				if other and other.is_alive and other.cohort != "child":
+					worst_aff = aff
+					worst_a = c
+					worst_b = other
+
+	if worst_a == null or worst_b == null:
+		return {}
+
+	# Кулдаун: не вызывать одну и ту же пару снова менее чем через 30 дней
+	var feud_key = "feud_%s_%s" % [worst_a.citizen_id, worst_b.citizen_id]
+	if chain_cooldowns.get(feud_key, 0) > 0:
+		return {}
+	chain_cooldowns[feud_key] = 45  # 45 игровых дней = ~1.5 месяца
+
+	worst_a.show_emote("quarrel", 4.0, 3, true)
+	worst_b.show_emote("anger", 4.0, 3, true)
+
+	return {
+		"actor_ids": [worst_a.citizen_id, worst_b.citizen_id],
+		"actor_names": [worst_a.name, worst_b.name],
+		"target_building_id": "",
+		"causes": ["Взаимная антипатия (affinity %.0f)" % worst_aff],
+		"context_data": {
+			"actor_0": worst_a.name,
+			"actor_1": worst_b.name,
+			"affinity": "%.0f" % worst_aff
+		}
+	}
+
+# --- ТРИГГЕР: Сплетня / доносчик (NPC-GOSSIP-01) ---
+# Ищет NPC с высокой склонностью к сплетням (curiosity + low honesty) и жертву
+func check_npc_gossip_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement or not ("population" in p_settlement):
+		return {}
+	var pop = p_settlement.population
+	if not pop or pop.citizens.size() < 4:
+		return {}
+
+	# Ищем сплетника: высокая curiosity + низкая honesty + средняя sociability
+	var gossiper: CitizenNPC = null
+	var best_gossip_score: float = 60.0  # порог
+
+	for c in pop.citizens:
+		if not c.is_alive or c.cohort in ["child"] or c.is_ruler:
+			continue
+		var gossip_score = float(c.traits.get("curiosity", 50.0)) * 0.5 \
+			+ (100.0 - float(c.traits.get("honesty", 50.0))) * 0.5 \
+			+ float(c.traits.get("sociability", 50.0)) * 0.2
+		if gossip_score > best_gossip_score:
+			best_gossip_score = gossip_score
+			gossiper = c
+
+	if gossiper == null:
+		return {}
+
+	# Ищем жертву: кого сплетник недолюбливает (affinity < 0)
+	var target: CitizenNPC = null
+	var worst_aff: float = -1.0
+	for other_id in gossiper.relationships:
+		var aff = gossiper.get_relationship_affinity(other_id)
+		if aff < worst_aff:
+			var other = _find_citizen(pop, other_id)
+			if other and other.is_alive and other.citizen_id != gossiper.citizen_id and not other.is_ruler:
+				worst_aff = aff
+				target = other
+
+	if target == null:
+		# Нет явного врага — ищем кого-то кто просто не знаком
+		for c in pop.citizens:
+			if c != gossiper and c.is_alive and not c.is_ruler and c.cohort != "child":
+				if not gossiper.relationships.has(c.citizen_id):
+					target = c
+					break
+
+	if target == null:
+		return {}
+
+	# Кулдаун: не повторять про одну и ту же пару слишком часто
+	var gossip_key = "gossip_%s_%s" % [gossiper.citizen_id, target.citizen_id]
+	if chain_cooldowns.get(gossip_key, 0) > 0:
+		return {}
+	chain_cooldowns[gossip_key] = 60  # 60 игровых дней = 2 месяца
+
+	gossiper.show_emote("gossip", 4.0, 2, true)
+	target.show_emote("shock", 3.0, 3, true)
+
+	return {
+		"actor_ids": [gossiper.citizen_id, target.citizen_id],
+		"actor_names": [gossiper.name, target.name],
+		"target_building_id": "",
+		"causes": ["Слухи и наговор"],
+		"context_data": {
+			"actor_0": gossiper.name,
+			"actor_1": target.name
+		}
+	}

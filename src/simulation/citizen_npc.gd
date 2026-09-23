@@ -54,6 +54,7 @@ var settlement_id: String = ""
 # --- СЕМЕЙНЫЕ СВЯЗИ, ОТНОШЕНИЯ И ОПЕКА (S07) ---
 var relationships: Dictionary = {} # other_id -> {"type": "spouse"|"parent"|"child"|"sibling"|"guardian"|"ward", "closeness": float, "romance": float, "married": bool}
 var guardian_id: String = "" # ID опекуна для детей/сирот
+var is_ward_of_lodge: bool = false # Опека Большого дома рода над сиротой
 var pregnancy: Dictionary = {} # {"partner_id": String, "progress_sec": float, "gestation_sec": float, "stage": String, "health_risk": float}
 
 # --- ПОЗИЦИОНИРОВАНИЕ И НАВИГАЦИЯ ---
@@ -91,6 +92,7 @@ var hunger: float = 100.0 # 100 = сыт, 0 = умирает от голода
 var energy: float = 100.0 # 100 = бодр, 0 = валится с ног
 var loyalty: float = 85.0
 var experience: Dictionary = {}
+var skills: Dictionary = {}
 
 # --- 4 ВЕКТОРА РАЗВИТИЯ И ЭКИПИРОВКА (PLANETKI v2 / ТЗ РАЗДЕЛЫ 21-32 / P01.2) ---
 # 1. Физическая форма (S: 0..20, E: 0..20, A: 0..20)
@@ -114,23 +116,35 @@ var weapon_skills: Dictionary = {
 var profession_levels: Dictionary = {}
 
 var skill_builder: float:
-	get: return float(experience.get("builder", 0.0))
-	set(val): experience["builder"] = val
+	get: return float(skills.get("builder", experience.get("builder", 0.0)))
+	set(val):
+		skills["builder"] = val
+		experience["builder"] = val
 var skill_woodcutter: float:
-	get: return float(experience.get("woodcutter", 0.0))
-	set(val): experience["woodcutter"] = val
+	get: return float(skills.get("woodcutter", experience.get("woodcutter", 0.0)))
+	set(val):
+		skills["woodcutter"] = val
+		experience["woodcutter"] = val
 var skill_stonecutter: float:
-	get: return float(experience.get("stonecutter", 0.0))
-	set(val): experience["stonecutter"] = val
+	get: return float(skills.get("stonecutter", experience.get("stonecutter", 0.0)))
+	set(val):
+		skills["stonecutter"] = val
+		experience["stonecutter"] = val
 var skill_miner: float:
-	get: return float(experience.get("miner", 0.0))
-	set(val): experience["miner"] = val
+	get: return float(skills.get("miner", experience.get("miner", 0.0)))
+	set(val):
+		skills["miner"] = val
+		experience["miner"] = val
 var skill_gatherer: float:
-	get: return float(experience.get("gatherer", 0.0))
-	set(val): experience["gatherer"] = val
+	get: return float(skills.get("gatherer", experience.get("gatherer", 0.0)))
+	set(val):
+		skills["gatherer"] = val
+		experience["gatherer"] = val
 var skill_hunter: float:
-	get: return float(experience.get("hunter", 0.0))
-	set(val): experience["hunter"] = val
+	get: return float(skills.get("hunter", experience.get("hunter", 0.0)))
+	set(val):
+		skills["hunter"] = val
+		experience["hunter"] = val
 
 # 3. Опыт опасных столкновений (EGP: 0..20) и антифарм история (20 последних)
 var encounter_growth_points: float = 0.0
@@ -200,6 +214,11 @@ func take_damage(amount: float, source_name: String = "") -> bool:
 			if GameManager and GameManager.has_method("trigger_game_over"):
 				GameManager.trigger_game_over("Вождь племени %s погиб от: %s. Племя осталось без предводителя." % [name, killer])
 		return true # Погиб
+	else:
+		if health < 30.0:
+			show_emote("injury", 4.0, 5, true)
+		else:
+			show_emote("pain", 3.0, 4, true)
 	return false
 
 func get_combat_stats() -> Dictionary:
@@ -314,6 +333,13 @@ var talk_partner_id: String = ""
 var speech_bubble: String = ""
 var speech_timer: float = 0.0
 
+# --- ВИЗУАЛЬНЫЕ ОБЛАЧКИ-ЭМОЦИИ И СОСТОЯНИЯ (EMOTES) ---
+var active_emote_id: String = ""
+var emote_timer: float = 0.0
+var emote_max_duration: float = 3.5
+var emote_cooldown: float = 0.0
+var emote_priority: int = 0
+
 # --- ПОНЯТНОЕ ОПИСАНИЕ ДЛЯ ИГРОКА ---
 var last_status_reason: String = "Отдыхает"
 
@@ -335,7 +361,12 @@ func _init(p_id: String = "", p_name: String = "", p_gender: String = "m", p_age
 
 func _pick_initial_appearance() -> void:
 	if appearance_role != "" and appearance_role != "villager_brown_m":
-		return
+		# Валидация: проверяем что сохранённая роль соответствует текущему гендеру и когорте
+		if _is_appearance_valid_for_gender():
+			return
+		# Роль не соответствует — сбрасываем и переназначаем
+		appearance_role = ""
+
 	var pool = []
 	if cohort == "child":
 		pool = ["child_boy_1", "child_boy_2"] if gender == "m" else ["child_girl_1", "child_girl_2"]
@@ -350,6 +381,32 @@ func _pick_initial_appearance() -> void:
 			pool = ["villager_green_f", "villager_red_f", "adult_2", "adult_4"]
 	if not pool.is_empty():
 		appearance_role = pool[seed_val % pool.size()]
+
+# Роли закреплённые за мужским гендером
+const MALE_ROLES: Array = [
+	"villager_brown_m", "villager_blue_m", "adult_1", "adult_3",
+	"teen_boy_1", "teen_boy_2", "child_boy_1", "child_boy_2",
+	"grandpa_staff", "elder_citizen_m"
+]
+# Роли закреплённые за женским гендером
+const FEMALE_ROLES: Array = [
+	"villager_green_f", "villager_red_f", "adult_2", "adult_4",
+	"teen_girl_1", "teen_girl_2", "child_girl_1", "child_girl_2",
+	"grandma", "elder_citizen_f"
+]
+
+func _is_appearance_valid_for_gender() -> bool:
+	if appearance_role == "":
+		return false
+	if gender == "m":
+		# Если роль явно женская — невалидна
+		if FEMALE_ROLES.has(appearance_role):
+			return false
+	else:
+		# Если роль явно мужская — невалидна
+		if MALE_ROLES.has(appearance_role):
+			return false
+	return true
 
 func get_texture() -> Texture2D:
 	if cached_texture != null:
@@ -368,6 +425,7 @@ func set_job(new_job: String) -> void:
 		return
 	job_id = new_job
 	cached_texture = null
+	decision_cooldown = 0.0
 	if state in [State.MOVING_TO_WORK, State.WORKING, State.GATHERING, State.ATTACKING, State.BUTCHERING]:
 		_clear_reservations()
 		state = State.IDLE
@@ -395,7 +453,7 @@ func set_workplace(p_work_id: String, p_coord: Vector2i) -> void:
 	workplace_coord = p_coord
 
 func get_speed() -> float:
-	var spd = base_speed * (0.9 + float(agility_level) * 0.02)
+	var spd = base_speed * (0.9 + float(agility_level) * 0.04)
 	if cohort == "elder":
 		spd *= 0.8
 	elif cohort == "child":
@@ -406,6 +464,11 @@ func get_speed() -> float:
 		spd *= 0.75
 	if health < 40.0:
 		spd *= 0.65
+	# Бонус скорости на протоптанных тропинках (+15%)
+	if GameManager and GameManager.trample_map:
+		var tile_c = Vector2i(int(floor(pos.x / 32.0)), int(floor(pos.y / 32.0)))
+		if GameManager.trample_map.get(tile_c, 0.0) >= 0.2:
+			spd *= 1.15
 	return maxf(6.0, spd)
 
 # --- ЭФФЕКТИВНЫЕ ПАРАМЕТРЫ И ВИТАЛЬНЫЙ МНОЖИТЕЛЬ (P01.2 / ТЗ 4.1) ---
@@ -574,6 +637,110 @@ func clear_speech() -> void:
 	speech_bubble = ""
 	speech_timer = 0.0
 
+func show_emote(p_emote_id: String, duration: float = 3.5, priority: int = 1, force: bool = false) -> void:
+	if p_emote_id == "":
+		clear_emote()
+		return
+	if not force and emote_timer > 0.0 and priority < emote_priority:
+		return
+	active_emote_id = p_emote_id
+	emote_max_duration = maxf(1.0, duration)
+	emote_timer = emote_max_duration
+	emote_priority = priority
+	emote_cooldown = emote_max_duration + randf_range(8.0, 16.0)
+
+func clear_emote() -> void:
+	active_emote_id = ""
+	emote_timer = 0.0
+	emote_priority = 0
+
+func update_emote(delta: float) -> void:
+	if emote_timer > 0.0:
+		emote_timer = maxf(0.0, emote_timer - delta)
+		if emote_timer <= 0.0:
+			active_emote_id = ""
+			emote_priority = 0
+	if emote_cooldown > 0.0:
+		emote_cooldown = maxf(0.0, emote_cooldown - delta)
+
+func check_autonomous_emotes(delta: float, season: String = "Лето") -> void:
+	if emote_timer > 0.0 or emote_cooldown > 0.0:
+		return
+		
+	# 1. Критическая опасность и паника
+	if state == State.FLEEING:
+		show_emote("panic", 3.5, 5)
+		return
+		
+	# 2. Здоровье и ранения
+	if health < 30.0:
+		show_emote("injury", 3.5, 4)
+		return
+	elif health < 60.0:
+		show_emote("pain", 3.0, 4)
+		return
+		
+	# 3. Физиологические потребности
+	if hunger < 20.0:
+		show_emote("hunger", 3.5, 4)
+		return
+	elif energy < 15.0:
+		show_emote("fatigue", 3.0, 3)
+		return
+	elif energy < 30.0 and state == State.SLEEPING:
+		show_emote("sleepy", 3.0, 3)
+		return
+	elif season == "Зима" and home_id == "":
+		if randf() < 0.05:
+			show_emote("cold", 3.5, 3)
+			return
+			
+	# 4. Социальное общение
+	if state == State.TALKING and talk_partner_id != "":
+		var rel = get_relationship(talk_partner_id)
+		if rel.get("married", false) or float(rel.get("romance", 0.0)) >= 20.0:
+			show_emote("romance" if randf() < 0.5 else "love", 3.5, 3)
+			return
+		elif float(rel.get("closeness", 50.0)) >= 75.0:
+			show_emote("sympathy" if randf() < 0.5 else "joy", 3.0, 2)
+			return
+		elif cohort in ["child", "youth"]:
+			show_emote("question" if randf() < 0.5 else "dialog", 3.0, 2)
+			return
+		else:
+			show_emote("dialog" if randf() < 0.6 else "thought", 3.0, 2)
+			return
+			
+	# 5. Особые роли и профессии
+	if job_id == "guard" and state == State.WORKING:
+		if randf() < 0.02:
+			show_emote("observation", 3.0, 2)
+			return
+	elif job_id == "priest" and state == State.WORKING:
+		if randf() < 0.02:
+			show_emote("prayer", 3.5, 2)
+			return
+	elif job_id in ["sage", "elder"] and state == State.WORKING:
+		if randf() < 0.02:
+			show_emote("thought" if randf() < 0.5 else "justice", 3.0, 2)
+			return
+	elif state == State.WORKING:
+		if randf() < 0.005:
+			show_emote("work" if randf() < 0.7 else "idea", 2.5, 1)
+			return
+			
+	# 6. Отдых и настроение
+	if state == State.RESTING:
+		if randf() < 0.03:
+			show_emote("calm" if randf() < 0.6 else "joy", 3.0, 1)
+			return
+			
+	# 7. Недовольство и лояльность
+	if loyalty < 30.0:
+		if randf() < 0.02:
+			show_emote("discontent" if randf() < 0.7 else "rebellion", 3.5, 3)
+			return
+
 func _clear_reservations() -> void:
 	if target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
 		GameManager.resource_manager.release_node(target_coord, citizen_id)
@@ -604,6 +771,11 @@ func update_movement(delta: float) -> bool:
 		var dir = (next_point - pos).normalized()
 		pos += dir * spd * delta
 		facing_dir = dir
+		
+	# Протаптывание тропинки под ногами идущего жителя
+	if GameManager and is_alive:
+		var cur_tile = Vector2i(int(floor(pos.x / 32.0)), int(floor(pos.y / 32.0)))
+		GameManager.add_tile_trample(cur_tile, delta * 0.15)
 		
 	# Обнаружение застревания
 	if pos.distance_to(last_stuck_pos) < 1.0:
@@ -653,7 +825,8 @@ func serialize() -> Dictionary:
 		"hunger": hunger,
 		"energy": energy,
 		"loyalty": loyalty,
-		"experience": experience,
+		"experience": experience.duplicate(),
+		"skills": skills.duplicate(),
 		"last_status_reason": last_status_reason,
 		"strength_xp": strength_xp,
 		"strength_level": strength_level,
@@ -669,13 +842,17 @@ func serialize() -> Dictionary:
 		"equipment": equipment,
 		"relationships": relationships.duplicate(true),
 		"guardian_id": guardian_id,
+		"is_ward_of_lodge": is_ward_of_lodge,
 		"pregnancy": pregnancy.duplicate(),
 		"traits": traits.duplicate(),
 		"memories": memories.duplicate(true),
 		"commitment_timer": commitment_timer,
 		"social_cooldown": social_cooldown,
 		"profession_levels": profession_levels.duplicate(),
-		"equipped_tool": equipped_tool.duplicate(true)
+		"equipped_tool": equipped_tool.duplicate(true),
+		"active_emote_id": active_emote_id,
+		"emote_timer": emote_timer,
+		"emote_max_duration": emote_max_duration
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -702,6 +879,7 @@ func deserialize(data: Dictionary) -> void:
 	settlement_id = data.get("settlement_id", "")
 	relationships = data.get("relationships", {}).duplicate(true)
 	guardian_id = data.get("guardian_id", "")
+	is_ward_of_lodge = bool(data.get("is_ward_of_lodge", false))
 	pregnancy = data.get("pregnancy", {}).duplicate()
 	var loaded_traits = data.get("traits", {})
 	if loaded_traits is Dictionary:
@@ -714,6 +892,9 @@ func deserialize(data: Dictionary) -> void:
 	commitment_timer = float(data.get("commitment_timer", 0.0))
 	social_cooldown = float(data.get("social_cooldown", 0.0))
 	profession_levels = data.get("profession_levels", {}).duplicate()
+	active_emote_id = data.get("active_emote_id", "")
+	emote_timer = float(data.get("emote_timer", 0.0))
+	emote_max_duration = float(data.get("emote_max_duration", 3.5))
 	var p = data.get("pos", [0, 0])
 	pos = Vector2(p[0], p[1])
 	var hp = data.get("home_pos", [0, 0])
@@ -728,7 +909,8 @@ func deserialize(data: Dictionary) -> void:
 	hunger = data.get("hunger", 100.0)
 	energy = data.get("energy", 100.0)
 	loyalty = data.get("loyalty", 85.0)
-	experience = data.get("experience", {})
+	experience = data.get("experience", {}).duplicate()
+	skills = data.get("skills", experience).duplicate()
 	last_status_reason = data.get("last_status_reason", "Отдыхает")
 	strength_xp = data.get("strength_xp", 0.0)
 	strength_level = data.get("strength_level", 0)
@@ -759,6 +941,8 @@ func deserialize(data: Dictionary) -> void:
 	})
 	equipped_tool = data.get("equipped_tool", {}).duplicate(true)
 	cached_texture = null
+	# Валидация appearance_role после загрузки — исправляет несоответствие гендера
+	_pick_initial_appearance()
 
 func sim_aging(sim_delta: float) -> void:
 	if is_ruler:
@@ -766,13 +950,22 @@ func sim_aging(sim_delta: float) -> void:
 	var year_duration = 1800.0
 	if "NPC_YEAR_DURATION" in GameManager:
 		year_duration = GameManager.NPC_YEAR_DURATION
-	age_progress += sim_delta / year_duration
+		
+	# Ускорение взросления:
+	# 0-17 лет (дети и подростки) растут в 4x быстрее (450с на биографический год)
+	# 18+ лет (взрослые) стареют с нормальной базовой скоростью 1x (1800с на год)
+	var age_speed_mult = 1.0
+	if age < 18:
+		age_speed_mult = 4.0
+		
+	age_progress += (sim_delta * age_speed_mult) / year_duration
 	while age_progress >= 1.0:
 		age_progress -= 1.0
 		age += 1
 		_sync_cohort_on_age_change()
 
 func _sync_cohort_on_age_change() -> void:
+	var old_cohort = cohort
 	if age <= 13:
 		cohort = "child"
 	elif age <= 17:
@@ -781,6 +974,11 @@ func _sync_cohort_on_age_change() -> void:
 		cohort = "adult"
 	else:
 		cohort = "elder"
+		
+	if cohort != old_cohort:
+		appearance_role = ""
+		_pick_initial_appearance()
+		cached_texture = null
 
 # --- МЕТОДЫ ОТНОШЕНИЙ, СОЮЗОВ И ОПЕКИ (S07) ---
 func add_relationship(other_id: String, rel_type: String, closeness: float = 50.0, romance: float = 0.0, married: bool = false) -> void:
@@ -854,6 +1052,9 @@ func get_children() -> Array[String]:
 		if relationships[o_id].get("type", "") == "child":
 			result.append(o_id)
 	return result
+
+func is_child_of(parent_id: String) -> bool:
+	return get_parents().has(parent_id)
 
 func is_related_to(other: CitizenNPC) -> bool:
 	if other == null or other.citizen_id == citizen_id:

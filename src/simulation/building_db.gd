@@ -23,9 +23,11 @@ const BUILDINGS: Dictionary = {
 		"category": "housing",
 		"cost": {"wood": 45, "stone": 15},
 		"build_days": 30,
-		"housing": 25,
+		"housing": 35,
+		"comfort_housing": 25,
+		"max_guests": 5,
 		"max_workers": 0,
-		"description": "Просторный длинный дом с очагом. Повышает сплочённость и вмещает 25 жителей."
+		"description": "Первое настоящее общественное и родовое здание. Совместное проживание больших семей, забота о детях и стариках, круг знаний и совет рода."
 	},
 	"hunting_camp": {
 		"id": "hunting_camp",
@@ -256,3 +258,35 @@ static func get_job_id_for_building(b_type: String) -> String:
 		"watchtower": return "guard"
 		"training_grounds": return "warrior"
 		_: return "idle"
+
+const UPGRADES: Dictionary = {
+	"hut": [
+		{"id": "hut_annex", "name": "Пристройка", "cost": {"wood": 10}, "desc": "+2 к вместимости жилья"},
+		{"id": "pantry", "name": "Кладовая", "cost": {"wood": 8}, "desc": "+8 к запасу домашней еды"},
+		{"id": "garden", "name": "Огород", "cost": {"wood": 6, "stone": 2}, "desc": "Домашний огород, +1.0 к комфорту"},
+		{"id": "barn", "name": "Сарай", "cost": {"wood": 12, "stone": 4}, "desc": "Хранение домашнего инвентаря"}
+	],
+	"great_lodge": [
+		{"id": "great_hearth", "name": "Большой общий очаг", "cost": {"wood": 15, "stone": 5}, "desc": "Центральный очаг и место вечернего сбора. Настроение +5%, тепло, сказы стариков."},
+		{"id": "partitions", "name": "Спальные перегородки", "cost": {"wood": 12, "leather": 6}, "desc": "Стены из шкур и дерева. Конфликты -20%, сон +10%, настроение +3, сплочённость -5%."},
+		{"id": "nursery_corner", "name": "Детский угол", "cost": {"wood": 10, "leather": 4}, "desc": "Безопасная зона для детей. Открывает коллективный присмотр за малышами."},
+		{"id": "caretaker_quarters", "name": "Место опекуна", "cost": {"wood": 8, "leather": 4}, "req": "nursery_corner", "desc": "Открывает роль: Опекун детей. Следит за 8 детьми, освобождая родителей (+2-4ч работы)."},
+		{"id": "elders_quarters", "name": "Место старших", "cost": {"wood": 8, "stone": 8, "leather": 4}, "desc": "Особая зона для стариков. Бездомные старики селятся сюда, помогая с детьми и делами."},
+		{"id": "knowledge_circle", "name": "Круг знаний", "cost": {"wood": 10, "stone": 10}, "req": "elders_quarters", "desc": "Открывает роль: Хранитель знаний. Пожилой мастер передаёт реальные навыки молодым."},
+		{"id": "clan_totems", "name": "Родовые знаки", "cost": {"wood": 6, "leather": 4, "bone": 4}, "desc": "Шкуры, рога и тотемы. Традиции +10, сплочённость +5, замкнутость рода."},
+		{"id": "clan_council", "name": "Круг рода", "cost": {"wood": 12, "stone": 6}, "desc": "Открывает роль: Старейшина рода. Решает внутренние споры и представляет дом."},
+		{"id": "communal_store", "name": "Общие запасы", "cost": {"wood": 12}, "desc": "Внутренняя кладовая дома для еды, шкур, одежды и инструмента."},
+		{"id": "infirmary_corner", "name": "Место ухода", "cost": {"wood": 10, "leather": 6}, "desc": "Лежанки для слабых, раненых и рожениц. HP +15%, восстановление +10%."}
+	]
+}
+
+static func get_upgrades_for_building(b_type: String) -> Array:
+	return UPGRADES.get(b_type, [])
+
+static func get_upgrade_info(b_type: String, up_id: String) -> Dictionary:
+	var list = get_upgrades_for_building(b_type)
+	for u in list:
+		if u.get("id", "") == up_id:
+			return u
+	return {}
+

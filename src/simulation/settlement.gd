@@ -29,6 +29,7 @@ var assigned_jobs: Dictionary = {
 	"craftsman": 0,
 	"sage": 0,
 	"priest": 0,
+	"guard": 0,
 	"builder": 1,
 	"warrior": 0
 }
@@ -57,6 +58,25 @@ func set_reserved_zone(zone_id: String, tile_coords: Array[Vector2i]) -> bool:
 			return true
 	reserved_zones.append({"id": zone_id, "tiles": serialized_tiles})
 	return true
+
+# --- ЗОНЫ ВЫРУБКИ ЛЕСА ПОСЕЛЕНИЯ (P01.9: WC-01) ---
+var logging_zones: Array[Vector2i] = []
+
+func has_active_logging_zone() -> bool:
+	return not logging_zones.is_empty() or not priority_harvest_coords.is_empty()
+
+func is_tile_in_logging_zone(coord: Vector2i) -> bool:
+	return logging_zones.has(coord) or priority_harvest_coords.has(coord)
+
+func set_logging_zone(coords: Array[Vector2i]) -> void:
+	logging_zones.assign(coords)
+
+func add_to_logging_zone(coord: Vector2i) -> void:
+	if not logging_zones.has(coord):
+		logging_zones.append(coord)
+
+func remove_from_logging_zone(coord: Vector2i) -> void:
+	logging_zones.erase(coord)
 
 func deposit_food_batch(batch: Dictionary) -> void:
 	if batch.is_empty():
@@ -326,6 +346,274 @@ func init_citizens_on_map() -> void:
 			c.workplace_id = starter_inst.instance_id
 			c.workplace_coord = pos
 	auto_assign_housing()
+	auto_assign_workplaces()
+
+func get_building_instances() -> Array[BuildingInstance]:
+	var list: Array[BuildingInstance] = []
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id:
+				list.append(b)
+	return list
+
+func get_building_instance_by_id(b_id: String) -> BuildingInstance:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.id == b_id:
+				return b
+	return null
+
+func assign_citizen_to_workplace(c: CitizenNPC, b_inst: BuildingInstance) -> bool:
+	if not c or not b_inst:
+		return false
+	var b_def = BuildingDB.get_building(b_inst.type)
+	var max_w = int(b_def.get("max_workers", 0))
+	if max_w <= 0 or b_inst.workers.size() >= max_w:
+		return false
+	
+	var job_id = BuildingDB.get_job_id_for_building(b_inst.type)
+	if job_id == "" or job_id == "idle":
+		return false
+	
+	if c.workplace_id != "" and c.workplace_id != b_inst.id:
+		var prev = get_building_instance_by_id(c.workplace_id)
+		if prev:
+			prev.remove_worker(c.citizen_id)
+			
+	b_inst.add_worker(c.citizen_id)
+	if b_inst.manager_id == "":
+		b_inst.assign_manager(c.citizen_id, c.name)
+		
+	c.set_job(job_id)
+	c.set_workplace(b_inst.id, b_inst.pos)
+	c.decision_cooldown = 0.0
+	c.last_status_reason = "Устроился на работу: %s" % b_def.get("job_name", job_id)
+	
+	sync_assigned_jobs_from_citizens()
+	return true
+
+func unassign_citizen_from_workplace(c: CitizenNPC) -> void:
+	if not c:
+		return
+	if c.workplace_id != "" and GameManager and GameManager.building_instances:
+		for b_inst in GameManager.building_instances.values():
+			if b_inst and b_inst.id == c.workplace_id:
+				b_inst.remove_worker(c.citizen_id)
+				break
+	c.set_job("idle")
+	c.workplace_id = ""
+	c.workplace_coord = Vector2i(-1, -1)
+	sync_assigned_jobs_from_citizens()
+
+func _get_building_workplace_priority(b_inst: BuildingInstance) -> float:
+	var food = economy.get_resource("food") if economy else 100.0
+	var wood = economy.get_resource("wood") if economy else 100.0
+	var stone = economy.get_resource("stone") if economy else 100.0
+	var metal = economy.get_resource("metal") if economy else 100.0
+	
+	match b_inst.type:
+		"hunting_camp":
+			return 100.0 if food < 40.0 else 75.0
+		"foraging_post":
+			return 95.0 if food < 30.0 else 70.0
+		"fishing_spot":
+			return 90.0 if food < 40.0 else 72.0
+		"primitive_field":
+			return 85.0
+		"woodcutter_camp":
+			return 80.0 if wood < 30.0 else 65.0
+		"stone_quarry":
+			return 78.0 if stone < 20.0 else 60.0
+		"ore_pit":
+			return 70.0 if metal < 10.0 else 55.0
+		"craft_workshop", "carpenter_workshop", "pottery_workshop", "forge":
+			return 50.0
+		"watchtower":
+			return 45.0
+		"elders_house":
+			return 40.0
+		"shrine", "cemetery":
+			return 35.0
+		"training_grounds":
+			return 30.0
+		_:
+			return 20.0
+
+func auto_assign_workplaces() -> void:
+	if not population or not GameManager.building_instances:
+		return
+	
+	var active_workplaces: Array[BuildingInstance] = []
+	for b_inst in GameManager.building_instances.values():
+		if b_inst.settlement_id != id:
+			continue
+		var b_def = BuildingDB.get_building(b_inst.type)
+		var max_w = int(b_def.get("max_workers", 0))
+		if max_w <= 0:
+			continue
+		
+		# Очистка погибших или снятых работников
+		for w_idx in range(b_inst.workers.size() - 1, -1, -1):
+			var w_id = b_inst.workers[w_idx]
+			var w_cit = population.find_citizen(w_id)
+			if w_cit == null or not w_cit.is_alive or w_cit.workplace_id != b_inst.id:
+				b_inst.workers.remove_at(w_idx)
+				if b_inst.manager_id == w_id:
+					b_inst.manager_id = ""
+		
+		if b_inst.workers.size() < max_w:
+			active_workplaces.append(b_inst)
+	
+	# Поддерживаем также постройки из списка settlement.buildings, если для них еще нет инстанса
+	if "buildings" in self and buildings is Array:
+		for b_type in buildings:
+			var has_inst = false
+			for inst in active_workplaces:
+				if inst.type == b_type:
+					has_inst = true
+					break
+			if not has_inst and GameManager:
+				var inst_id = b_type + "_" + id + "_" + str(pos.x) + "_" + str(pos.y)
+				var created_inst = BuildingInstance.new(inst_id, b_type, id, pos)
+				GameManager.building_instances[inst_id] = created_inst
+				var b_def = BuildingDB.get_building(b_type)
+				var max_w = int(b_def.get("max_workers", 0))
+				if max_w > 0 and created_inst.workers.size() < max_w and not active_workplaces.has(created_inst):
+					active_workplaces.append(created_inst)
+
+	if active_workplaces.is_empty():
+		return
+	
+	# Сортировка: сначала пустые здания (для немедленного запуска), затем по приоритету отрасли
+	active_workplaces.sort_custom(func(a: BuildingInstance, b: BuildingInstance):
+		var a_def = BuildingDB.get_building(a.type)
+		var b_def = BuildingDB.get_building(b.type)
+		var a_max = int(a_def.get("max_workers", 1))
+		var b_max = int(b_def.get("max_workers", 1))
+		
+		if a.workers.is_empty() and not b.workers.is_empty():
+			return true
+		if not a.workers.is_empty() and b.workers.is_empty():
+			return false
+		
+		var prio_a = _get_building_workplace_priority(a)
+		var prio_b = _get_building_workplace_priority(b)
+		if prio_a != prio_b:
+			return prio_a > prio_b
+		
+		var a_ratio = float(a.workers.size()) / float(a_max)
+		var b_ratio = float(b.workers.size()) / float(b_max)
+		return a_ratio < b_ratio
+	)
+	
+	# 2.5. Сначала привязываем соплеменников с уже установленной профессией к зданиям, если workplace_id еще не задан
+	for b_inst in active_workplaces:
+		var job_id = BuildingDB.get_job_id_for_building(b_inst.type)
+		if job_id == "" or job_id == "idle":
+			continue
+		var b_def = BuildingDB.get_building(b_inst.type)
+		var max_w = int(b_def.get("max_workers", 0))
+		for c in population.citizens:
+			if b_inst.workers.size() >= max_w:
+				break
+			if c.is_alive and not c.is_ruler and c.job_id == job_id and c.workplace_id == "":
+				c.set_workplace(b_inst.id, b_inst.pos)
+				b_inst.add_worker(c.citizen_id)
+				if b_inst.manager_id == "":
+					b_inst.assign_manager(c.citizen_id, c.name)
+
+	# 3. Сбор исключительно незанятых (idle) соплеменников, не занятых уходом за детьми или переноской
+	var idle_citizens: Array[CitizenNPC] = []
+	for c in population.citizens:
+		if c.is_alive and not c.is_ruler and c.cohort in ["adult", "youth"] and (c.job_id in ["idle", ""] and c.workplace_id == ""):
+			if c.task_id == "care_for_child" or c.state in [CitizenNPC.State.WORKING, CitizenNPC.State.CARRYING, CitizenNPC.State.RESTING]:
+				continue
+			idle_citizens.append(c)
+	
+	if idle_citizens.is_empty():
+		return
+	
+	for b_inst in active_workplaces:
+		var b_def = BuildingDB.get_building(b_inst.type)
+		var max_w = int(b_def.get("max_workers", 0))
+		var slots_free = max_w - b_inst.workers.size()
+		if slots_free <= 0:
+			continue
+		
+		var job_id = BuildingDB.get_job_id_for_building(b_inst.type)
+		if job_id == "" or job_id == "idle":
+			continue
+		
+		while slots_free > 0 and not idle_citizens.is_empty():
+			var best_idx = 0
+			var best_score = -9999.0
+			var b_pos_world = GameManager.nav_grid.tile_to_world_center(b_inst.pos) if GameManager.nav_grid else Vector2(b_inst.pos.x * 32.0 + 16.0, b_inst.pos.y * 32.0 + 16.0)
+			
+			for idx in range(idle_citizens.size()):
+				var cit = idle_citizens[idx]
+				var score = 10.0
+				score += float(cit.experience.get(job_id, 0.0)) * 0.5
+				if job_id == "hunter" and cit.traits.has("sharp_eye"):
+					score += 15.0
+				elif job_id in ["quarryman", "miner", "woodcutter"] and cit.traits.has("strong"):
+					score += 15.0
+				elif job_id == "craftsman" and cit.traits.has("inventive"):
+					score += 15.0
+				elif cit.traits.has("hardworking"):
+					score += 8.0
+				var dist = cit.pos.distance_to(b_pos_world)
+				score -= dist * 0.005
+				
+				if score > best_score:
+					best_score = score
+					best_idx = idx
+			
+			var chosen_c = idle_citizens.pop_at(best_idx)
+			assign_citizen_to_workplace(chosen_c, b_inst)
+			slots_free -= 1
+
+func _try_auto_assign_single_citizen(c: CitizenNPC) -> bool:
+	if not c or not c.is_alive or c.is_ruler or not (c.cohort in ["adult", "youth"]):
+		return false
+	if c.task_id == "care_for_child" or c.state in [CitizenNPC.State.WORKING, CitizenNPC.State.CARRYING, CitizenNPC.State.RESTING]:
+		return false
+	if not (c.job_id in ["idle", ""] and c.workplace_id == ""):
+		return false
+	if not GameManager or not GameManager.building_instances:
+		return false
+	
+	var active_workplaces: Array[BuildingInstance] = []
+	for b_inst in GameManager.building_instances.values():
+		if b_inst.settlement_id != id:
+			continue
+		var b_def = BuildingDB.get_building(b_inst.type)
+		var max_w = int(b_def.get("max_workers", 0))
+		if max_w > 0 and b_inst.workers.size() < max_w:
+			active_workplaces.append(b_inst)
+			
+	if active_workplaces.is_empty():
+		return false
+		
+	active_workplaces.sort_custom(func(a: BuildingInstance, b: BuildingInstance):
+		if a.workers.is_empty() and not b.workers.is_empty():
+			return true
+		if not a.workers.is_empty() and b.workers.is_empty():
+			return false
+		var prio_a = _get_building_workplace_priority(a)
+		var prio_b = _get_building_workplace_priority(b)
+		if prio_a != prio_b:
+			return prio_a > prio_b
+		var a_def = BuildingDB.get_building(a.type)
+		var b_def = BuildingDB.get_building(b.type)
+		var a_max = int(a_def.get("max_workers", 1))
+		var b_max = int(b_def.get("max_workers", 1))
+		return (float(a.workers.size()) / float(a_max)) < (float(b.workers.size()) / float(b_max))
+	)
+	
+	for b_inst in active_workplaces:
+		if assign_citizen_to_workplace(c, b_inst):
+			return true
+	return false
 
 func assign_citizen_to_home(c: CitizenNPC, b_inst: BuildingInstance, as_guest: bool = false, lock_player: bool = false) -> bool:
 	if not b_inst or not b_inst.is_residential():
@@ -372,30 +660,124 @@ func auto_assign_housing() -> void:
 		if a.type == "hut" and b.type == "elders_house": return true
 		return false
 	)
-	
+	if residential_buildings.is_empty():
+		for c in population.citizens:
+			c.clear_home()
+			c.last_status_reason = "Бездомный (нет построек для жилья)"
+		return
+
+	var building_map: Dictionary = {}
+	for b in residential_buildings:
+		building_map[b.id] = b
+
+	# 1. Переселение семей/пар/граждан из временного/переполненного elders_house в доступные hut / great_lodge
+	var better_homes: Array[BuildingInstance] = []
+	for b in residential_buildings:
+		if b.type in ["hut", "great_lodge"] and not b.is_locked_by_player and b.has_space_for_resident():
+			better_homes.append(b)
+
+	# Сортируем: сначала наименее заселённые дома — чтобы NPC расходились по разным хижинам
+	better_homes.sort_custom(func(a: BuildingInstance, b_inst: BuildingInstance):
+		return a.residents.size() < b_inst.residents.size()
+	)
+
+	if not better_homes.is_empty():
+		# Сначала расселяем ПАРЫ — каждой паре свой отдельный дом
+		var paired_ids: Array[String] = []
+		for c in population.citizens:
+			if c.is_ruler or paired_ids.has(c.citizen_id):
+				continue
+			if c.spouse_id == "":
+				continue
+			var sp = population.find_citizen(c.spouse_id)
+			if sp == null or paired_ids.has(sp.citizen_id):
+				continue
+
+			# Ищем дом где НЕТ других жильцов (пустой) или минимально заселённый
+			var target_home: BuildingInstance = null
+			for b in better_homes:
+				if b.residents.is_empty() and b.has_space_for_resident():
+					target_home = b
+					break
+			if target_home == null:
+				for b in better_homes:
+					if b.has_space_for_resident():
+						target_home = b
+						break
+			if target_home == null:
+				continue
+
+			var cur_b_c = building_map.get(c.home_id, null)
+			var cur_b_sp = building_map.get(sp.home_id, null)
+			var c_needs_rehouse = (cur_b_c == null or cur_b_c.type == "elders_house" or cur_b_c.is_crowded() or c.is_guest) and (cur_b_c == null or not cur_b_c.is_locked_by_player)
+			var sp_needs_rehouse = (cur_b_sp == null or cur_b_sp.type == "elders_house" or cur_b_sp.is_crowded() or sp.is_guest) and (cur_b_sp == null or not cur_b_sp.is_locked_by_player)
+
+			if not c_needs_rehouse and not sp_needs_rehouse:
+				continue
+
+			assign_citizen_to_home(c, target_home, false)
+			paired_ids.append(c.citizen_id)
+			if target_home.has_space_for_resident():
+				assign_citizen_to_home(sp, target_home, false)
+				paired_ids.append(sp.citizen_id)
+
+			# Несовершеннолетние дети пары — тоже в этот дом
+			for ch in population.citizens:
+				if ch.cohort == "child" and (ch.guardian_id == c.citizen_id or ch.guardian_id == sp.citizen_id or ch.is_child_of(c.citizen_id) or ch.is_child_of(sp.citizen_id)):
+					if target_home.has_space_for_resident() or target_home.has_space_for_guest():
+						assign_citizen_to_home(ch, target_home, not target_home.has_space_for_resident())
+
+			# Обновляем сортировку — этот дом стал занятее
+			better_homes.sort_custom(func(a: BuildingInstance, b_inst: BuildingInstance):
+				return a.residents.size() < b_inst.residents.size()
+			)
+
+		# Теперь расселяем одиночек — каждый в наименее заполненный дом
+		for c in population.citizens:
+			if c.is_ruler or paired_ids.has(c.citizen_id):
+				continue
+			var cur_b = building_map.get(c.home_id, null)
+			var can_rehouse = (cur_b == null or cur_b.type == "elders_house" or cur_b.is_crowded() or c.is_guest) and (cur_b == null or not cur_b.is_locked_by_player)
+			if not can_rehouse:
+				continue
+			# Берём наименее заселённый дом
+			better_homes.sort_custom(func(a: BuildingInstance, b_inst: BuildingInstance):
+				return a.residents.size() < b_inst.residents.size()
+			)
+			for target_home in better_homes:
+				if target_home.has_space_for_resident():
+					assign_citizen_to_home(c, target_home, false)
+					break
+
+	# 2. Проверка и расселение остальных граждан без дома
+	# Сортируем дома по заполненности — чтобы граждане расходились равномерно
+	residential_buildings.sort_custom(func(a: BuildingInstance, b_inst: BuildingInstance):
+		if a.type == "elders_house" and b_inst.type != "elders_house": return false
+		if a.type != "elders_house" and b_inst.type == "elders_house": return true
+		return a.residents.size() < b_inst.residents.size()
+	)
 	for c in population.citizens:
 		var has_valid_home = false
 		if c.home_id != "":
-			for b in residential_buildings:
-				if b.id == c.home_id:
-					has_valid_home = true
-					if not b.residents.has(c.citizen_id) and not b.guests.has(c.citizen_id):
-						if b.has_space_for_resident():
-							b.add_resident(c.citizen_id)
-						elif b.has_space_for_guest():
-							b.add_guest(c.citizen_id)
-							c.is_guest = true
-					break
+			var b = building_map.get(c.home_id, null)
+			if b != null:
+				has_valid_home = true
+				if not b.residents.has(c.citizen_id) and not b.guests.has(c.citizen_id):
+					if b.has_space_for_resident():
+						b.add_resident(c.citizen_id)
+					elif b.has_space_for_guest():
+						b.add_guest(c.citizen_id)
+						c.is_guest = true
 		if has_valid_home:
 			continue
 			
 		var assigned = false
-		if c.family_id != "" or c.spouse_id != "":
+		if c.family_id != "" or c.spouse_id != "" or c.guardian_id != "":
 			for b in residential_buildings:
 				var has_relative = false
 				for r_id in b.residents:
 					var r_cit = population.find_citizen(r_id)
-					if r_cit and (r_cit.family_id == c.family_id or r_cit.citizen_id == c.spouse_id):
+					if r_cit and (r_cit.family_id == c.family_id or r_cit.citizen_id == c.spouse_id or r_cit.citizen_id == c.guardian_id or c.guardian_id == r_cit.citizen_id):
 						has_relative = true
 						break
 				if has_relative and b.has_space_for_resident():
@@ -873,6 +1255,13 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		"settlement_id": id
 	}
 	
+	# Расчистка природного объекта / пня на строительной клетке (P01.10)
+	if GameManager and GameManager.resource_manager and GameManager.resource_manager.nodes.has(target_coord):
+		GameManager.resource_manager.remove_node(target_coord)
+	var tiles = GameManager.planet_data.get("tiles", []) if GameManager and GameManager.planet_data else []
+	if target_coord.y >= 0 and target_coord.y < tiles.size() and target_coord.x >= 0 and target_coord.x < tiles[0].size():
+		tiles[target_coord.y][target_coord.x]["nature_object"] = "none"
+	
 	# Немедленно пробуждаем свободных рабочих и строителей для начала работ
 	if population:
 		for c in population.citizens:
@@ -1090,6 +1479,8 @@ func sim_daily_tick(season: String) -> void:
 	# Удаляем завершенные из очереди
 	for i in range(completed.size() - 1, -1, -1):
 		construction_queue.remove_at(completed[i])
+	if not completed.is_empty():
+		auto_assign_workplaces()
 		
 	# 2. Производство и потребление
 	var prod = calculate_daily_production(season)
@@ -1106,6 +1497,48 @@ func sim_daily_tick(season: String) -> void:
 				if b.is_upgrade_unlocked("hut_garden"):
 					b.food_stockpile = minf(b.food_stockpile_max, b.food_stockpile + 0.5)
 	check_family_private_improvements()
+
+	# 4. Демография: отношения, семейные союзы и зарождение новой жизни (S07 / P01)
+	if population and population.citizens.size() > 1:
+		var eligible_adults: Array[CitizenNPC] = []
+		for c in population.citizens:
+			if c.is_alive and not c.is_ruler and c.cohort in ["adult", "youth"] and c.age >= 18:
+				eligible_adults.append(c)
+		
+		for i in range(eligible_adults.size()):
+			for j in range(i + 1, eligible_adults.size()):
+				var c1: CitizenNPC = eligible_adults[i]
+				var c2: CitizenNPC = eligible_adults[j]
+				if c1.gender != c2.gender and not c1.is_related_to(c2):
+					var shares_home = (c1.home_id != "" and c1.home_id == c2.home_id)
+					var r1 = c1.get_relationship(c2.citizen_id)
+					if not r1.get("married", false):
+						var romance_gain = 8.0 if shares_home else (4.0 if randf() < 0.6 else 0.0)
+						if romance_gain > 0.0:
+							var cur_rom = float(r1.get("romance", 0.0)) + romance_gain
+							c1.add_relationship(c2.citizen_id, r1.get("type", "friend"), 60.0, cur_rom, false)
+							c2.add_relationship(c1.citizen_id, r1.get("type", "friend"), 60.0, cur_rom, false)
+							if cur_rom >= 50.0 and c1.can_marry(c2, marriage_law).get("allowed", false):
+								c1.marry(c2, marriage_law)
+								EventBus.notification_toast.emit("Новый союз", "%s и %s заключили семейный союз" % [c1.name, c2.name], "good")
+								auto_assign_housing()
+
+		# Естественное зарождение новой жизни у супругов
+		for c in population.citizens:
+			if c.is_alive and not c.is_ruler and c.gender == "f" and c.age >= 18 and c.age <= 42:
+				if not c.is_pregnant():
+					var spouses = c.get_spouses()
+					for sp_id in spouses:
+						var spouse = population.find_citizen(sp_id)
+						if spouse and spouse.is_alive and c.health > 40.0 and economy.get_resource("food") >= 3.0:
+							if randf() < 0.12:
+								start_pregnancy(c, spouse)
+								EventBus.notification_toast.emit("Ожидание потомства", "В семье %s и %s ожидается пополнение" % [c.name, spouse.name], "good")
+								break
+
+	# 5. Автономное расселение и распределение незанятых жителей по рабочим местам
+	auto_assign_housing()
+	auto_assign_workplaces()
 
 func sim_monthly_tick(season: String) -> void:
 	var food_ratio = 1.0
@@ -1125,6 +1558,13 @@ func update_citizens(delta: float) -> void:
 		
 	update_food_spoilage(delta)
 	var cur_hour = GameManager.current_hour
+
+	# Обновление Больших домов рода (гармония, группы домохозяйств, опека и наставничество)
+	if GameManager and GameManager.building_instances:
+		for b_inst in GameManager.building_instances.values():
+			if b_inst and b_inst.settlement_id == id and b_inst.is_great_lodge():
+				b_inst.recalculate_household_groups(population)
+				b_inst.update_household_harmony(delta / 600.0, self)
 	
 	for c in population.citizens:
 		# 1. Индивидуальное суточное время
@@ -1133,11 +1573,15 @@ func update_citizens(delta: float) -> void:
 		elif indiv_hour < 0.0: indiv_hour += 24.0
 		var is_night = (indiv_hour >= 22.0 or indiv_hour < 6.0)
 		
-		# 2. Обновление речевого облачка
+		# 2. Обновление речевого облачка и иконки эмоций/состояний
 		if c.speech_timer > 0.0:
 			c.speech_timer -= delta
 			if c.speech_timer <= 0.0:
 				c.speech_bubble = ""
+				
+		c.update_emote(delta)
+		var cur_season = GameManager.get_season() if GameManager else "Лето"
+		c.check_autonomous_emotes(delta, cur_season)
 
 		# 2b. Таймер устойчивости текущего выбора (Hysteresis / Commitment) (S08)
 		if c.commitment_timer > 0.0:
@@ -1318,6 +1762,10 @@ func update_citizens(delta: float) -> void:
 		# Общение двух свободных жителей
 		if c.state == CitizenNPC.State.TALKING:
 			c.action_timer -= delta
+			if c.talk_partner_id != "":
+				var partner = get_citizen_by_id(c.talk_partner_id)
+				if partner:
+					c.facing_dir = (partner.pos - c.pos).normalized()
 			if c.action_timer <= 0.0:
 				c.state = CitizenNPC.State.IDLE
 				c.talk_partner_id = ""
@@ -1457,6 +1905,12 @@ func update_citizens(delta: float) -> void:
 						c.work_timer = 2.5
 						c.last_status_reason = "Помогает родственнику в общем деле"
 						continue
+					elif c.task_id == "place_decoration":
+						_finish_decoration_placement(c)
+						continue
+					elif c.task_id == "cleanup_trash":
+						_finish_trash_cleanup(c)
+						continue
 					elif c.job_id == "forager":
 						c.state = CitizenNPC.State.GATHERING
 						c.work_timer = randf_range(2.0, 3.5)
@@ -1494,24 +1948,42 @@ func update_citizens(delta: float) -> void:
 							var constr_coord = c.target_coord
 							var take_res = ""
 							var take_amt = 0.0
+							var camp = get_active_woodcutter_camp()
 							if GameManager.tile_buildings.has(constr_coord):
 								var b = GameManager.tile_buildings[constr_coord]
 								var req = b.get("materials_required", {})
 								var deliv = b.get("materials_delivered", {})
 								if c.target_id != "" and req.has(c.target_id):
 									var needed = float(req[c.target_id]) - float(deliv.get(c.target_id, 0.0))
-									if needed > 0.0 and economy.get_resource(c.target_id) > 0.0:
+									var wood_in_camp = camp.local_buffer_wood if (camp and c.target_id == "wood") else 0.0
+									var avail = economy.get_resource(c.target_id) + wood_in_camp
+									if needed > 0.0 and avail > 0.0:
 										take_res = c.target_id
-										take_amt = minf(needed, minf(c.max_carry, economy.get_resource(c.target_id)))
+										var want = minf(needed, c.max_carry)
+										var from_econ = minf(want, economy.get_resource(take_res))
+										if from_econ > 0.0:
+											economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
+											take_amt += from_econ
+										if take_amt < want and take_res == "wood" and camp and camp.local_buffer_wood > 0.0:
+											var from_camp = camp.take_wood(want - take_amt)
+											take_amt += from_camp
 								if take_res == "":
 									for r in req:
 										var needed = float(req[r]) - float(deliv.get(r, 0.0))
-										if needed > 0.0 and economy.get_resource(r) > 0.0:
+										var wood_in_camp = camp.local_buffer_wood if (camp and r == "wood") else 0.0
+										var avail = economy.get_resource(r) + wood_in_camp
+										if needed > 0.0 and avail > 0.0:
 											take_res = r
-											take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
+											var want = minf(needed, c.max_carry)
+											var from_econ = minf(want, economy.get_resource(take_res))
+											if from_econ > 0.0:
+												economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
+												take_amt += from_econ
+											if take_amt < want and take_res == "wood" and camp and camp.local_buffer_wood > 0.0:
+												var from_camp = camp.take_wood(want - take_amt)
+												take_amt += from_camp
 											break
 							if take_res != "" and take_amt > 0.0:
-								economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - take_amt)
 								var is_pl = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "test_s")
 								if is_pl:
 									EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -1526,13 +1998,14 @@ func update_citizens(delta: float) -> void:
 							else:
 								c.state = CitizenNPC.State.WAITING
 								c.task_id = ""
-								c.last_status_reason = "Стройка остановлена: нет материалов на складе"
+								c.last_status_reason = "Стройка остановлена: нет материалов"
 								c.decision_cooldown = randf_range(2.0, 4.0)
 							continue
 						elif c.task_id == "fetch_upgrade_materials":
 							var up_coord = c.target_coord
 							var take_res = ""
 							var take_amt = 0.0
+							var camp = get_active_woodcutter_camp()
 							if GameManager.building_instances.has(up_coord):
 								var b_inst = GameManager.building_instances[up_coord]
 								if b_inst and b_inst.has_pending_upgrade():
@@ -1540,18 +2013,35 @@ func update_citizens(delta: float) -> void:
 									var deliv = b_inst.pending_upgrade.get("materials_delivered", {})
 									if c.target_id != "" and req.has(c.target_id):
 										var needed = float(req[c.target_id]) - float(deliv.get(c.target_id, 0.0))
-										if needed > 0.0 and economy.get_resource(c.target_id) > 0.0:
+										var wood_in_camp = camp.local_buffer_wood if (camp and c.target_id == "wood") else 0.0
+										var avail = economy.get_resource(c.target_id) + wood_in_camp
+										if needed > 0.0 and avail > 0.0:
 											take_res = c.target_id
-											take_amt = minf(needed, minf(c.max_carry, economy.get_resource(c.target_id)))
+											var want = minf(needed, c.max_carry)
+											var from_econ = minf(want, economy.get_resource(take_res))
+											if from_econ > 0.0:
+												economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
+												take_amt += from_econ
+											if take_amt < want and take_res == "wood" and camp and camp.local_buffer_wood > 0.0:
+												var from_camp = camp.take_wood(want - take_amt)
+												take_amt += from_camp
 									if take_res == "":
 										for r in req:
 											var needed = float(req[r]) - float(deliv.get(r, 0.0))
-											if needed > 0.0 and economy.get_resource(r) > 0.0:
+											var wood_in_camp = camp.local_buffer_wood if (camp and r == "wood") else 0.0
+											var avail = economy.get_resource(r) + wood_in_camp
+											if needed > 0.0 and avail > 0.0:
 												take_res = r
-												take_amt = minf(needed, minf(c.max_carry, economy.get_resource(r)))
+												var want = minf(needed, c.max_carry)
+												var from_econ = minf(want, economy.get_resource(take_res))
+												if from_econ > 0.0:
+													economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
+													take_amt += from_econ
+												if take_amt < want and take_res == "wood" and camp and camp.local_buffer_wood > 0.0:
+													var from_camp = camp.take_wood(want - take_amt)
+													take_amt += from_camp
 												break
 							if take_res != "" and take_amt > 0.0:
-								economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - take_amt)
 								var is_pl = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "test_s")
 								if is_pl:
 									EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -1566,7 +2056,7 @@ func update_citizens(delta: float) -> void:
 							else:
 								c.state = CitizenNPC.State.WAITING
 								c.task_id = ""
-								c.last_status_reason = "Улучшение остановлено: нет материалов на складе"
+								c.last_status_reason = "Улучшение остановлено: нет материалов"
 								c.decision_cooldown = randf_range(2.0, 4.0)
 							continue
 						elif c.task_id in ["build", "upgrade_work"]:
@@ -1964,6 +2454,7 @@ func update_citizens(delta: float) -> void:
 										c.last_status_reason = "Завершил строительство здания"
 										var b_name = BuildingDB.get_building(b["id"]).get("name", b["id"])
 										EventBus.notification_toast.emit("Стройка завершена", "Построено: %s" % b_name, "good")
+										auto_assign_workplaces()
 										c.state = CitizenNPC.State.IDLE
 										c.task_id = ""
 										c.decision_cooldown = 1.0
@@ -2016,6 +2507,165 @@ func update_citizens(delta: float) -> void:
 			if c.decision_cooldown > 0.0:
 				continue
 				
+			# 000. Вечерние посиделки у костра (18:00 - 21:45)
+			# Свободные жители и рабочие после смены собираются у костра племени, общаются и слушают предания
+			if indiv_hour >= 18.0 and indiv_hour < 21.8 and c.job_id != "guard" and c.cargo_amount == 0.0:
+				var campfire_center = GameManager.nav_grid.tile_to_world_center(pos) if GameManager.nav_grid else Vector2(pos.x * 32.0 + 16, pos.y * 32.0 + 16)
+				var dist_to_fire = c.pos.distance_to(campfire_center)
+				if dist_to_fire > 42.0:
+					var angle = randf_range(0.0, TAU)
+					var sit_radius = randf_range(16.0, 32.0)
+					var target_fire_spot = campfire_center + Vector2(cos(angle), sin(angle)) * sit_radius
+					var f_path = GameManager.nav_grid.find_path(c.pos, target_fire_spot) if GameManager.nav_grid else []
+					if not f_path.is_empty():
+						c.task_id = "evening_campfire"
+						c.target_pos = target_fire_spot
+						c.path = f_path
+						c.path_index = 0
+						c.state = CitizenNPC.State.MOVING_TO_WORK
+						c.last_status_reason = "Идёт к вечернему костру племени"
+						c.decision_cooldown = 1.0
+						continue
+				else:
+					c.state = CitizenNPC.State.RESTING
+					c.work_timer = randf_range(6.0, 12.0)
+					c.ongoing_task_kind = "evening_campfire"
+					c.commitment_timer = c.work_timer
+					c.last_status_reason = "Греется и общается у костра"
+					c.facing_dir = (campfire_center - c.pos).normalized()
+					c.loyalty = minf(100.0, c.loyalty + 0.08)
+					c.energy = minf(100.0, c.energy + 4.0)
+					if randf() < 0.3:
+						var emotes = ["hearth", "dialog", "joy", "praise", "wave", "sing"]
+						c.show_emote(emotes[randi() % emotes.size()], 3.0, 1)
+					continue
+					
+			# 000a2. Вечерние посиделки у очага Большого дома рода (18:00 - 22:00)
+			if indiv_hour >= 18.0 and indiv_hour < 22.0 and c.cargo_amount == 0.0 and c.home_id != "":
+				var lodge_inst: BuildingInstance = null
+				if GameManager and GameManager.building_instances:
+					for bi in GameManager.building_instances.values():
+						if bi and bi.id == c.home_id and bi.is_great_lodge() and bi.is_upgrade_unlocked("great_hearth"):
+							lodge_inst = bi
+							break
+				if lodge_inst != null:
+					var lodge_pos = GameManager.nav_grid.tile_to_world_center(lodge_inst.pos) if GameManager.nav_grid else Vector2(lodge_inst.pos.x * 32.0 + 16, lodge_inst.pos.y * 32.0 + 16)
+					if c.pos.distance_to(lodge_pos) > 28.0:
+						var l_path = GameManager.nav_grid.find_path(c.pos, lodge_pos) if GameManager.nav_grid else []
+						if not l_path.is_empty():
+							c.task_id = "lodge_hearth_gathering"
+							c.target_pos = lodge_pos
+							c.path = l_path
+							c.path_index = 0
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.last_status_reason = "Идёт к общему очагу Большого дома"
+							c.decision_cooldown = 1.0
+							continue
+					else:
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(6.0, 10.0)
+						c.ongoing_task_kind = "lodge_hearth"
+						c.commitment_timer = c.work_timer
+						c.facing_dir = (lodge_pos - c.pos).normalized()
+						c.loyalty = minf(100.0, c.loyalty + 0.12)
+						c.energy = minf(100.0, c.energy + 5.0)
+						if c.cohort == "elder":
+							c.last_status_reason = "Рассказывает родовые предания у очага"
+							if randf() < 0.4:
+								c.show_emote("storytelling", 3.5, 1)
+						else:
+							c.last_status_reason = "Греется и слушает предания у очага рода"
+							if randf() < 0.3:
+								c.show_emote("dialog", 3.0, 1)
+						continue
+
+			# 000b. Дети играют в поселении и общаются со сверстниками (08:00 - 18:00)
+			if c.cohort == "child" and c.cargo_amount == 0.0 and indiv_hour >= 8.0 and indiv_hour < 18.0:
+				var campfire_center = GameManager.nav_grid.tile_to_world_center(pos) if GameManager.nav_grid else Vector2(pos.x * 32.0 + 16, pos.y * 32.0 + 16)
+				var play_angle = randf_range(0.0, TAU)
+				var play_radius = randf_range(14.0, 46.0)
+				var play_pos = campfire_center + Vector2(cos(play_angle), sin(play_angle)) * play_radius
+				var p_path = GameManager.nav_grid.find_path(c.pos, play_pos) if GameManager.nav_grid else []
+				if not p_path.is_empty() and randf() < 0.6:
+					c.task_id = "playing"
+					c.target_pos = play_pos
+					c.path = p_path
+					c.path_index = 0
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.last_status_reason = "Играет и резвится в лагере"
+					c.decision_cooldown = randf_range(3.0, 6.0)
+					continue
+				else:
+					c.state = CitizenNPC.State.RESTING
+					c.work_timer = randf_range(3.0, 6.0)
+					c.last_status_reason = "Играет со сверстниками"
+					if randf() < 0.4:
+						var play_emotes = ["game", "joy", "idea", "curiosity"]
+						c.show_emote(play_emotes[randi() % play_emotes.size()], 2.5, 1)
+					continue
+				
+			# 000c. Специальные социальные роли Большого дома рода (Опекун, Хранитель знаний, Старейшина)
+			var assigned_lodge: BuildingInstance = null
+			if GameManager and GameManager.building_instances:
+				for bi in GameManager.building_instances.values():
+					if bi and bi.is_great_lodge() and (bi.caretaker_id == c.citizen_id or bi.knowledge_keeper_id == c.citizen_id or bi.clan_elder_id == c.citizen_id):
+						assigned_lodge = bi
+						break
+
+			# Роль 1: Опекун детей Большого дома рода (07:00 - 15:00)
+			if (c.job_id == "caretaker" or (assigned_lodge != null and assigned_lodge.caretaker_id == c.citizen_id)) and indiv_hour >= 7.0 and indiv_hour < 15.0 and c.cargo_amount == 0.0:
+				c.state = CitizenNPC.State.WORKING
+				c.work_timer = randf_range(3.0, 5.0)
+				c.ongoing_task_kind = "childcare"
+				c.commitment_timer = c.work_timer
+				if indiv_hour < 8.3:
+					c.last_status_reason = "Собирает детей Большого дома"
+				elif indiv_hour < 10.0:
+					c.last_status_reason = "Проводит игры и развивающие занятия с детьми"
+					if randf() < 0.35: c.show_emote("game", 3.0, 1)
+				elif indiv_hour < 12.0:
+					c.last_status_reason = "Вывел детей рода на прогулку"
+				elif indiv_hour < 13.0:
+					c.last_status_reason = "Кормит детей у очага"
+				else:
+					c.last_status_reason = "Организует дневной отдых детей"
+				# Развитие навыков детей под опекой
+				if assigned_lodge != null:
+					for child_id in assigned_lodge.residents:
+						var child_npc = population.get_citizen_by_id(child_id)
+						if child_npc != null and child_npc.cohort == "child":
+							child_npc.skills["speech"] = minf(100.0, float(child_npc.skills.get("speech", 10.0)) + 0.05)
+							child_npc.skills["survival"] = minf(100.0, float(child_npc.skills.get("survival", 10.0)) + 0.03)
+				continue
+
+			# Роль 2: Хранитель знаний (10:00 - 17:00)
+			if (c.job_id == "knowledge_keeper" or (assigned_lodge != null and assigned_lodge.knowledge_keeper_id == c.citizen_id)) and indiv_hour >= 10.0 and indiv_hour < 17.0 and c.cargo_amount == 0.0:
+				c.state = CitizenNPC.State.WORKING
+				c.work_timer = randf_range(4.0, 6.0)
+				c.ongoing_task_kind = "teaching"
+				c.commitment_timer = c.work_timer
+				c.last_status_reason = "Обучает молодых ремеслу и мудрости в Круге знаний"
+				if randf() < 0.35: c.show_emote("book_01", 3.0, 1)
+				if assigned_lodge != null:
+					for young_id in assigned_lodge.residents:
+						if young_id != c.citizen_id:
+							var young_npc = population.get_citizen_by_id(young_id)
+							if young_npc != null and young_npc.age < 30:
+								assigned_lodge.transfer_knowledge(young_npc, delta * 2.0)
+				continue
+
+			# Роль 3: Старейшина рода (09:00 - 18:00)
+			if (c.job_id == "clan_elder" or (assigned_lodge != null and assigned_lodge.clan_elder_id == c.citizen_id)) and indiv_hour >= 9.0 and indiv_hour < 18.0 and c.cargo_amount == 0.0:
+				c.state = CitizenNPC.State.WORKING
+				c.work_timer = randf_range(3.0, 5.0)
+				c.ongoing_task_kind = "clan_council"
+				c.commitment_timer = c.work_timer
+				c.last_status_reason = "Разрешает споры и укрепляет согласие рода"
+				if randf() < 0.3: c.show_emote("handshake", 3.0, 1)
+				if assigned_lodge != null:
+					assigned_lodge.household_harmony = minf(100.0, assigned_lodge.household_harmony + 0.15)
+				continue
+
 			# 00. Уход за маленьким ребёнком (S07: физическая занятость опекуна)
 			if c.cohort in ["adult", "elder"] and c.cargo_amount == 0.0 and c.job_id != "guard":
 				var needs_care_child: CitizenNPC = null
@@ -2260,7 +2910,7 @@ func update_citizens(delta: float) -> void:
 				if c.cargo_amount > 0.0:
 					c.state = CitizenNPC.State.CARRYING
 					var camp_lead = get_active_woodcutter_camp()
-					if camp_lead and c.task_id == "deposit_to_camp":
+					if camp_lead and c.task_id == "deposit_to_camp" and not camp_lead.is_buffer_full():
 						var camp_p = GameManager.nav_grid.tile_to_world_center(camp_lead.pos) if GameManager.nav_grid else Vector2(camp_lead.pos.x * 32.0 + 16, camp_lead.pos.y * 32.0 + 16)
 						c.path = GameManager.nav_grid.find_path(c.pos, camp_p) if GameManager.nav_grid else []
 						c.path_index = 0
@@ -2269,7 +2919,8 @@ func update_citizens(delta: float) -> void:
 						var dest_p = _get_storage_pos(c)
 						c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
 						c.path_index = 0
-						c.last_status_reason = "Несёт %d дров на склад" % int(c.cargo_amount)
+						c.task_id = ""
+						c.last_status_reason = "Несёт %d дров на склад поселения" % int(c.cargo_amount)
 					if GameManager.task_service and c.task_instance_id != "":
 						GameManager.task_service.set_delivering(c.task_instance_id)
 					continue
@@ -2297,8 +2948,8 @@ func update_citizens(delta: float) -> void:
 						c.decision_cooldown = randf_range(2.0, 4.0)
 						continue
 
-				# Проверяем заполненность буфера лагеря: если полон, помогаем переносить на склад или ждём
-				if camp and camp.is_buffer_full():
+				# Проверяем заполненность буфера лагеря: если буфер накоплен (>= 20.0), помогаем переносить на склад
+				if camp and camp.local_buffer_wood >= 20.0:
 					var take_amt = camp.take_wood(c.max_carry)
 					if take_amt > 0.0:
 						c.cargo_type = "wood"
@@ -2308,13 +2959,15 @@ func update_citizens(delta: float) -> void:
 						var s_pos = _get_storage_pos(c)
 						c.path = GameManager.nav_grid.find_path(c.pos, s_pos) if GameManager.nav_grid else []
 						c.path_index = 0
-						c.last_status_reason = "Буфер полон: несёт %d дров из лагеря на склад" % int(take_amt)
+						c.last_status_reason = "Буфер накоплен: несёт %d дров из лагеря на склад" % int(take_amt)
 						continue
-					else:
-						c.state = CitizenNPC.State.WAITING
-						c.last_status_reason = "Буфер лагеря лесорубов заполнен"
-						c.decision_cooldown = randf_range(2.0, 4.0)
-						continue
+
+				# Проверяем наличие разрешённой зоны вырубки (P01.9: WC-01)
+				if not has_active_logging_zone():
+					c.state = CitizenNPC.State.WAITING
+					c.last_status_reason = "Не знаю, где разрешено рубить лес"
+					c.decision_cooldown = randf_range(2.0, 4.0)
+					continue
 					
 				# Проверяем наличие Лагеря лесорубов и улучшения на посадку леса
 				var can_plant = false
@@ -2351,12 +3004,31 @@ func update_citizens(delta: float) -> void:
 							chosen_tree = p_node
 							break
 				
-				# 2. Обычная заготовка: поиск зрелого дерева если нет приоритетных
+				# 2. Обычная заготовка: поиск зрелого дерева ТОЛЬКО в разрешенной зоне вырубки
 				var tree = chosen_tree
 				if tree.is_empty() and GameManager.resource_manager:
-					tree = GameManager.resource_manager.find_available_node(pos, "wood", 24, c.citizen_id)
-					if tree.is_empty():
-						tree = GameManager.resource_manager.find_available_node(pos, "wood", 48, c.citizen_id)
+					if not logging_zones.is_empty():
+						var best_dist = 999999.0
+						var best_node = {}
+						for z_coord in logging_zones:
+							var z_node = GameManager.resource_manager.nodes.get(z_coord, {})
+							if not z_node.is_empty() and z_node.get("category", "") == "wood" and not z_node.get("depleted", false) and z_node.get("amount", 0.0) > 0.0:
+								if z_node.get("reserved_by", "") == "" or z_node.get("reserved_by", "") == c.citizen_id:
+									var d = c.pos.distance_squared_to(z_node["pos"])
+									if d < best_dist:
+										best_dist = d
+										best_node = z_node
+						if not best_node.is_empty():
+							tree = best_node
+						elif priority_harvest_coords.is_empty():
+							c.state = CitizenNPC.State.WAITING
+							c.last_status_reason = "Нет допустимых деревьев в зоне вырубки"
+							c.decision_cooldown = randf_range(3.0, 5.0)
+							continue
+					else:
+						tree = GameManager.resource_manager.find_available_node(pos, "wood", 24, c.citizen_id)
+						if tree.is_empty():
+							tree = GameManager.resource_manager.find_available_node(pos, "wood", 48, c.citizen_id)
 				if not tree.is_empty():
 					var t_path = GameManager.nav_grid.find_path(c.pos, tree["pos"]) if GameManager.nav_grid else []
 					if t_path.is_empty():
@@ -2560,6 +3232,11 @@ func update_citizens(delta: float) -> void:
 				c.last_status_reason = "Идёт к месту служения (%s)" % _get_job_display_name(c.job_id)
 				c.decision_cooldown = 1.0
 				continue
+				
+			# 8b. Особая логика для Строителя
+			if c.job_id == "builder" and c.cohort in ["youth", "adult", "elder"]:
+				_try_assign_construction_task(c)
+				continue
 
 			# 9. Если есть другая назначенная работа и житель трудоспособен
 			if c.job_id != "idle" and c.cohort in ["youth", "adult", "elder"]:
@@ -2572,11 +3249,11 @@ func update_citizens(delta: float) -> void:
 				c.decision_cooldown = 1.0
 			else:
 				# 10. Свободные трудоспособные жители помогают на стройках в первую очередь!
-				if c.cohort in ["youth", "adult"] and c.job_id == "idle" and not construction_queue.is_empty():
-					if _try_assign_construction_task(c):
+				if c.cohort in ["youth", "adult"] and (c.job_id in ["idle", ""] or c.workplace_id == ""):
+					if not construction_queue.is_empty() and _try_assign_construction_task(c):
 						continue
 
-				# 10a. Свободные трудоспособные жители переносят древесину из лагеря лесорубов на склад
+				# 10a. Свободные трудоспособные жители переносят древесину из лагеря лесорубов на склад при накоплении буфера
 				if c.cohort in ["youth", "adult"] and c.job_id == "idle":
 					var camp_idle = get_active_woodcutter_camp()
 					if camp_idle and camp_idle.local_buffer_wood >= 10.0:
@@ -2592,7 +3269,19 @@ func update_citizens(delta: float) -> void:
 							c.last_status_reason = "Несёт %d дров из лагеря на склад" % int(take_amt)
 							continue
 
+				# 10b. Автоматическое устройство на работу в действующие здания (каменоломни, охотники, шахты, мастерские и др.)
+				if c.cohort in ["youth", "adult"] and (c.job_id in ["idle", ""] and c.workplace_id == ""):
+					if _try_auto_assign_single_citizen(c):
+						c.decision_cooldown = 0.0
+						continue
+
 				# 11. Свободные жители, дети и старики (Этап D)
+				# 10c. Личные украшения поселения: кусты, таблички, скамейки, идолы, мусор, уборка
+				if c.cohort in ["adult", "youth", "elder"] and c.cargo_amount == 0.0 and c.energy > 30.0 and indiv_hour >= 9.0 and indiv_hour < 18.0:
+					_try_personal_decoration_action(c)
+					if c.state != CitizenNPC.State.IDLE and c.state != CitizenNPC.State.WAITING:
+						continue
+
 				var partner = _find_chat_partner(c)
 				if partner != null and randf() < 0.40:
 					_start_social_dialog(c, partner)
@@ -2644,6 +3333,7 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 	var missing_warehouse_res = ""
 
 	# 2. Поиск доставки материалов для всех строек в очереди (не зависаем на первом проекте!)
+	var camp = get_active_woodcutter_camp()
 	for item in construction_queue:
 		var q_c = item.get("coord", Vector2i(-1, -1))
 		if q_c != Vector2i(-1, -1) and GameManager.tile_buildings.has(q_c):
@@ -2657,22 +3347,34 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 					var needed = float(req[r]) - (already_delivered + in_transit)
 					if needed > 0.0:
 						var in_storage = economy.get_resource(r)
-						if in_storage >= 1.0:
-							var storage_p = _get_storage_pos(c)
-							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
+						var wood_in_camp = camp.local_buffer_wood if (camp and r == "wood") else 0.0
+						if in_storage >= 1.0 or wood_in_camp >= 1.0:
+							var fetch_p = _get_storage_pos(c)
+							var is_from_camp = false
+							if in_storage < 1.0 and wood_in_camp >= 1.0 and camp:
+								fetch_p = GameManager.nav_grid.tile_to_world_center(camp.pos) if GameManager.nav_grid else Vector2(camp.pos.x * 32.0 + 16, camp.pos.y * 32.0 + 16)
+								is_from_camp = true
+							elif wood_in_camp >= 10.0 and camp:
+								fetch_p = GameManager.nav_grid.tile_to_world_center(camp.pos) if GameManager.nav_grid else Vector2(camp.pos.x * 32.0 + 16, camp.pos.y * 32.0 + 16)
+								is_from_camp = true
+							
+							var p_path = GameManager.nav_grid.find_path(c.pos, fetch_p) if GameManager.nav_grid else []
 							if p_path.is_empty():
 								continue
-							c.target_pos = storage_p
+							c.target_pos = fetch_p
 							c.target_coord = q_c
 							c.target_id = r
 							c.task_id = "fetch_materials"
 							c.path = p_path
 							c.path_index = 0
 							c.state = CitizenNPC.State.MOVING_TO_WORK
-							c.last_status_reason = "Идёт на склад за стройматериалами (%s)" % r
+							if is_from_camp:
+								c.last_status_reason = "Идёт в лагерь лесорубов за деревом для стройки"
+							else:
+								c.last_status_reason = "Идёт на склад за стройматериалами (%s)" % r
 							c.decision_cooldown = 0.8
 							if GameManager.task_service:
-								var tid = GameManager.task_service.create_task("haul_materials", b.get("id", ""), q_c, storage_p)
+								var tid = GameManager.task_service.create_task("haul_materials", b.get("id", ""), q_c, fetch_p)
 								GameManager.task_service.assign_actor(tid, c.citizen_id)
 								c.task_instance_id = tid
 							return true
@@ -2725,19 +3427,31 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 					var needed = float(req[r]) - (already_delivered + in_transit)
 					if needed > 0.0:
 						var in_storage = economy.get_resource(r)
-						if in_storage >= 1.0:
-							var storage_p = _get_storage_pos(c)
-							var p_path = GameManager.nav_grid.find_path(c.pos, storage_p) if GameManager.nav_grid else []
+						var wood_in_camp = camp.local_buffer_wood if (camp and r == "wood") else 0.0
+						if in_storage >= 1.0 or wood_in_camp >= 1.0:
+							var fetch_p = _get_storage_pos(c)
+							var is_from_camp = false
+							if in_storage < 1.0 and wood_in_camp >= 1.0 and camp:
+								fetch_p = GameManager.nav_grid.tile_to_world_center(camp.pos) if GameManager.nav_grid else Vector2(camp.pos.x * 32.0 + 16, camp.pos.y * 32.0 + 16)
+								is_from_camp = true
+							elif wood_in_camp >= 10.0 and camp:
+								fetch_p = GameManager.nav_grid.tile_to_world_center(camp.pos) if GameManager.nav_grid else Vector2(camp.pos.x * 32.0 + 16, camp.pos.y * 32.0 + 16)
+								is_from_camp = true
+							
+							var p_path = GameManager.nav_grid.find_path(c.pos, fetch_p) if GameManager.nav_grid else []
 							if p_path.is_empty():
 								continue
-							c.target_pos = storage_p
+							c.target_pos = fetch_p
 							c.target_coord = b_inst.pos
 							c.target_id = r
 							c.task_id = "fetch_upgrade_materials"
 							c.path = p_path
 							c.path_index = 0
 							c.state = CitizenNPC.State.MOVING_TO_WORK
-							c.last_status_reason = "Идёт на склад за материалами для улучшения (%s)" % r
+							if is_from_camp:
+								c.last_status_reason = "Идёт в лагерь лесорубов за деревом для улучшения"
+							else:
+								c.last_status_reason = "Идёт на склад за материалами для улучшения (%s)" % r
 							c.decision_cooldown = 0.8
 							return true
 						else:
@@ -2823,56 +3537,250 @@ func _get_cargo_for_job(job: String) -> String:
 		_: return ""
 
 func _find_chat_partner(citizen: CitizenNPC) -> CitizenNPC:
-	if citizen.social_cooldown > 0.0 or not construction_queue.is_empty():
+	if citizen.social_cooldown > 0.0:
 		return null
+	if citizen.job_id != "idle" and citizen.cohort in ["youth", "adult"]:
+		return null
+	
+	var best_partner: CitizenNPC = null
+	var best_score: float = -9999.0
+	
 	for other in population.citizens:
-		if other != citizen and other.social_cooldown <= 0.0 and other.state == CitizenNPC.State.IDLE and other.pos.distance_to(citizen.pos) < 28.0:
-			return other
-	return null
+		if other == citizen:
+			continue
+		if other.social_cooldown > 0.0:
+			continue
+		if not (other.job_id == "idle" or other.cohort in ["child", "elder"]):
+			continue
+		if not other.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
+			continue
+		if other.pos.distance_to(citizen.pos) >= 70.0:
+			continue
+		
+		# Скоринг: предпочитаем тех, кого знаем и к кому есть чувства
+		var score = 0.0
+		var aff = citizen.get_relationship_affinity(other.citizen_id)
+		score += aff * 0.5  # знакомые предпочтительнее
+
+		# Высокая общительность тянется к людям
+		score += (float(citizen.traits.get("sociability", 50.0)) - 50.0) * 0.1
+
+		# Ненавидящие — не стремятся, но могут поссориться
+		if aff < -40.0:
+			score -= 30.0 + (float(citizen.traits.get("temper", 20.0)) - 50.0) * 0.3
+
+		# Дети и старики интереснее для empathy-персонажей
+		if other.cohort in ["child", "elder"] and float(citizen.traits.get("empathy", 50.0)) > 60.0:
+			score += 15.0
+
+		if score > best_score:
+			best_score = score
+			best_partner = other
+	
+	return best_partner
 
 func _start_social_dialog(c1: CitizenNPC, c2: CitizenNPC) -> void:
 	c1.facing_dir = (c2.pos - c1.pos).normalized()
 	c2.facing_dir = (c1.pos - c2.pos).normalized()
 	c1.state = CitizenNPC.State.TALKING
 	c2.state = CitizenNPC.State.TALKING
-	c1.action_timer = 3.0
-	c2.action_timer = 3.0
+	c1.action_timer = 4.5
+	c2.action_timer = 4.5
+	c1.social_cooldown = randf_range(15.0, 30.0)
+	c2.social_cooldown = randf_range(15.0, 30.0)
 	c1.talk_partner_id = c2.citizen_id
 	c2.talk_partner_id = c1.citizen_id
-	
-	var phrases = [
-		"Славная погода сегодня!",
-		"В лесу полно дичи и ягод.",
-		"Запасы племени растут!",
-		"Огонь очага греет душу.",
-		"Предки хранят наше племя."
-	]
-	var ph = phrases[randi() % phrases.size()]
-	c1.shout(ph, 3.0)
+
+	# --- Умные диалоги по чертам, отношениям и воспоминаниям ---
+	var aff = c1.get_relationship_affinity(c2.citizen_id)
+	var ph1: String
+	var ph2: String
+	var emote1: String = "dialog"
+	var emote2: String = "dialog"
+
+	# Враги / антипатия
+	if aff < -35.0:
+		var hostile1 = _pick_phrase(c1, [
+			"Держись подальше от меня, %s." % c2.name,
+			"С тобой я не хочу говорить.",
+			"Ты знаешь, что я о тебе думаю.",
+			"Зачем ты подошёл ко мне?",
+		])
+		var hostile2 = _pick_phrase(c2, [
+			"Взаимно. Не навязывайся.",
+			"Я тоже помню всё, что ты сделал.",
+			"Мы можем не разговаривать.",
+			"Ты мне не нравишься, %s." % c1.name,
+		])
+		ph1 = hostile1
+		ph2 = hostile2
+		emote1 = "anger" if randf() < 0.5 else "disgust"
+		emote2 = "discontent" if randf() < 0.5 else "skepticism"
+		# Негатив усиливается от встречи
+		c1.modify_relationship(c2.citizen_id, -3.0, 0.0)
+		c2.modify_relationship(c1.citizen_id, -3.0, 0.0)
+		c1.add_memory("social", c2.citizen_id, "", 0.4, "Неприятный разговор с %s" % c2.name)
+		c2.add_memory("social", c1.citizen_id, "", 0.4, "Неприятный разговор с %s" % c1.name)
+
+	# Близкие / супруги / друзья
+	elif aff >= 50.0 or c1.spouse_id == c2.citizen_id:
+		var warm1 = _pick_phrase_by_trait(c1, c2, "warm")
+		var warm2 = _pick_phrase_by_trait(c2, c1, "warm")
+		ph1 = warm1
+		ph2 = warm2
+		emote1 = "sympathy" if randf() < 0.6 else "joy"
+		emote2 = "sympathy" if randf() < 0.6 else "calm"
+		c1.modify_relationship(c2.citizen_id, 2.0, 1.0)
+		c2.modify_relationship(c1.citizen_id, 2.0, 1.0)
+
+	# Нейтральное знакомство
+	else:
+		ph1 = _pick_phrase_by_trait(c1, c2, "neutral")
+		ph2 = _pick_phrase_by_trait(c2, c1, "neutral")
+		emote1 = "dialog"
+		emote2 = "thought" if randf() < 0.3 else "dialog"
+		c1.modify_relationship(c2.citizen_id, 1.0, 0.0)
+		c2.modify_relationship(c1.citizen_id, 1.0, 0.0)
+
+	# Воспоминания: если c1 помнит что-то плохое о c2 — может упомянуть
+	if c1.has_memory_of(c2.citizen_id, "injury") or c1.has_memory_of(c2.citizen_id, "disappointment"):
+		if randf() < 0.4:
+			ph1 = "Я ещё не забыл, что ты сделал, %s." % c2.name
+			emote1 = "suspicion"
+
+	# Gossiping: любопытные / общительные сплетничают
+	var gossip_chance = (float(c1.traits.get("sociability", 50.0)) + float(c1.traits.get("curiosity", 50.0))) / 200.0
+	if randf() < gossip_chance * 0.4 and not population.citizens.is_empty():
+		var subject = _pick_gossip_subject(c1, c2)
+		if subject != "":
+			ph1 = subject
+			emote1 = "gossip"
+
+	c1.shout(ph1, 4.5)
+	c2.shout(ph2, 4.5)
+	c1.show_emote(emote1, 3.5, 2)
+	c2.show_emote(emote2, 3.5, 2)
 	c1.last_status_reason = "Беседует с " + c2.name
-	c2.last_status_reason = "Слушает " + c1.name
-	
-	# Романтические отношения и брачные союзы (S07: строго 18+ лет, дети исключены)
+	c2.last_status_reason = "Беседует с " + c1.name
+
+	# --- Романтика и брак (S07) ---
 	if c1.age >= 18 and c2.age >= 18 and not c1.is_related_to(c2):
 		if c1.gender != c2.gender:
 			var r1 = c1.get_relationship(c2.citizen_id)
-			var r_romance = float(r1.get("romance", 0.0)) + 15.0
+			var r_romance = float(r1.get("romance", 0.0)) + 20.0
 			c1.add_relationship(c2.citizen_id, r1.get("type", "friend"), 60.0, r_romance, r1.get("married", false))
 			c2.add_relationship(c1.citizen_id, r1.get("type", "friend"), 60.0, r_romance, r1.get("married", false))
-			
-			# Возможность заключения брака при взаимных чувствах
+
 			if r_romance >= 50.0 and not r1.get("married", false):
 				if c1.can_marry(c2, marriage_law).get("allowed", false):
 					c1.marry(c2, marriage_law)
-					c1.shout("Мы решили быть вместе!", 3.5)
+					c1.shout("Мы решили быть вместе!", 4.0)
+					c2.shout("Мы связали наши судьбы!", 4.0)
+					c1.show_emote("marriage", 4.0, 4)
+					c2.show_emote("marriage", 4.0, 4)
 					EventBus.notification_toast.emit("Новый союз", "%s и %s заключили союз" % [c1.name, c2.name], "good")
-			
-			# Возможность зарождения новой жизни у супругов
+					auto_assign_housing()
+
 			var female_partner = c1 if c1.gender == "f" else c2
 			var male_partner = c2 if c1.gender == "f" else c1
 			if female_partner.get_spouses().has(male_partner.citizen_id) and not female_partner.is_pregnant():
-				if female_partner.age >= 18 and female_partner.age <= 42 and randf() < 0.15:
+				if female_partner.age >= 18 and female_partner.age <= 42 and randf() < 0.25:
 					start_pregnancy(female_partner, male_partner)
+
+# Выбор фразы по одной черте личности (для случайного выбора)
+func _pick_phrase(c: CitizenNPC, pool: Array) -> String:
+	if pool.is_empty():
+		return "..."
+	# Используем seed персонажа + случайность для детерминированного, но живого выбора
+	return pool[(c.seed_val + randi()) % pool.size()]
+
+# Умный выбор фразы по типу разговора и чертам говорящего
+func _pick_phrase_by_trait(speaker: CitizenNPC, listener: CitizenNPC, mode: String) -> String:
+	var diligence = float(speaker.traits.get("diligence", 50.0))
+	var tradition = float(speaker.traits.get("tradition", 50.0))
+	var empathy = float(speaker.traits.get("empathy", 50.0))
+	var bravery = float(speaker.traits.get("bravery", 50.0))
+	var curiosity = float(speaker.traits.get("curiosity", 50.0))
+	var sociability = float(speaker.traits.get("sociability", 50.0))
+	var temper = float(speaker.traits.get("temper", 20.0))
+	var honesty = float(speaker.traits.get("honesty", 50.0))
+
+	if mode == "warm":
+		if speaker.spouse_id == listener.citizen_id:
+			return ["Рад видеть тебя, %s." % listener.name,
+					"Как ты сегодня, %s?" % listener.name,
+					"Я думал о тебе весь день.",
+					"Вместе нам всё по плечу."][randi() % 4]
+		if empathy > 65.0:
+			return ["Как ты себя чувствуешь?",
+					"Если тебе нужна помощь — я рядом.",
+					"Рад тебя видеть, %s." % listener.name][randi() % 3]
+		if tradition > 65.0:
+			return ["Предки хранят наш очаг и наши дружбы.",
+					"Мы из одного рода — это крепкая связь.",
+					"Старые друзья — самые надёжные."][randi() % 3]
+		if sociability > 65.0:
+			return ["Как дела? Давно не разговаривали!",
+					"Хорошо, что встретились.",
+					"Всегда рад поболтать с тобой, %s." % listener.name][randi() % 3]
+		return ["Рад видеть тебя.",
+				"Всё хорошо у тебя?",
+				"Держимся вместе."][randi() % 3]
+
+	# Нейтральный разговор
+	if diligence > 65.0:
+		return ["Работы не убавляется — я в деле.",
+				"Лучше трудиться, чем сидеть без дела.",
+				"Запасы сами себя не соберут."][randi() % 3]
+	if curiosity > 65.0:
+		return ["Ты слышал, что происходит?",
+				"Интересно, что будет дальше с племенем.",
+				"Я всё думаю, как бы улучшить наш лагерь."][randi() % 3]
+	if tradition > 65.0:
+		return ["Предки хранят наш огонь.",
+				"Так жили наши деды — и мы не хуже.",
+				"Нельзя забывать старые обычаи."][randi() % 3]
+	if temper > 65.0:
+		return ["Надоело всё, если честно.",
+				"Не лезь ко мне сегодня.",
+				"Что тебе нужно?"][randi() % 3]
+	if bravery > 65.0:
+		return ["Видел медведя у опушки — не испугался.",
+				"Самое время для новых вылазок.",
+				"Опасность меня не пугает."][randi() % 3]
+	if honesty > 75.0:
+		return ["Скажу прямо: нам нужно больше еды.",
+				"Если честно, мне нравится здесь.",
+				"Не буду лукавить — нелегко нам приходится."][randi() % 3]
+
+	# Универсальные нейтральные
+	var general = [
+		"Славная погода сегодня.",
+		"В лесу полно дичи.",
+		"Запасы племени растут.",
+		"Огонь очага греет душу.",
+		"Как у тебя дела?",
+		"Нужно держаться вместе.",
+		"Предки хранят наше племя.",
+	]
+	return general[randi() % general.size()]
+
+# Сплетня: говорящий упоминает третьего персонажа
+func _pick_gossip_subject(speaker: CitizenNPC, _listener: CitizenNPC) -> String:
+	if not population:
+		return ""
+	# Ищем кого-то кого знает говорящий с заметной репутацией
+	for other in population.citizens:
+		if other == speaker or other == _listener:
+			continue
+		var aff = speaker.get_relationship_affinity(other.citizen_id)
+		if aff < -30.0:
+			return "Скажу тебе — %s мне совсем не нравится." % other.name
+		if aff > 60.0 and other.job_id != "idle":
+			return "%s работает лучше всех в поселении." % other.name
+		if other.cohort == "elder" and float(speaker.traits.get("tradition", 50.0)) > 60.0:
+			return "Старейшина %s — мудрый человек." % other.name
+	return ""
 
 func _find_job_work_target(c: CitizenNPC) -> Vector2:
 	var tiles = GameManager.planet_data.get("tiles", [])
@@ -2923,35 +3831,32 @@ func _find_hunting_camp_pos(c: CitizenNPC) -> Vector2:
 		for coord in GameManager.tile_buildings.keys():
 			var b = GameManager.tile_buildings[coord]
 			if b is Dictionary and b.get("id", "") == "hunting_camp":
-				if GameManager.nav_grid:
+				if GameManager.nav_grid and coord is Vector2i:
 					return GameManager.nav_grid.tile_to_world_center(coord)
 	if GameManager.building_instances:
-		for coord in GameManager.building_instances.keys():
-			var b = GameManager.building_instances[coord]
-			if b and "type" in b and b.type == "hunting_camp":
+		for b in GameManager.building_instances.values():
+			if b and "type" in b and b.type == "hunting_camp" and b.settlement_id == id:
 				if GameManager.nav_grid:
-					return GameManager.nav_grid.tile_to_world_center(coord)
+					return GameManager.nav_grid.tile_to_world_center(b.pos)
 	return c.home_pos
 
 func _find_craftsman_workshop_pos(c: CitizenNPC) -> Vector2:
 	if c.workplace_coord != Vector2i(-1, -1) and GameManager.nav_grid:
 		return GameManager.nav_grid.tile_to_world_center(c.workplace_coord)
 	if GameManager.building_instances:
-		for coord in GameManager.building_instances.keys():
-			var b = GameManager.building_instances[coord]
-			if b and "type" in b and b.type in ["carpenter_workshop", "forge", "craftsman_workshop"]:
+		for b in GameManager.building_instances.values():
+			if b and "type" in b and b.type in ["craft_workshop", "carpenter_workshop", "pottery_workshop", "forge", "craftsman_workshop"] and b.settlement_id == id:
 				if GameManager.nav_grid:
-					return GameManager.nav_grid.tile_to_world_center(coord)
+					return GameManager.nav_grid.tile_to_world_center(b.pos)
 	return c.home_pos
 
 func _get_storage_pos(c: CitizenNPC) -> Vector2:
 	# Склад поселения: Хижина старейшины, амбар или центр стоянки
 	if GameManager.building_instances:
-		for coord in GameManager.building_instances.keys():
-			var b = GameManager.building_instances[coord]
-			if b and "type" in b and b.type in ["granary", "elders_house"]:
+		for b in GameManager.building_instances.values():
+			if b and "type" in b and b.type in ["granary", "elders_house"] and b.settlement_id == id:
 				if GameManager.nav_grid:
-					return GameManager.nav_grid.tile_to_world_center(coord)
+					return GameManager.nav_grid.tile_to_world_center(b.pos)
 	return c.home_pos
 
 func _get_animal_display_name(type_id: String) -> String:
@@ -3008,6 +3913,7 @@ func serialize() -> Dictionary:
 		"next_batch_id": _next_batch_id,
 		"marriage_law": marriage_law,
 		"reserved_zones": reserved_zones.duplicate(true),
+		"logging_zones": logging_zones.map(func(c): return [c.x, c.y]),
 		"active_relocations": active_relocations.duplicate(true),
 		"equipment_stockpile": equipment_stockpile.duplicate(),
 		"construction_queue": queue_serialized,
@@ -3035,6 +3941,10 @@ func deserialize(data: Dictionary) -> void:
 	for zone in data.get("reserved_zones", []):
 		if zone is Dictionary:
 			reserved_zones.append(zone.duplicate(true))
+	logging_zones.clear()
+	for p in data.get("logging_zones", []):
+		if p is Array and p.size() >= 2:
+			logging_zones.append(Vector2i(p[0], p[1]))
 	active_relocations = data.get("active_relocations", {}).duplicate(true)
 	if data.has("construction_queue"):
 		construction_queue.clear()
@@ -3064,3 +3974,325 @@ func deserialize(data: Dictionary) -> void:
 					q_obj["materials_required"] = tb["materials_required"].duplicate()
 	if data.has("population") and population:
 		population.deserialize(data["population"])
+
+func get_settlement_footpaths() -> Array[Dictionary]:
+	var footpaths: Array[Dictionary] = []
+	var hub_world = GameManager.nav_grid.tile_to_world_center(pos) if GameManager.nav_grid else Vector2(pos.x * 32.0 + 16, pos.y * 32.0 + 16)
+	
+	# Сбор всех точек зданий поселения
+	var building_coords: Array[Vector2i] = []
+	if GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and not building_coords.has(b.pos):
+				building_coords.append(b.pos)
+	if GameManager.tile_buildings:
+		for b_coord in GameManager.tile_buildings:
+			var tb = GameManager.tile_buildings[b_coord]
+			if tb.get("settlement_id", "") == id and not building_coords.has(b_coord):
+				building_coords.append(b_coord)
+				
+	# 1. Тропинки от каждого дома/мастерской к главному костру поселения
+	for b_c in building_coords:
+		var b_world = GameManager.nav_grid.tile_to_world_center(b_c) if GameManager.nav_grid else Vector2(b_c.x * 32.0 + 16, b_c.y * 32.0 + 16)
+		var p_pts = GameManager.nav_grid.find_path(b_world, hub_world) if GameManager.nav_grid else []
+		if p_pts.size() >= 2:
+			footpaths.append({"points": p_pts, "type": "hub"})
+		else:
+			footpaths.append({"points": [b_world, hub_world], "type": "hub"})
+			
+	# 2. Тропинки между соседними хижинами (в радиусе до 5.5 клеток)
+	for i in range(building_coords.size()):
+		for j in range(i + 1, building_coords.size()):
+			var c1 = building_coords[i]
+			var c2 = building_coords[j]
+			var d = Vector2(c1.x - c2.x, c1.y - c2.y).length()
+			if d <= 5.5:
+				var w1 = GameManager.nav_grid.tile_to_world_center(c1) if GameManager.nav_grid else Vector2(c1.x * 32.0 + 16, c1.y * 32.0 + 16)
+				var w2 = GameManager.nav_grid.tile_to_world_center(c2) if GameManager.nav_grid else Vector2(c2.x * 32.0 + 16, c2.y * 32.0 + 16)
+				var p_pts = GameManager.nav_grid.find_path(w1, w2) if GameManager.nav_grid else []
+				if p_pts.size() >= 2:
+					footpaths.append({"points": p_pts, "type": "neighbor"})
+				else:
+					footpaths.append({"points": [w1, w2], "type": "neighbor"})
+					
+	return footpaths
+
+
+# ==============================================================================
+# ЛИЧНЫЕ УКРАШЕНИЯ И ПОВЕДЕНИЕ NPC В ПОСЕЛЕНИИ
+# Таблички, посаженные кусты, скамейки, идолы, мусор, уборка мусора
+# ==============================================================================
+
+# Типы декораций и их вероятности по чертам личности
+const DECORATION_DEFS: Dictionary = {
+	"sign":         {"tradition": 40.0, "empathy": 30.0,  "min_days": 5,  "label": "повесил табличку у дома"},
+	"bush_planted": {"diligence": 35.0, "tradition": 25.0, "min_days": 3,  "label": "посадил куст у тропинки"},
+	"bench":        {"empathy": 45.0,  "sociability": 40.0, "min_days": 8,  "label": "смастерил скамейку"},
+	"flowers":      {"empathy": 30.0,  "curiosity": 25.0,  "min_days": 2,  "label": "высадил цветы"},
+	"totem_small":  {"tradition": 60.0, "bravery": 35.0,   "min_days": 12, "label": "соорудил небольшого идола"},
+	"idol":         {"tradition": 75.0, "pride": 50.0,     "min_days": 20, "label": "соорудил идола предков"},
+	"trash":        {"diligence": -1.0, "temper": 55.0,    "min_days": 0,  "label": "бросил мусор"},  # бросает мусор — низкое усердие
+}
+
+# Радиус поиска клеток рядом с домом для размещения декорации
+const DECO_SEARCH_RADIUS: int = 2
+# Максимум декораций на поселение (кроме мусора)
+const MAX_DECORATIONS_PER_SETTLEMENT: int = 24
+# Базовый шанс (за один тик решений) что NPC займётся украшением/мусором
+const DECO_BASE_CHANCE: float = 0.025
+
+func _try_personal_decoration_action(c: CitizenNPC) -> void:
+	if not GameManager:
+		return
+	if randf() > DECO_BASE_CHANCE:
+		return
+
+	var day = GameManager.total_simulation_days
+
+	# --- 1. Проверка: может ли NPC убрать чужой мусор ---
+	# Аккуратные или добрые NPC замечают мусор рядом с домом и убирают его
+	var empathy_val = float(c.traits.get("empathy", 50.0))
+	var diligence_val = float(c.traits.get("diligence", 50.0))
+	if empathy_val > 55.0 or diligence_val > 60.0:
+		var trash_coord = _find_trash_near(c)
+		if trash_coord != Vector2i(-1, -1):
+			_cleanup_trash(c, trash_coord, day)
+			return
+
+	# --- 2. Мусорящий NPC: низкое усердие + высокий темперамент ---
+	var temper_val = float(c.traits.get("temper", 20.0))
+	if diligence_val < 30.0 and temper_val > 50.0 and randf() < 0.35:
+		_place_trash(c, day)
+		return
+
+	# --- 3. Размещение позитивной декорации около дома ---
+	# Ограничение: не больше MAX_DECORATIONS_PER_SETTLEMENT не-мусорных объектов
+	var deco_count = 0
+	for deco in GameManager.tile_decorations.values():
+		if deco.get("settlement_id", "") == id and deco.get("type", "") != "trash":
+			deco_count += 1
+	if deco_count >= MAX_DECORATIONS_PER_SETTLEMENT:
+		return
+
+	# NPC не будет ставить декорацию если рядом уже есть его декорация
+	if c.home_coord == Vector2i(-1, -1):
+		return
+	for adj_coord in _get_adjacent_deco_coords(c.home_coord, DECO_SEARCH_RADIUS):
+		var existing = GameManager.tile_decorations.get(adj_coord, {})
+		if existing.get("placer_id", "") == c.citizen_id:
+			return # уже украсил — достаточно
+
+	# Выбор типа декорации на основе черт личности
+	var best_type = ""
+	var best_score = -1.0
+	for deco_type in DECORATION_DEFS:
+		if deco_type == "trash":
+			continue
+		var def = DECORATION_DEFS[deco_type]
+		if day < def.get("min_days", 0):
+			continue
+		var score = 0.0
+		for trait_name in def:
+			if trait_name == "min_days" or trait_name == "label":
+				continue
+			score += maxf(0.0, float(c.traits.get(trait_name, 50.0)) - 40.0) * 0.01
+		score += randf() * 0.3
+		if score > best_score:
+			best_score = score
+			best_type = deco_type
+
+	if best_type == "" or best_score < 0.05:
+		return
+
+	# Поиск свободной клетки рядом с домом
+	var target_coord = _find_free_deco_coord(c.home_coord)
+	if target_coord == Vector2i(-1, -1):
+		return
+
+	# NPC идёт к выбранной клетке
+	var target_pos = GameManager.nav_grid.tile_to_world_center(target_coord) if GameManager.nav_grid else Vector2(target_coord.x * 32.0 + 16, target_coord.y * 32.0 + 16)
+	var deco_path = GameManager.nav_grid.find_path(c.pos, target_pos) if GameManager.nav_grid else []
+	if deco_path.is_empty():
+		return
+
+	c.task_id = "place_decoration"
+	c.target_coord = target_coord
+	c.target_pos = target_pos
+	c.path = deco_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.action_timer = randf_range(3.0, 6.0)
+	# Сохраняем тип декорации в task_instance_id как флаг
+	c.task_instance_id = best_type
+	c.last_status_reason = DECORATION_DEFS[best_type].get("label", "украшает поселение")
+	c.decision_cooldown = randf_range(30.0, 90.0)
+
+func _finish_decoration_placement(c: CitizenNPC) -> void:
+	# Вызывается из update_citizens когда NPC достиг цели task_id == "place_decoration"
+	var coord = c.target_coord
+	var deco_type = c.task_instance_id
+	if coord == Vector2i(-1, -1) or deco_type == "":
+		c.task_id = ""
+		c.task_instance_id = ""
+		c.state = CitizenNPC.State.IDLE
+		return
+
+	# Проверяем что клетка ещё свободна
+	if GameManager.tile_decorations.has(coord):
+		c.task_id = ""
+		c.task_instance_id = ""
+		c.state = CitizenNPC.State.IDLE
+		return
+
+	var variant = randi() % 3
+	GameManager.tile_decorations[coord] = {
+		"type": deco_type,
+		"placer_id": c.citizen_id,
+		"placer_name": c.name,
+		"settlement_id": id,
+		"placed_day": GameManager.total_simulation_days,
+		"variant": variant
+	}
+
+	c.show_emote("build", 2.5, 1)
+	c.task_id = ""
+	c.task_instance_id = ""
+	c.state = CitizenNPC.State.IDLE
+	c.decision_cooldown = randf_range(20.0, 40.0)
+
+	var label = DECORATION_DEFS.get(deco_type, {}).get("label", "украсил поселение")
+	c.last_status_reason = label
+
+	# Уведомление только для особых событий (идолы)
+	if deco_type in ["idol", "totem_small"]:
+		EventBus.notification_toast.emit(
+			"Духовная жизнь",
+			"%s %s" % [c.name, label],
+			"info"
+		)
+
+func _place_trash(c: CitizenNPC, day: int) -> void:
+	# Найти свободную клетку рядом с позицией NPC
+	var tiles = GameManager.planet_data.get("tiles", [])
+	var candidates: Array[Vector2i] = []
+	for dx in range(-2, 3):
+		for dy in range(-2, 3):
+			if dx == 0 and dy == 0:
+				continue
+			var tile_x = int(floor(c.pos.x / 32.0)) + dx
+			var tile_y = int(floor(c.pos.y / 32.0)) + dy
+			var tc = Vector2i(tile_x, tile_y)
+			if tile_x < 0 or tile_y < 0:
+				continue
+			if tile_y >= tiles.size() or tile_x >= tiles[0].size():
+				continue
+			if GameManager.tile_decorations.has(tc):
+				continue
+			if GameManager.tile_buildings.has(tc):
+				continue
+			candidates.append(tc)
+	if candidates.is_empty():
+		return
+
+	var tc = candidates[randi() % candidates.size()]
+	GameManager.tile_decorations[tc] = {
+		"type": "trash",
+		"placer_id": c.citizen_id,
+		"placer_name": c.name,
+		"settlement_id": id,
+		"placed_day": day,
+		"variant": randi() % 2
+	}
+	c.last_status_reason = "Бросил мусор"
+
+func _find_trash_near(c: CitizenNPC) -> Vector2i:
+	# Поиск мусора в радиусе нескольких клеток от дома NPC
+	var search_center = c.home_coord if c.home_coord != Vector2i(-1, -1) else Vector2i(int(c.pos.x / 32.0), int(c.pos.y / 32.0))
+	for dx in range(-3, 4):
+		for dy in range(-3, 4):
+			var tc = Vector2i(search_center.x + dx, search_center.y + dy)
+			var deco = GameManager.tile_decorations.get(tc, {})
+			if deco.get("type", "") == "trash":
+				# Не убирает свой мусор
+				if deco.get("placer_id", "") != c.citizen_id:
+					return tc
+	return Vector2i(-1, -1)
+
+func _cleanup_trash(c: CitizenNPC, trash_coord: Vector2i, _day: int) -> void:
+	var trash_data = GameManager.tile_decorations.get(trash_coord, {})
+	if trash_data.is_empty():
+		return
+
+	var target_pos = GameManager.nav_grid.tile_to_world_center(trash_coord) if GameManager.nav_grid else Vector2(trash_coord.x * 32.0 + 16, trash_coord.y * 32.0 + 16)
+	var clean_path = GameManager.nav_grid.find_path(c.pos, target_pos) if GameManager.nav_grid else []
+	if clean_path.is_empty():
+		return
+
+	c.task_id = "cleanup_trash"
+	c.target_coord = trash_coord
+	c.target_pos = target_pos
+	c.path = clean_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.action_timer = 2.0
+	c.task_instance_id = trash_data.get("placer_id", "")
+	c.last_status_reason = "Убирает мусор"
+	c.decision_cooldown = randf_range(10.0, 20.0)
+
+func _finish_trash_cleanup(c: CitizenNPC) -> void:
+	var coord = c.target_coord
+	var trash_placer_id = c.task_instance_id
+	if coord == Vector2i(-1, -1):
+		c.task_id = ""
+		c.task_instance_id = ""
+		c.state = CitizenNPC.State.IDLE
+		return
+
+	GameManager.tile_decorations.erase(coord)
+
+	c.show_emote("praise", 2.0, 1)
+	c.task_id = ""
+	c.task_instance_id = ""
+	c.state = CitizenNPC.State.IDLE
+	c.last_status_reason = "Убрал мусор"
+
+	# Отношения: уборщик недоволен мусорящим
+	if trash_placer_id != "" and trash_placer_id != c.citizen_id:
+		c.modify_relationship(trash_placer_id, -8.0, -5.0)
+		# Если мусорящий ещё жив — он тоже видит недовольство
+		if population:
+			var slob = population.find_citizen(trash_placer_id)
+			if slob:
+				slob.modify_relationship(c.citizen_id, -4.0, 0.0)
+				if randf() < 0.3:
+					slob.shout("Зачем убирать, всё равно запачкается!", 3.0)
+
+func _find_free_deco_coord(home_coord: Vector2i) -> Vector2i:
+	var tiles = GameManager.planet_data.get("tiles", [])
+	var candidates: Array[Vector2i] = []
+	for dx in range(-DECO_SEARCH_RADIUS, DECO_SEARCH_RADIUS + 1):
+		for dy in range(-DECO_SEARCH_RADIUS, DECO_SEARCH_RADIUS + 1):
+			if dx == 0 and dy == 0:
+				continue
+			var tc = Vector2i(home_coord.x + dx, home_coord.y + dy)
+			if tc.x < 0 or tc.y < 0:
+				continue
+			if tc.y >= tiles.size() or tc.x >= tiles[0].size():
+				continue
+			if tiles[tc.y][tc.x].get("is_water", false):
+				continue
+			if GameManager.tile_decorations.has(tc):
+				continue
+			if GameManager.tile_buildings.has(tc):
+				continue
+			candidates.append(tc)
+	if candidates.is_empty():
+		return Vector2i(-1, -1)
+	return candidates[randi() % candidates.size()]
+
+func _get_adjacent_deco_coords(center: Vector2i, radius: int) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for dx in range(-radius, radius + 1):
+		for dy in range(-radius, radius + 1):
+			result.append(Vector2i(center.x + dx, center.y + dy))
+	return result

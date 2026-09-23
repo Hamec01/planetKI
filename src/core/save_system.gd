@@ -40,11 +40,12 @@ func save_game() -> bool:
 		})
 
 	var b_inst_serialized = []
-	for coord in GameManager.building_instances:
-		var inst = GameManager.building_instances[coord]
+	for key in GameManager.building_instances:
+		var inst = GameManager.building_instances[key]
 		if inst and inst.has_method("serialize"):
+			var inst_coord = inst.pos if "pos" in inst else (key if key is Vector2i else Vector2i.ZERO)
 			b_inst_serialized.append({
-				"coord": [coord.x, coord.y],
+				"coord": [inst_coord.x, inst_coord.y],
 				"data": inst.serialize()
 			})
 
@@ -79,6 +80,15 @@ func save_game() -> bool:
 		"civilization_event_manager": ev_mgr_data,
 		"task_service": GameManager.task_service.serialize() if GameManager.task_service else {}
 	}
+	
+	# Сохранение tile_decorations (персональные украшения NPC)
+	var deco_serialized = []
+	for coord in GameManager.tile_decorations:
+		deco_serialized.append({
+			"coord": [coord.x, coord.y],
+			"data": GameManager.tile_decorations[coord]
+		})
+	save_dict["tile_decorations"] = deco_serialized
 	
 	# Безопасная запись через временный файл и backup
 	var json_string = JSON.stringify(save_dict, "\t")
@@ -229,6 +239,14 @@ func load_game(_slot: String = "") -> bool:
 		
 	if data.has("task_service") and GameManager.task_service:
 		GameManager.task_service.deserialize(data["task_service"])
+
+	# Восстановление tile_decorations
+	GameManager.tile_decorations.clear()
+	if data.has("tile_decorations"):
+		for td in data["tile_decorations"]:
+			var c_arr = td.get("coord", [0, 0])
+			var tc = Vector2i(c_arr[0], c_arr[1])
+			GameManager.tile_decorations[tc] = td.get("data", {})
 		
 	if data.has("settlements_data"):
 		GameManager.settlements.clear()

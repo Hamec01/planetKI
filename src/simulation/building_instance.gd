@@ -26,11 +26,28 @@ var max_residents: int = 8
 var comfort_capacity: int = 6
 var max_guests: int = 2
 var household_head_id: String = ""
-var resident_roles: Dictionary = {} # citizen_id -> "owner" | "resident" | "guest" | "dependent"
+var resident_roles: Dictionary = {} # citizen_id -> "owner" | "resident" | "guest" | "dependent" | "ward"
 var domestic_goods: Dictionary = {} # Личные вещи и материалы домохозяйства
 var food_stockpile: float = 0.0 # Домашний запас пищи
 var food_stockpile_max: float = 16.0 # Целевой запас на 2 дня
 var is_locked_by_player: bool = false # Запрет автоматического выселения игроком
+
+# --- БОЛЬШОЙ ДОМ РОДА (GREAT LODGE) СОЦИАЛЬНЫЙ ИНСТИТУТ ---
+var visual_variant: int = 1 # 1..9 (рандомно выбирается при постройке из 9 вариаций)
+var household_harmony: float = 0.0 # От -100 до +100 (согласие и мир между семьями дома)
+var household_groups: Dictionary = {
+	"families": {},   # family_id -> [citizen_ids]
+	"elders": [],     # [citizen_ids] (возраст >= 60 или без семьи)
+	"wards": [],      # [citizen_ids] (сироты под опекой дома)
+	"unrelated": [],  # [citizen_ids] (одинокие неродственные жители)
+	"children": []    # [citizen_ids] (все дети дома)
+}
+var caretaker_id: String = "" # ID назначенного Опекуна детей
+var knowledge_keeper_id: String = "" # ID Хранителя знаний
+var clan_elder_id: String = "" # ID Старейшины рода
+var lodge_storage: Dictionary = {"food": 0.0, "hides": 0.0, "clothes": 0.0, "tools": 0.0}
+var lodge_storage_mode: String = "family_shared" # "family_private", "family_shared", "all_communal"
+var clan_cohesion_bonus: float = 0.0
 
 var active_mode: String = "default"
 var production_queue: Array[Dictionary] = [] # Заказы: [{"id": "item_id", "name": "...", "count": 10, "progress": 0.0, "cost": {}}]
@@ -113,12 +130,12 @@ func _init(p_id: String = "", p_type: String = "", p_settlement: String = "", p_
 	_init_camp_tools()
 
 func _init_housing_capacity() -> void:
-	var b_info = BuildingDB.get_building(type)
-	if b_info.has("housing") and b_info["housing"] > 0:
-		max_residents = b_info["housing"]
-		comfort_capacity = b_info.get("comfort_housing", 6 if type == "hut" else max_residents)
-		max_guests = b_info.get("max_guests", maxi(2, int(ceil(max_residents * 0.25))))
-		food_stockpile_max = float(max_residents * 2)
+	if type == "great_lodge":
+		max_residents = 35
+		comfort_capacity = 25
+		max_guests = 5
+		food_stockpile_max = 70.0
+		visual_variant = randi_range(1, 9)
 	elif type == "elders_house":
 		max_residents = 4
 		comfort_capacity = 4
@@ -130,10 +147,17 @@ func _init_housing_capacity() -> void:
 		max_guests = 0
 		food_stockpile_max = 100.0
 	else:
-		max_residents = 0
-		comfort_capacity = 0
-		max_guests = 0
-		food_stockpile_max = 0.0
+		var b_info = BuildingDB.get_building(type)
+		if b_info.has("housing") and b_info["housing"] > 0:
+			max_residents = b_info["housing"]
+			comfort_capacity = b_info.get("comfort_housing", 6 if type == "hut" else max_residents)
+			max_guests = b_info.get("max_guests", maxi(2, int(ceil(max_residents * 0.25))))
+			food_stockpile_max = float(max_residents * 2)
+		else:
+			max_residents = 0
+			comfort_capacity = 0
+			max_guests = 0
+			food_stockpile_max = 0.0
 
 func _init_default_mode() -> void:
 	match type:
@@ -461,7 +485,15 @@ func serialize() -> Dictionary:
 		"construction_year": construction_year,
 		"local_buffer_wood": local_buffer_wood,
 		"local_buffer_max": local_buffer_max,
-		"tool_inventory": tool_inventory.duplicate(true)
+		"tool_inventory": tool_inventory.duplicate(true),
+		"visual_variant": visual_variant,
+		"household_harmony": household_harmony,
+		"caretaker_id": caretaker_id,
+		"knowledge_keeper_id": knowledge_keeper_id,
+		"clan_elder_id": clan_elder_id,
+		"lodge_storage": lodge_storage.duplicate(),
+		"lodge_storage_mode": lodge_storage_mode,
+		"clan_cohesion_bonus": clan_cohesion_bonus
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -515,3 +547,158 @@ func deserialize(data: Dictionary) -> void:
 	if type == "woodcutter_camp" and tool_inventory.is_empty():
 		_init_camp_tools()
 
+	# Great Lodge данные
+	visual_variant = int(data.get("visual_variant", visual_variant))
+	household_harmony = float(data.get("household_harmony", household_harmony))
+	caretaker_id = data.get("caretaker_id", caretaker_id)
+	knowledge_keeper_id = data.get("knowledge_keeper_id", knowledge_keeper_id)
+	clan_elder_id = data.get("clan_elder_id", clan_elder_id)
+	lodge_storage = data.get("lodge_storage", lodge_storage).duplicate()
+	lodge_storage_mode = data.get("lodge_storage_mode", lodge_storage_mode)
+	clan_cohesion_bonus = float(data.get("clan_cohesion_bonus", clan_cohesion_bonus))
+
+# --- МЕТОДЫ БОЛЬШОГО ДОМА РОДА (GREAT LODGE) ---
+func is_great_lodge() -> bool:
+	return type == "great_lodge"
+
+func recalculate_household_groups(population: RefCounted) -> Dictionary:
+	household_groups = {
+		"families": {},
+		"elders": [],
+		"wards": [],
+		"unrelated": [],
+		"children": []
+	}
+	if not population or not ("citizens" in population):
+		return household_groups
+		
+	for r_id in residents:
+		var c = population.get_citizen_by_id(r_id)
+		if c == null:
+			continue
+		var is_child = (c.cohort == "child" or c.age < 16)
+		var is_elder = (c.cohort == "elder" or c.age >= 60)
+		
+		if is_child:
+			household_groups["children"].append(c.citizen_id)
+		if c.is_ward_of_lodge:
+			household_groups["wards"].append(c.citizen_id)
+			
+		if is_elder:
+			household_groups["elders"].append(c.citizen_id)
+			
+		if c.family_id != "":
+			if not household_groups["families"].has(c.family_id):
+				household_groups["families"][c.family_id] = []
+			household_groups["families"][c.family_id].append(c.citizen_id)
+		else:
+			if not is_elder and not c.is_ward_of_lodge:
+				household_groups["unrelated"].append(c.citizen_id)
+				
+	return household_groups
+
+func get_comfort_status() -> String:
+	var cur = residents.size()
+	if cur <= comfort_capacity:
+		return "Комфортно"
+	elif cur <= 30:
+		return "Тесно"
+	elif cur <= 35:
+		return "Переполнено"
+	else:
+		return "Критическое перенаселение"
+
+func get_harmony_status_name() -> String:
+	if household_harmony >= 70.0:
+		return "Единый род"
+	elif household_harmony >= 30.0:
+		return "Мирное сосуществование"
+	elif household_harmony >= 0.0:
+		return "Безразличие"
+	elif household_harmony >= -30.0:
+		return "Постоянные споры"
+	elif household_harmony >= -80.0:
+		return "Вражда"
+	else:
+		return "Раскол рода"
+
+func get_harmony_color() -> Color:
+	if household_harmony >= 70.0:
+		return Color(0.25, 0.9, 0.45) # Ярко-зеленый
+	elif household_harmony >= 30.0:
+		return Color(0.5, 0.85, 0.7)  # Мятный
+	elif household_harmony >= 0.0:
+		return Color(0.85, 0.85, 0.5) # Желтоватый
+	elif household_harmony >= -30.0:
+		return Color(0.95, 0.65, 0.3) # Оранжевый
+	elif household_harmony >= -80.0:
+		return Color(0.95, 0.4, 0.3)  # Красно-оранжевый
+	else:
+		return Color(0.9, 0.2, 0.2)   # Темно-красный
+
+func update_household_harmony(delta_days: float, settlement: RefCounted) -> void:
+	if not is_great_lodge():
+		return
+	var cur_res = residents.size()
+	var d_harm = 0.0
+	
+	# Фактор перенаселения
+	if cur_res > comfort_capacity:
+		var crowding_excess = cur_res - comfort_capacity
+		d_harm -= 0.5 * float(crowding_excess) * delta_days
+		
+	# Фактор перегородок
+	if is_upgrade_unlocked("partitions"):
+		d_harm += 0.2 * delta_days
+		
+	# Фактор очага
+	if is_upgrade_unlocked("great_hearth"):
+		d_harm += 0.3 * delta_days
+		
+	# Фактор старейшины рода
+	if clan_elder_id != "":
+		d_harm += 0.4 * delta_days
+		
+	# Фактор тотемов
+	if is_upgrade_unlocked("clan_totems"):
+		d_harm += 0.15 * delta_days
+		
+	household_harmony = clampf(household_harmony + d_harm, -100.0, 100.0)
+
+func transfer_knowledge(apprentice: RefCounted, amount: float, p_settlement: RefCounted = null) -> void:
+	if knowledge_keeper_id == "" or apprentice == null:
+		return
+	var master = null
+	if p_settlement != null and "population" in p_settlement:
+		master = p_settlement.population.get_citizen_by_id(knowledge_keeper_id)
+	if master == null and GameManager:
+		if GameManager.settlements.has(settlement_id):
+			master = GameManager.settlements[settlement_id].population.get_citizen_by_id(knowledge_keeper_id)
+		if master == null:
+			for st in GameManager.settlements.values():
+				if st and "population" in st:
+					master = st.population.get_citizen_by_id(knowledge_keeper_id)
+					if master != null:
+						break
+	if master == null:
+		return
+	# Ищем самый сильный навык наставника
+	var best_skill = ""
+	var best_val = 0.0
+	for sk in master.skills:
+		if float(master.skills[sk]) > best_val:
+			best_val = float(master.skills[sk])
+			best_skill = sk
+	if best_skill != "" and best_val > float(apprentice.skills.get(best_skill, 0.0)):
+		var curr = float(apprentice.skills.get(best_skill, 10.0))
+		var growth = minf(amount * 0.2, best_val - curr)
+		apprentice.skills[best_skill] = minf(100.0, curr + growth)
+
+func add_to_lodge_storage(res_name: String, amount: float) -> void:
+	lodge_storage[res_name] = float(lodge_storage.get(res_name, 0.0)) + amount
+
+func take_from_lodge_storage(res_name: String, amount: float) -> float:
+	var curr = float(lodge_storage.get(res_name, 0.0))
+	var taken = minf(amount, curr)
+	lodge_storage[res_name] = maxf(0.0, curr - taken)
+	return taken

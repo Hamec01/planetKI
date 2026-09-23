@@ -143,6 +143,11 @@ custom_minimum_size = Vector2(40, 34)
 layout_mode = 2
 text = "4x"
 
+[node name="Speed10Btn" type="Button" parent="MainHUD/TopBar/MarginContainer/HBoxContainer/SpeedContainer"]
+custom_minimum_size = Vector2(46, 34)
+layout_mode = 2
+text = "10x"
+
 
 
 [node name="BottomDockBar" type="PanelContainer" parent="MainHUD"]

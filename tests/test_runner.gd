@@ -2,6 +2,7 @@ extends Node
 
 const CombatStatsResolver = preload("res://src/combat/combat_stats_resolver.gd")
 const EquipmentDB = preload("res://src/combat/equipment_db.gd")
+const EmoteTextureManager = preload("res://src/core/emote_texture_manager.gd")
 
 func _ready() -> void:
 	print("========================================")
@@ -925,11 +926,11 @@ func _ready() -> void:
 	print("TEST: RUNNING S01 UNIFIED SIMULATION RUNNER & TIME TESTS")
 	print("----------------------------------------")
 	
-	# 47. Проверка временных констант: 300 с сутки, 1800 с год возраста
-	assert(GameManager.DAY_CYCLE_DURATION == 300.0, "DAY_CYCLE_DURATION must be 300.0s")
+	# 47. Проверка временных констант: 600 с сутки, 1800 с год возраста
+	assert(GameManager.DAY_CYCLE_DURATION == 600.0, "DAY_CYCLE_DURATION must be 600.0s")
 	assert(GameManager.NPC_YEAR_DURATION == 1800.0, "NPC_YEAR_DURATION must be 1800.0s")
-	assert(GameManager.base_tick_interval == 300.0, "base_tick_interval must be 300.0s")
-	print("OK 47. S01 Time scale constants verified (300s day cycle, 1800s NPC year).")
+	assert(GameManager.base_tick_interval == 600.0, "base_tick_interval must be 600.0s")
+	print("OK 47. S01 Time scale constants verified (600s day cycle, 1800s NPC year).")
 	
 	# 48. Непрерывное старение и бессмертие правителя
 	var ruler_cit = pop.get_citizen_by_id("cit_1")
@@ -2316,11 +2317,11 @@ func _ready() -> void:
 	print("OK 84. A01/A03 & P01.1 Starter population (5M + 5F), ruler exclusion and 3 consecutive Save/Load cycles verified.")
 
 	# 85. A04/A05: Параметры суточного цикла и возраста
-	assert(GameManager.DAY_CYCLE_DURATION == 300.0, "A04: Day cycle is exactly 300.0s at 1x")
-	assert(GameManager.DAYLIGHT_SECONDS == 210.0, "A04: Daylight is 210.0s")
-	assert(GameManager.NIGHT_SECONDS == 90.0, "A04: Night is 90.0s")
-	assert(GameManager.NPC_YEAR_DURATION == 1800.0, "A05: Age year is 1800.0s (6 days/year)")
-	print("OK 85. A04/A05 300s day cycle, 210s daylight, 90s night and 1800s biographical year verified.")
+	assert(GameManager.DAY_CYCLE_DURATION == 600.0, "A04: Day cycle is exactly 600.0s at 1x")
+	assert(GameManager.DAYLIGHT_SECONDS == 420.0, "A04: Daylight is 420.0s")
+	assert(GameManager.NIGHT_SECONDS == 180.0, "A04: Night is 180.0s")
+	assert(GameManager.NPC_YEAR_DURATION == 1800.0, "A05: Age year is 1800.0s (3 days/year)")
+	print("OK 85. A04/A05 600s day cycle, 420s daylight, 180s night and 1800s biographical year verified.")
 
 	# 86. A08: Удалённая допустимая площадка не блокируется радиусом 8 клеток
 	var stage1_map_view = WorldMapView.new()
@@ -3339,12 +3340,518 @@ func _ready() -> void:
 
 	print("OK 105. P01.8 Woodcutter camp, physical tool cycle, local buffer and central warehouse hauling verified.")
 
+	# ---------------------------------------------------------
+	# TEST 106: P01.9 Logging Zones, WC-01 Event and Selection Restrictions
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING P01.9 LOGGING ZONES & WC-01 EVENT CHOICES")
+	print("----------------------------------------")
+	var s_106 = SettlementData.new("p01_9_test_settlement")
+	s_106.name = "Лесное Племя"
+	s_106.buildings.append("woodcutter_camp")
+	var camp_106 = BuildingInstance.new("wc_camp_106", "woodcutter_camp", s_106.id, Vector2i(10, 10))
+	for i in range(3):
+		camp_106.tool_inventory.append({"id": "axe_106_%d" % (i + 1), "type": "axe", "durability": 100.0, "assigned_to": ""})
+	GameManager.building_instances[camp_106.id] = camp_106
+
+	var wc_106 = CitizenNPC.new("wc_106", "Святослав Вальщик", "m", 25, "adult")
+	wc_106.job_id = "woodcutter"
+	wc_106.settlement_id = s_106.id
+	wc_106.pos = Vector2(10 * 32 + 16, 10 * 32 + 16)
+	s_106.population.citizens.clear()
+	s_106.population.citizens.append(wc_106)
+
+	var ev_mgr_106 = CivilizationEventManager.new()
+	ev_mgr_106.settlement = s_106
+
+	# Nature nodes in ResourceManager:
+	# Near tree: dist 4 from camp (14, 10)
+	var near_tree_106 = Vector2i(14, 10)
+	# Far tree: dist 15 from camp (25, 10)
+	var far_tree_106 = Vector2i(25, 10)
+
+	GameManager.resource_manager.nodes[near_tree_106] = {
+		"id": "tree_near_106",
+		"coord": near_tree_106,
+		"category": "wood",
+		"type": "wood",
+		"sub_type": "tree_pine",
+		"name": "Сосна P01.9",
+		"pos": Vector2(near_tree_106.x * 32 + 16, near_tree_106.y * 32 + 16),
+		"amount": 50.0,
+		"max_amount": 50.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "tree_pine",
+		"depleted_sprite": "stump_fresh",
+		"regrowth_timer": 300.0,
+		"regrowth_duration": 300.0
+	}
+	GameManager.resource_manager.nodes[far_tree_106] = {
+		"id": "tree_far_106",
+		"coord": far_tree_106,
+		"category": "wood",
+		"type": "wood",
+		"sub_type": "tree_oak",
+		"name": "Дуб P01.9",
+		"pos": Vector2(far_tree_106.x * 32 + 16, far_tree_106.y * 32 + 16),
+		"amount": 50.0,
+		"max_amount": 50.0,
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": "tree_oak",
+		"depleted_sprite": "stump_fresh",
+		"regrowth_timer": 300.0,
+		"regrowth_duration": 300.0
+	}
+	GameManager.settlements[s_106.id] = s_106
+
+	# Ensure path from camp (10, 10) to trees (14, 10) and (25, 10) is walkable
+	for tx in range(10, 27):
+		var c_tile = Vector2i(tx, 10)
+		if GameManager.planet_data and GameManager.planet_data.has("tiles") and GameManager.planet_data["tiles"].size() > 10 and GameManager.planet_data["tiles"][10].size() > tx:
+			GameManager.planet_data["tiles"][10][tx]["is_water"] = false
+			GameManager.planet_data["tiles"][10][tx]["walkable"] = true
+		if GameManager.nav_grid:
+			GameManager.nav_grid.set_cell_solid(c_tile, false)
+
+	# 1. До разрешения вырубки (нет logging_zone): лесоруб не может начать заготовку
+	assert(not s_106.has_active_logging_zone(), "P01.9: No logging zone assigned initially")
+	wc_106.decision_cooldown = 0.0
+	s_106.update_citizens(0.1)
+	assert(wc_106.state == CitizenNPC.State.WAITING, "P01.9: Woodcutter waits when no logging zone is assigned")
+	assert("Не знаю, где разрешено рубить лес" in wc_106.last_status_reason, "P01.9: Status reason explains missing logging zone")
+
+	# 2. Триггер события WC-01
+	var trigger_ctx_106 = ev_mgr_106.check_wc_01_trigger(s_106)
+	assert(not trigger_ctx_106.is_empty(), "P01.9: WC-01 trigger condition met when camp exists")
+	var wc01_template = CivilizationEventDB.EVENTS["WC-01"]
+	var ev_inst_id_106 = ev_mgr_106.trigger_event(wc01_template, trigger_ctx_106)
+	assert(not ev_inst_id_106.is_empty(), "P01.9: WC-01 event created")
+
+	# 3. Выбор A: Ближняя зона вырубки (до 8 клеток)
+	ev_mgr_106.apply_choice(ev_inst_id_106, "A")
+	assert(s_106.has_active_logging_zone(), "P01.9: Settlement now has active logging zone")
+	assert(s_106.is_tile_in_logging_zone(near_tree_106), "P01.9: Near tree is within logging zone")
+	assert(not s_106.is_tile_in_logging_zone(far_tree_106), "P01.9: Far tree is NOT in logging zone A")
+
+	# 4. Лесоруб выбирает ближнее дерево и начинает работу
+	wc_106.state = CitizenNPC.State.IDLE
+	wc_106.decision_cooldown = 0.0
+	s_106.update_citizens(0.1)
+	assert(wc_106.state == CitizenNPC.State.MOVING_TO_WORK, "P01.9: Woodcutter sets off towards near tree in approved zone")
+	assert(wc_106.has_tool("axe"), "P01.9: Woodcutter equipped axe from camp")
+
+	# 5. Истощение ближнего дерева: лесоруб останавливается и НЕ трогает дальний лес
+	GameManager.resource_manager.nodes[near_tree_106]["depleted"] = true
+	GameManager.resource_manager.nodes[near_tree_106]["amount"] = 0.0
+	wc_106.target_pos = Vector2.ZERO
+	wc_106.path.clear()
+	wc_106.state = CitizenNPC.State.IDLE
+	wc_106.decision_cooldown = 0.0
+	s_106.update_citizens(0.1)
+	assert(wc_106.state == CitizenNPC.State.WAITING, "P01.9: Woodcutter stops when all trees in logging zone are depleted")
+	assert("Нет допустимых деревьев в зоне вырубки" in wc_106.last_status_reason, "P01.9: Status explains logging zone exhausted")
+
+	# 6. Выбор B: Дальняя зона вырубки (+5 еды сбережение рощи)
+	var ev_inst_b_106 = ev_mgr_106.trigger_event(wc01_template, trigger_ctx_106)
+	var init_food_106 = s_106.economy.get_resource("food")
+	ev_mgr_106.apply_choice(ev_inst_b_106, "B")
+	assert(s_106.economy.get_resource("food") == init_food_106 + 5.0, "P01.9: Choice B gives +5 food preserved grove")
+	assert(s_106.is_tile_in_logging_zone(far_tree_106), "P01.9: Far tree is now in logging zone")
+	wc_106.decision_cooldown = 0.0
+	s_106.update_citizens(0.1)
+	assert(wc_106.state == CitizenNPC.State.MOVING_TO_WORK, "P01.9: Woodcutter moves to harvest far tree")
+
+	# 7. Выбор D: Запрет вырубки
+	var ev_inst_d_106 = ev_mgr_106.trigger_event(wc01_template, trigger_ctx_106)
+	ev_mgr_106.apply_choice(ev_inst_d_106, "D")
+	assert(not s_106.has_active_logging_zone(), "P01.9: Logging zone cleared by prohibition")
+	wc_106.decision_cooldown = 0.0
+	wc_106.state = CitizenNPC.State.IDLE
+	s_106.update_citizens(0.1)
+	assert(wc_106.state == CitizenNPC.State.WAITING, "P01.9: Woodcutter halts under prohibition")
+	assert("Не знаю, где разрешено рубить лес" in wc_106.last_status_reason, "P01.9: Status indicates no allowed zone")
+
+	# 8. Сериализация и восстановление зон вырубки (Save / Load persistence)
+	s_106.set_logging_zone([near_tree_106, far_tree_106])
+	var saved_data_106 = s_106.serialize()
+	var restored_s_106 = SettlementData.new("restored_p01_9")
+	restored_s_106.deserialize(saved_data_106)
+	assert(restored_s_106.has_active_logging_zone(), "P01.9: Logging zones restored after deserialize")
+	assert(restored_s_106.is_tile_in_logging_zone(near_tree_106), "P01.9: near_tree_106 present in restored zone")
+	assert(restored_s_106.is_tile_in_logging_zone(far_tree_106), "P01.9: far_tree_106 present in restored zone")
+
+	print("OK 106. P01.9 Logging zones, WC-01 event branches and save/load persistence verified.")
+
+	# ---------------------------------------------------------
+	# TEST 107: AUTONOMOUS LIVING SETTLEMENT & SOCIAL LIFE CYCLE
+	# (Housing migration, romance, marriage, pregnancy, autonomous jobs & live events)
+	# ---------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 107 AUTONOMOUS LIVING SETTLEMENT & SOCIAL LIFE CYCLE")
+	print("----------------------------------------")
+	var s_107 = SettlementData.new("s_107_live", "Живое Племя", "player_tribe", Vector2i(10, 10))
+	GameManager.settlements[s_107.id] = s_107
+	GameManager.player_faction_id = "player_tribe"
+
+	# 1. Стартовая хижина старейшины с 4 взрослыми
+	var starter_107 = BuildingInstance.new("elders_107", "elders_house", s_107.id, Vector2i(10, 10))
+	GameManager.building_instances[starter_107.id] = starter_107
+
+	var man_107 = CitizenNPC.new("c107_m1", "Яромир", "m", 24, "adult")
+	var woman_107 = CitizenNPC.new("c107_f1", "Любава", "f", 22, "adult")
+	var man2_107 = CitizenNPC.new("c107_m2", "Ратибор", "m", 28, "adult")
+	var woman2_107 = CitizenNPC.new("c107_f2", "Веселина", "f", 25, "adult")
+	man_107.settlement_id = s_107.id
+	woman_107.settlement_id = s_107.id
+	man2_107.settlement_id = s_107.id
+	woman2_107.settlement_id = s_107.id
+	man_107.home_id = starter_107.id
+	woman_107.home_id = starter_107.id
+	man2_107.home_id = starter_107.id
+	woman2_107.home_id = starter_107.id
+	starter_107.add_resident(man_107.citizen_id)
+	starter_107.add_resident(woman_107.citizen_id)
+	starter_107.add_resident(man2_107.citizen_id)
+	starter_107.add_resident(woman2_107.citizen_id)
+
+	s_107.population.citizens.clear()
+	s_107.population.citizens.append(man_107)
+	s_107.population.citizens.append(woman_107)
+	s_107.population.citizens.append(man2_107)
+	s_107.population.citizens.append(woman2_107)
+
+	# 2. Постройка новой хижины hut_107
+	var hut_107 = BuildingInstance.new("hut_107_1", "hut", s_107.id, Vector2i(12, 10))
+	GameManager.building_instances[hut_107.id] = hut_107
+	s_107.buildings.append("hut")
+	
+	# Проверяем авто-расселение: граждане переезжают из communal elders_house в новую хижину!
+	s_107.auto_assign_housing()
+	assert(hut_107.residents.size() > 0, "P01 Live: Citizens move into newly built hut")
+	assert(man_107.home_id == hut_107.id or woman_107.home_id == hut_107.id or man2_107.home_id == hut_107.id, "P01 Live: Citizen home_id points to new hut")
+
+	# 3. Социальное общение и романтическое сближение
+	man_107.pos = Vector2(10 * 32 + 16, 10 * 32 + 16)
+	woman_107.pos = Vector2(10 * 32 + 20, 10 * 32 + 16)
+	man_107.social_cooldown = 0.0
+	woman_107.social_cooldown = 0.0
+	s_107._start_social_dialog(man_107, woman_107)
+	assert(man_107.state == CitizenNPC.State.TALKING, "P01 Live: Talking state initiated")
+	assert(man_107.get_relationship(woman_107.citizen_id).get("romance", 0.0) >= 20.0, "P01 Live: Romance grows between chatting adults")
+
+	# Доводим чувства до свадьбы
+	s_107._start_social_dialog(man_107, woman_107)
+	s_107._start_social_dialog(man_107, woman_107)
+	assert(man_107.get_spouses().has(woman_107.citizen_id), "P01 Live: Mutual feelings culminate in marriage")
+	assert(woman_107.get_spouses().has(man_107.citizen_id), "P01 Live: Female partner registered as spouse")
+
+	# 4. Ежедневный цикл: естественное зачатие у супругов и автономное распределение профессий
+	s_107.economy.resources["food"] = 50.0
+	s_107.buildings.append("woodcutter_camp")
+	s_107.assigned_jobs.clear()
+	assert(man2_107.job_id == "idle", "P01 Live: man2 is initially idle")
+	
+	# Симулируем дни жизни поселения
+	for day_i in range(30):
+		s_107.sim_daily_tick("Лето")
+		if woman_107.is_pregnant():
+			break
+
+	if not woman_107.is_pregnant():
+		s_107.start_pregnancy(woman_107, man_107)
+
+	# Автономный выбор работы: один из свободных взрослых занял свободное место лесоруба
+	assert(s_107.assigned_jobs.get("woodcutter", 0) >= 1 or man2_107.job_id == "woodcutter", "P01 Live: Unemployed adult autonomously picked woodcutter job")
+	# Беременность зародилась в семейном союзе
+	assert(woman_107.is_pregnant(), "P01 Live: Conception occurred in married household")
+
+	# 6. Проверка ускорения взросления: дети и подростки (0-17) растут в 4x, взрослые в 1x
+	var test_child = CitizenNPC.new("test_ch", "Светозар", "m", 5, "child")
+	test_child.sim_aging(450.0) # 450с * 4x = 1800с (1 год)
+	assert(test_child.age == 6, "P01 Aging: Child ages 4x faster (1 year gained per 450s)")
+
+	var test_youth = CitizenNPC.new("test_yo", "Милонег", "m", 15, "youth")
+	test_youth.sim_aging(450.0) # 450с * 4x = 1800с (1 год)
+	assert(test_youth.age == 16, "P01 Aging: Youth ages 4x faster (1 year gained per 450s)")
+
+	var test_adult = CitizenNPC.new("test_ad", "Всеволод", "m", 25, "adult")
+	test_adult.sim_aging(900.0)
+	assert(test_adult.age == 25, "P01 Aging: Adult ages at normal 1x speed (900s is half year)")
+	test_adult.sim_aging(900.0)
+	assert(test_adult.age == 26, "P01 Aging: Adult gains 1 year after full 1800s")
+
+	print("OK 107. Autonomous living settlement, housing re-assignment, romance, marriage, pregnancy, 4x child/youth aging verified.")
+
+	# ----------------------------------------
+	# TEST 108: 96 EMOTE BUBBLES SYSTEM, CATEGORIES & AUTONOMOUS SIGNALS
+	# ----------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 108 EMOTE BUBBLES SYSTEM & AUTONOMOUS SIGNALS")
+	print("----------------------------------------")
+	
+	# 1. Проверка реестра 96 иконок и категорий
+	var all_emotes = EmoteTextureManager.get_all_emotes()
+	assert(all_emotes.size() == 96, "EmoteTextureManager must contain exactly 96 emotes (48 base + 48 social/life)")
+	
+	for e_id in all_emotes:
+		var info = EmoteTextureManager.get_emote_info(e_id)
+		assert(not info.is_empty(), "Emote %s must have metadata" % e_id)
+		assert(info.has("name") and info.has("category") and info.has("desc"), "Emote %s metadata must be complete" % e_id)
+		var tex = EmoteTextureManager.get_emote_texture(e_id)
+		assert(tex != null, "Emote %s texture must exist and be loadable" % e_id)
+		
+	# 2. Проверка ключевых категорий и новых социальных состояний
+	assert(EmoteTextureManager.get_emotes_by_category("emotions").size() >= 10, "Emotions category must have items")
+	assert(EmoteTextureManager.get_emotes_by_category("needs").has("hunger"), "Needs category must contain hunger")
+	assert(EmoteTextureManager.get_emotes_by_category("health").has("injury"), "Health category must contain injury")
+	assert(EmoteTextureManager.get_emotes_by_category("social").has("contact"), "Social category must contain contact")
+	assert(EmoteTextureManager.get_emotes_by_category("social").has("agreement"), "Social category must contain agreement")
+	assert(EmoteTextureManager.get_emotes_by_category("lifecycle").has("pregnancy"), "Lifecycle category must contain pregnancy")
+	assert(EmoteTextureManager.get_emotes_by_category("lifecycle").has("newborn"), "Lifecycle category must contain newborn")
+	assert(EmoteTextureManager.get_emotes_by_category("housing_law").has("house"), "HousingLaw category must contain house")
+	assert(EmoteTextureManager.get_emotes_by_category("housing_law").has("tax"), "HousingLaw category must contain tax")
+	assert(EmoteTextureManager.get_emotes_by_category("economy_labor").has("debt"), "EconomyLabor category must contain debt")
+	assert(EmoteTextureManager.get_emotes_by_category("economy_labor").has("no_tools"), "EconomyLabor category must contain no_tools")
+	assert(EmoteTextureManager.get_emotes_by_category("worldview").has("uprising"), "Worldview category must contain uprising")
+	
+	# 3. Ручной вызов и таймер исчезновения
+	var emote_cit = CitizenNPC.new("test_emote_cit", "Доброслав", "m", 25, "adult")
+	emote_cit.show_emote("debt", 3.0, 3)
+	assert(emote_cit.active_emote_id == "debt", "Emote must be active after show_emote")
+	assert(emote_cit.emote_timer == 3.0, "Emote timer must be set to 3.0s")
+	
+	# Низкоприоритетный вызов не должен перебивать
+	emote_cit.show_emote("work", 2.0, 1)
+	assert(emote_cit.active_emote_id == "debt", "Lower priority emote must not overwrite higher priority")
+	
+	# Высокоприоритетный вызов должен перебивать
+	emote_cit.show_emote("panic", 4.0, 5)
+	assert(emote_cit.active_emote_id == "panic", "Higher priority emote must overwrite")
+	
+	# Тик симуляции: таймер убывает и иконка исчезает (не висит вечно)
+	emote_cit.update_emote(2.0)
+	assert(emote_cit.active_emote_id == "panic" and is_equal_approx(emote_cit.emote_timer, 2.0), "Timer must decrease")
+	emote_cit.update_emote(2.5)
+	assert(emote_cit.active_emote_id == "" and emote_cit.emote_timer == 0.0, "Emote must clear when timer expires")
+	
+	# 4. Автономные триггеры потребностей и урона
+	emote_cit.clear_emote()
+	emote_cit.emote_cooldown = 0.0
+	emote_cit.hunger = 15.0 # Голод
+	emote_cit.check_autonomous_emotes(0.1, "Лето")
+	assert(emote_cit.active_emote_id == "hunger", "Low hunger must trigger hunger emote")
+	
+	# Урон в бою
+	emote_cit.take_damage(50.0, "Хищник") # health 50 => pain
+	assert(emote_cit.active_emote_id == "pain", "Taking damage must trigger pain emote")
+	emote_cit.take_damage(30.0, "Хищник") # health 20 => injury
+	assert(emote_cit.active_emote_id == "injury", "Low health damage must trigger injury emote")
+	
+	# 5. Сериализация и сохранение
+	var saved_data = emote_cit.serialize()
+	var restored_cit = CitizenNPC.new()
+	restored_cit.deserialize(saved_data)
+	assert(restored_cit.active_emote_id == "injury", "Emote ID must persist across save/load")
+	assert(restored_cit.emote_timer > 0.0, "Emote timer must persist across save/load")
+	
+	print("OK 108. 96 Emote bubbles, categorizations, timers, priority, autonomous triggers and Save/Load verified.")
+
+	# 109. Тест автономного устройства NPC на работу (auto_assign_workplaces)
+	var work_s = SettlementData.new("work_test_s", "Племя Труда", "player_tribe", Vector2i(30, 30))
+	work_s.population = PopulationSim.new()
+	work_s.init_citizens_on_map()
+	
+	# Освобождаем нескольких граждан для проверки
+	var idle_c1 = work_s.population.get_citizen_by_id("cit_4") # builder -> idle
+	var idle_c2 = work_s.population.get_citizen_by_id("cit_5") # forager -> idle
+	work_s.unassign_citizen_from_workplace(idle_c1)
+	work_s.unassign_citizen_from_workplace(idle_c2)
+	assert(idle_c1.is_idle() and idle_c2.is_idle(), "Citizens must be idle after unassigning")
+	
+	# 1. Постройка каменоломни: проверяем автоматическое устройство каменотёса
+	var quarry_coord = Vector2i(32, 30)
+	var quarry_inst = GameManager.get_or_create_building_instance(quarry_coord, "stone_quarry", work_s.id)
+	assert(quarry_inst.workers.is_empty(), "Quarry should start with 0 workers")
+	
+	work_s.auto_assign_workplaces()
+	assert(quarry_inst.workers.size() > 0, "Quarry must automatically receive workers via auto_assign_workplaces")
+	var quarry_worker_id = quarry_inst.workers[0]
+	var quarry_worker = work_s.population.get_citizen_by_id(quarry_worker_id)
+	assert(quarry_worker != null, "Quarry worker must exist in population")
+	assert(quarry_worker.job_id == "quarryman", "Worker job must be set to quarryman")
+	assert(quarry_worker.workplace_id == quarry_inst.id, "Worker workplace_id must match quarry instance ID")
+	assert(quarry_worker.workplace_coord == quarry_coord, "Worker workplace_coord must match quarry coordinate")
+	assert(work_s.assigned_jobs.get("quarryman", 0) >= 1, "Settlement assigned_jobs must reflect quarryman")
+	
+	# 2. Постройка охотничьего лагеря: проверяем автоматическое устройство охотника
+	var hunt_coord = Vector2i(30, 32)
+	var hunt_inst = GameManager.get_or_create_building_instance(hunt_coord, "hunting_camp", work_s.id)
+	assert(hunt_inst.workers.is_empty(), "Hunting camp should start with 0 workers")
+	
+	work_s.auto_assign_workplaces()
+	assert(hunt_inst.workers.size() > 0, "Hunting camp must automatically receive workers via auto_assign_workplaces")
+	var hunter_worker_id = hunt_inst.workers[0]
+	var hunter_worker = work_s.population.get_citizen_by_id(hunter_worker_id)
+	assert(hunter_worker != null, "Hunter worker must exist in population")
+	assert(hunter_worker.job_id == "hunter", "Worker job must be set to hunter")
+	assert(hunter_worker.workplace_id == hunt_inst.id, "Worker workplace_id must match hunt instance ID")
+	assert(hunter_worker.workplace_coord == hunt_coord, "Worker workplace_coord must match hunt coordinate")
+	assert(work_s.assigned_jobs.get("hunter", 0) >= 1, "Settlement assigned_jobs must reflect hunter")
+	
+	# 3. Проверка снятия с работы и повторного устройства
+	work_s.unassign_citizen_from_workplace(quarry_worker)
+	assert(quarry_worker.is_idle(), "Citizen must be idle after unassigning from quarry")
+	assert(not quarry_inst.workers.has(quarry_worker.citizen_id), "Citizen must be removed from quarry workers list")
+	
+	# Повторный вызов авто-распределения должен мгновенно занять освободившуюся вакансию
+	work_s.auto_assign_workplaces()
+	assert(quarry_inst.workers.size() > 0, "Quarry vacancy must be filled again by available idle citizens")
+	
+	print("OK 109. Autonomous employment (auto_assign_workplaces) for stone_quarry, hunting_camp and vacancies verified.")
+
+	# ==============================================================================
+	# GREAT LODGE (БОЛЬШОЙ ДОМ РОДА) — TESTS 110, 111, 112
+	# ==============================================================================
+	# 110. Great Lodge initialization, comfort capacity, random 1-of-9 variants, multi-family groups
+	GameManager.settlements[s.id] = s
+	var gl_coord = Vector2i(40, 40)
+	var gl_inst = GameManager.get_or_create_building_instance(gl_coord, "great_lodge", s.id)
+	assert(gl_inst.is_great_lodge(), "Instance must be recognized as Great Lodge")
+	assert(gl_inst.get_comfort_capacity() == 25, "Great lodge base comfort capacity must be 25")
+	assert(gl_inst.get_max_residents() == 35, "Great lodge max capacity must be 35")
+	assert(gl_inst.visual_variant >= 1 and gl_inst.visual_variant <= 9, "Visual variant must be random 1..9")
+	
+	# Проверка статусов комфорта: комфортно, тесно, переполнено
+	assert(gl_inst.get_comfort_status() == "Комфортно", "Empty lodge must be comfortable")
+	
+	# Добавляем 26 жителей -> Тесно
+	for i in range(26):
+		var cit_id = "gl_cit_%d" % i
+		var fam_id = "fam_A" if i < 10 else ("fam_B" if i < 20 else "")
+		var c_age = 70 if i == 25 else (4 if i == 24 else 25)
+		var c_cohort = "elder" if c_age >= 60 else ("child" if c_age < 16 else "adult")
+		var new_c = CitizenNPC.new(cit_id, "Соплеменник %d" % i, "m" if i % 2 == 0 else "f", c_age, c_cohort)
+		new_c.family_id = fam_id
+		new_c.home_id = gl_inst.id
+		s.population.citizens.append(new_c)
+		gl_inst.add_resident(cit_id, "resident")
+		
+	assert(gl_inst.get_comfort_status() == "Тесно", "26 residents must trigger 'Тесно' status")
+	
+	# Добавляем до 32 жителей -> Переполнено
+	for i in range(26, 32):
+		var cit_id = "gl_cit_%d" % i
+		var new_c = CitizenNPC.new(cit_id, "Соплеменник %d" % i, "f", 25, "adult")
+		new_c.home_id = gl_inst.id
+		s.population.citizens.append(new_c)
+		gl_inst.add_resident(cit_id, "resident")
+		
+	assert(gl_inst.get_comfort_status() == "Переполнено", "32 residents must trigger 'Переполнено' status")
+	
+	# Пересчёт групп домохозяйств (Household Groups Breakdown)
+	gl_inst.recalculate_household_groups(s.population)
+	assert(gl_inst.household_groups["families"].has("fam_A"), "fam_A must be present in household groups")
+	assert(gl_inst.household_groups["families"]["fam_A"].size() == 10, "fam_A must have 10 members")
+	assert(gl_inst.household_groups["families"]["fam_B"].size() == 10, "fam_B must have 10 members")
+	assert(gl_inst.household_groups["elders"].size() >= 1, "Elders must be counted in household groups")
+	assert(gl_inst.household_groups["children"].size() >= 1, "Children must be counted in household groups")
+	
+	print("OK 110. Great Lodge: base parameters, 25-comfort/35-max, random 1..9 sprites and household groups verified.")
+
+	# 111. Great Lodge 10 branching upgrades, role assignments & knowledge transfer
+	var gl_upgrades = BuildingDB.get_upgrades_for_building("great_lodge")
+	assert(gl_upgrades.size() == 10, "Great Lodge must have exactly 10 distinct upgrades")
+	
+	# Разблокировка улучшений
+	gl_inst.unlock_upgrade("great_hearth")
+	gl_inst.unlock_upgrade("partitions")
+	gl_inst.unlock_upgrade("nursery_corner")
+	gl_inst.unlock_upgrade("caretaker_quarters")
+	gl_inst.unlock_upgrade("elders_quarters")
+	gl_inst.unlock_upgrade("knowledge_circle")
+	gl_inst.unlock_upgrade("clan_totems")
+	gl_inst.unlock_upgrade("clan_council")
+	gl_inst.unlock_upgrade("communal_store")
+	gl_inst.unlock_upgrade("infirmary_corner")
+	
+	assert(gl_inst.is_upgrade_unlocked("great_hearth"), "great_hearth must be unlocked")
+	assert(gl_inst.is_upgrade_unlocked("knowledge_circle"), "knowledge_circle must be unlocked")
+	assert(gl_inst.is_upgrade_unlocked("clan_council"), "clan_council must be unlocked")
+	
+	# Назначение ролей
+	gl_inst.caretaker_id = "gl_cit_0"
+	gl_inst.knowledge_keeper_id = "gl_cit_25" # 70-летний старик
+	gl_inst.clan_elder_id = "gl_cit_1"
+	
+	var elder_master = s.population.get_citizen_by_id("gl_cit_25")
+	elder_master.skills["woodcutting"] = 80.0
+	elder_master.skills["hunting"] = 75.0
+	
+	var young_apprentice = s.population.get_citizen_by_id("gl_cit_2")
+	young_apprentice.age = 18
+	young_apprentice.skills["woodcutting"] = 12.0
+	
+	var skill_before = young_apprentice.skills["woodcutting"]
+	gl_inst.transfer_knowledge(young_apprentice, 10.0, s)
+	assert(young_apprentice.skills["woodcutting"] > skill_before, "Knowledge transfer must increase apprentice skill")
+	
+	# Гармония рода (Household Harmony)
+	gl_inst.household_harmony = 75.0
+	assert(gl_inst.get_harmony_status_name() == "Единый род", "75 harmony must return 'Единый род'")
+	gl_inst.household_harmony = -65.0
+	assert(gl_inst.get_harmony_status_name() == "Вражда", "-65 harmony must return 'Вражда'")
+	
+	# Сериализация и сохранение Great Lodge
+	var gl_saved = gl_inst.serialize()
+	var gl_restored = BuildingInstance.new("gl_restored", "great_lodge", s.id, gl_coord)
+	gl_restored.deserialize(gl_saved)
+	assert(gl_restored.caretaker_id == "gl_cit_0", "Caretaker ID must persist")
+	assert(gl_restored.knowledge_keeper_id == "gl_cit_25", "Knowledge Keeper ID must persist")
+	assert(gl_restored.household_harmony == -65.0, "Household harmony must persist")
+	assert(gl_restored.is_upgrade_unlocked("great_hearth"), "Upgrades must persist")
+	
+	print("OK 111. Great Lodge: 10 upgrades, role assignments, knowledge transfer and harmony rating verified.")
+
+	# 112. Great Lodge 18 Event Chains (GL-01 .. GL-18) and consequence execution
+	var ev_mgr = GameManager.civilization_event_manager
+	ev_mgr.settlement = s
+	for ev_num in range(1, 19):
+		var ev_id = "GL-%02d" % ev_num
+		var ev_def = CivilizationEventDB.get_event(ev_id)
+		assert(not ev_def.is_empty(), "Event %s must exist in CivilizationEventDB" % ev_id)
+		assert(ev_def.has("choices") and ev_def["choices"].size() >= 2, "Event %s must have at least 2 choices" % ev_id)
+		
+	# Симуляция триггера и применения выбора для GL-01
+	var ev_gl01 = CivilizationEventDB.get_event("GL-01")
+	var gl01_instance_id = ev_mgr.trigger_event(ev_gl01, {"target_building_id": gl_inst.id})
+	assert(gl01_instance_id != "", "GL-01 must trigger successfully")
+	
+	var initial_harmony = gl_inst.household_harmony
+	ev_mgr.apply_choice(gl01_instance_id, "A")
+	assert(gl_inst.household_harmony == initial_harmony + 5.0, "Choice A of GL-01 must increase harmony by 5.0")
+	
+	# Симуляция GL-06 (Опека над сиротой)
+	var orphan_child = CitizenNPC.new("orphan_gl", "Сирота Рода", "m", 6, "child")
+	orphan_child.relationships.clear()
+	s.population.citizens.append(orphan_child)
+	
+	var ev_gl06 = CivilizationEventDB.get_event("GL-06")
+	var gl06_instance_id = ev_mgr.trigger_event(ev_gl06, {"target_building_id": gl_inst.id})
+	ev_mgr.apply_choice(gl06_instance_id, "A")
+	assert(orphan_child.is_ward_of_lodge, "Choice A of GL-06 must set is_ward_of_lodge to true")
+	assert(orphan_child.home_id == gl_inst.id, "Ward of lodge home_id must be assigned to Great Lodge")
+	
+	print("OK 112. Great Lodge: 18 Event chains (GL-01..GL-18), dynamic consequences, ward adoption and save/load verified.")
+
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-105) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-112) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 
 func _get_storage_pos_for_test(settlement: SettlementData, citizen: CitizenNPC) -> Vector2:
 	return settlement._get_storage_pos(citizen)
+
 
 

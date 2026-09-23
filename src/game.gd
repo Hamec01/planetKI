@@ -106,7 +106,7 @@ func _on_day_passed(_day: int, _month: int, _year: int) -> void:
 	var season = GameManager.current_season
 	
 	# Обновление поселения игрока
-	var player_s = GameManager.settlements.get("player_tribe_settlement", null)
+	var player_s = GameManager.get_player_settlement()
 	if player_s:
 		player_s.sim_daily_tick(season)
 		var player_f = GameManager.factions.get(GameManager.player_faction_id, null)

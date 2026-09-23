@@ -337,7 +337,243 @@ func _render_overview() -> void:
 	overview_vbox.add_child(card)
 
 	# Карточка домохозяйства и жильцов для жилых зданий (P01.4 / ТЗ Раздел 6, 10)
-	if current_building.is_residential():
+	if current_building.is_great_lodge():
+		var lodge_card = PanelContainer.new()
+		var lodge_sbox = StyleBoxFlat.new()
+		lodge_sbox.bg_color = Color(0.12, 0.16, 0.24, 0.96)
+		lodge_sbox.border_color = Color(0.85, 0.68, 0.28, 0.85)
+		lodge_sbox.set_border_width_all(2)
+		lodge_sbox.set_corner_radius_all(8)
+		lodge_sbox.set_content_margin_all(10)
+		lodge_card.add_theme_stylebox_override("panel", lodge_sbox)
+		
+		var l_vbox = VBoxContainer.new()
+		l_vbox.add_theme_constant_override("separation", 6)
+		
+		# 1. Заголовок и статус комфорта
+		var l_title = Label.new()
+		l_title.text = "🏛️ Большой дом рода — Социальный институт"
+		l_title.add_theme_font_size_override("font_size", 13)
+		l_title.add_theme_color_override("font_color", Color(1.0, 0.88, 0.45))
+		l_vbox.add_child(l_title)
+		
+		var cur_res = current_building.residents.size()
+		var comf_cap = current_building.get_comfort_capacity()
+		var max_res = current_building.get_max_residents()
+		var comf_status = current_building.get_comfort_status()
+		
+		var cap_lbl = Label.new()
+		cap_lbl.text = "Жильцы: %d / %d чел. (Комфорт: %d) — %s" % [cur_res, max_res, comf_cap, comf_status]
+		cap_lbl.add_theme_font_size_override("font_size", 11)
+		cap_lbl.add_theme_color_override("font_color", Color(0.5, 0.95, 0.6) if cur_res <= comf_cap else (Color(1.0, 0.7, 0.3) if cur_res <= 30 else Color(1.0, 0.35, 0.3)))
+		l_vbox.add_child(cap_lbl)
+		
+		# 2. Родовая Гармония (Household Harmony)
+		var harm_box = HBoxContainer.new()
+		harm_box.add_theme_constant_override("separation", 8)
+		
+		var harm_lbl = Label.new()
+		harm_lbl.text = "🤝 Согласие в роду: %+d / 100 — [%s]" % [int(current_building.household_harmony), current_building.get_harmony_status_name()]
+		harm_lbl.add_theme_font_size_override("font_size", 11)
+		harm_lbl.add_theme_color_override("font_color", current_building.get_harmony_color())
+		harm_box.add_child(harm_lbl)
+		l_vbox.add_child(harm_box)
+		
+		# 3. Группы домохозяйств (Household Groups Breakdown)
+		current_building.recalculate_household_groups(current_settlement.population)
+		var groups = current_building.household_groups
+		
+		var groups_title = Label.new()
+		groups_title.text = "📋 Семьи и домохозяйства под одной крышей:"
+		groups_title.add_theme_font_size_override("font_size", 11)
+		groups_title.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
+		l_vbox.add_child(groups_title)
+		
+		# Семьи
+		var fam_dict = groups.get("families", {})
+		if fam_dict.is_empty():
+			var no_fam_lbl = Label.new()
+			no_fam_lbl.text = "  • Семейных ячеек пока нет"
+			no_fam_lbl.add_theme_font_size_override("font_size", 10)
+			no_fam_lbl.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+			l_vbox.add_child(no_fam_lbl)
+		else:
+			for f_id in fam_dict:
+				var f_mems = fam_dict[f_id]
+				var fam_lbl = Label.new()
+				fam_lbl.text = "  👨👩👧👦 Семья %s (%d чел.)" % [f_id, f_mems.size()]
+				fam_lbl.add_theme_font_size_override("font_size", 10)
+				fam_lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+				l_vbox.add_child(fam_lbl)
+				
+		# Старейшины / старики
+		var elders_list = groups.get("elders", [])
+		var elders_lbl = Label.new()
+		elders_lbl.text = "  👴 Старики и старейшины: %d чел." % elders_list.size()
+		elders_lbl.add_theme_font_size_override("font_size", 10)
+		elders_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.6))
+		l_vbox.add_child(elders_lbl)
+		
+		# Дети и сироты под опекой
+		var children_list = groups.get("children", [])
+		var wards_list = groups.get("wards", [])
+		var child_lbl = Label.new()
+		child_lbl.text = "  👶 Дети рода: %d чел. (включая подопечных сирот: %d)" % [children_list.size(), wards_list.size()]
+		child_lbl.add_theme_font_size_override("font_size", 10)
+		child_lbl.add_theme_color_override("font_color", Color(0.6, 0.95, 0.8))
+		l_vbox.add_child(child_lbl)
+		
+		# 4. Общественные роли Большого дома
+		var roles_title = Label.new()
+		roles_title.text = "👑 Общественные роли рода:"
+		roles_title.add_theme_font_size_override("font_size", 11)
+		roles_title.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+		l_vbox.add_child(roles_title)
+		
+		# Роль 1: Опекун детей
+		var care_hbox = HBoxContainer.new()
+		var care_name = "Не назначен"
+		if current_building.caretaker_id != "":
+			var c_cit = current_settlement.population.get_citizen_by_id(current_building.caretaker_id)
+			if c_cit: care_name = "%s (%d лет)" % [c_cit.name, c_cit.age]
+		var care_lbl = Label.new()
+		care_lbl.text = "  👩🍼 Опекун детей: %s" % care_name
+		care_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		care_lbl.add_theme_font_size_override("font_size", 10)
+		care_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
+		care_hbox.add_child(care_lbl)
+		
+		if current_building.is_upgrade_unlocked("caretaker_quarters"):
+			var care_btn = Button.new()
+			care_btn.text = "Назначить" if current_building.caretaker_id == "" else "Сменить"
+			care_btn.add_theme_font_size_override("font_size", 9)
+			care_btn.pressed.connect(func():
+				# Автоподбор взрослого соплеменника
+				for r_id in current_building.residents:
+					var cand = current_settlement.population.get_citizen_by_id(r_id)
+					if cand and cand.cohort in ["adult", "elder"] and cand.citizen_id != current_building.caretaker_id:
+						current_building.caretaker_id = cand.citizen_id
+						cand.job_id = "caretaker"
+						EventBus.notification_toast.emit("Опекун назначен", "%s стал(а) Опекуном детей рода!" % cand.name, "good")
+						refresh_all_tabs()
+						return
+				EventBus.notification_toast.emit("Нет кандидатов", "В Большом доме нет подходящих взрослых соплеменников!", "warning")
+			)
+			care_hbox.add_child(care_btn)
+		else:
+			var req_care_lbl = Label.new()
+			req_care_lbl.text = "[Требуется Место опекуна]"
+			req_care_lbl.add_theme_font_size_override("font_size", 9)
+			req_care_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+			care_hbox.add_child(req_care_lbl)
+		l_vbox.add_child(care_hbox)
+		
+		# Роль 2: Хранитель знаний
+		var know_hbox = HBoxContainer.new()
+		var know_name = "Не назначен"
+		if current_building.knowledge_keeper_id != "":
+			var k_cit = current_settlement.population.get_citizen_by_id(current_building.knowledge_keeper_id)
+			if k_cit: know_name = "%s (%d лет)" % [k_cit.name, k_cit.age]
+		var know_lbl = Label.new()
+		know_lbl.text = "  📚 Хранитель знаний: %s" % know_name
+		know_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		know_lbl.add_theme_font_size_override("font_size", 10)
+		know_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
+		know_hbox.add_child(know_lbl)
+		
+		if current_building.is_upgrade_unlocked("knowledge_circle"):
+			var know_btn = Button.new()
+			know_btn.text = "Назначить" if current_building.knowledge_keeper_id == "" else "Сменить"
+			know_btn.add_theme_font_size_override("font_size", 9)
+			know_btn.pressed.connect(func():
+				# Автоподбор старшего опытного соплеменника
+				for r_id in current_building.residents:
+					var cand = current_settlement.population.get_citizen_by_id(r_id)
+					if cand and (cand.age >= 40 or cand.cohort == "elder") and cand.citizen_id != current_building.knowledge_keeper_id:
+						current_building.knowledge_keeper_id = cand.citizen_id
+						cand.job_id = "knowledge_keeper"
+						EventBus.notification_toast.emit("Хранитель знаний", "%s стал(а) Хранителем знаний рода!" % cand.name, "good")
+						refresh_all_tabs()
+						return
+				EventBus.notification_toast.emit("Нет кандидатов", "В доме нет опытных соплеменников старше 40 лет!", "warning")
+			)
+			know_hbox.add_child(know_btn)
+		else:
+			var req_know_lbl = Label.new()
+			req_know_lbl.text = "[Требуется Круг знаний]"
+			req_know_lbl.add_theme_font_size_override("font_size", 9)
+			req_know_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+			know_hbox.add_child(req_know_lbl)
+		l_vbox.add_child(know_hbox)
+		
+		# Роль 3: Старейшина рода
+		var elder_hbox = HBoxContainer.new()
+		var elder_name = "Не назначен"
+		if current_building.clan_elder_id != "":
+			var el_cit = current_settlement.population.get_citizen_by_id(current_building.clan_elder_id)
+			if el_cit: elder_name = "%s (%d лет)" % [el_cit.name, el_cit.age]
+		var el_lbl = Label.new()
+		el_lbl.text = "  🗣 Старейшина рода: %s" % elder_name
+		el_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		el_lbl.add_theme_font_size_override("font_size", 10)
+		el_lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
+		elder_hbox.add_child(el_lbl)
+		
+		if current_building.is_upgrade_unlocked("clan_council"):
+			var el_btn = Button.new()
+			el_btn.text = "Назначить" if current_building.clan_elder_id == "" else "Сменить"
+			el_btn.add_theme_font_size_override("font_size", 9)
+			el_btn.pressed.connect(func():
+				for r_id in current_building.residents:
+					var cand = current_settlement.population.get_citizen_by_id(r_id)
+					if cand and cand.age >= 35 and cand.citizen_id != current_building.clan_elder_id:
+						current_building.clan_elder_id = cand.citizen_id
+						cand.job_id = "clan_elder"
+						EventBus.notification_toast.emit("Старейшина рода", "%s признан(а) Старейшиной рода!" % cand.name, "good")
+						refresh_all_tabs()
+						return
+				EventBus.notification_toast.emit("Нет кандидатов", "В доме нет подходящих старейшин рода!", "warning")
+			)
+			elder_hbox.add_child(el_btn)
+		else:
+			var req_el_lbl = Label.new()
+			req_el_lbl.text = "[Требуется Круг рода]"
+			req_el_lbl.add_theme_font_size_override("font_size", 9)
+			req_el_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+			elder_hbox.add_child(req_el_lbl)
+		l_vbox.add_child(elder_hbox)
+		
+		# 5. Родовые запасы и режим хранения
+		if current_building.is_upgrade_unlocked("communal_store"):
+			var store_hbox = HBoxContainer.new()
+			store_hbox.add_theme_constant_override("separation", 6)
+			var mode_title = "Всё семье" if current_building.lodge_storage_mode == "family_private" else ("Часть общая" if current_building.lodge_storage_mode == "family_shared" else "Все продукты общие")
+			var store_lbl = Label.new()
+			store_lbl.text = "🧺 Родовой запас: %.1f ед. (Режим: %s)" % [float(current_building.lodge_storage.get("food", 0.0)), mode_title]
+			store_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			store_lbl.add_theme_font_size_override("font_size", 10)
+			store_lbl.add_theme_color_override("font_color", Color(0.7, 0.95, 0.8))
+			store_hbox.add_child(store_lbl)
+			
+			var mode_btn = Button.new()
+			mode_btn.text = "Сменить режим"
+			mode_btn.add_theme_font_size_override("font_size", 9)
+			mode_btn.pressed.connect(func():
+				if current_building.lodge_storage_mode == "family_private":
+					current_building.lodge_storage_mode = "family_shared"
+				elif current_building.lodge_storage_mode == "family_shared":
+					current_building.lodge_storage_mode = "all_communal"
+				else:
+					current_building.lodge_storage_mode = "family_private"
+				refresh_all_tabs()
+			)
+			store_hbox.add_child(mode_btn)
+			l_vbox.add_child(store_hbox)
+			
+		lodge_card.add_child(l_vbox)
+		overview_vbox.add_child(lodge_card)
+		
+	elif current_building.is_residential():
 		var res_card = PanelContainer.new()
 		var res_sbox = StyleBoxFlat.new()
 		res_sbox.bg_color = Color(0.10, 0.14, 0.20, 0.95)

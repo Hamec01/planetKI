@@ -805,7 +805,7 @@ const EVENTS: Dictionary = {
 		"title": "Дом, который мы подняли своими руками",
 		"category": "Община и кров",
 		"icon": "building_hut",
-		"priority": 95,
+		"priority": 120,
 		"once": true,
 		"exclusive_group": "housing_precedent",
 		"description": "В только что возведённой хижине разгорелся первый жилищный спор. {actor_0}, чей очаг зажёгся первым, заявляет: «Мы таскали брёвна, месили глину и первыми вошли под эту крышу — это наш дом!» На это {actor_1} возражает: «Лес рубила вся община, земля под домом общая, а нам негде укрыться от ночного холода!». Как рассудит правитель?",
@@ -958,6 +958,840 @@ const EVENTS: Dictionary = {
 				"consequences": {
 					"no_intervention": true,
 					"domestic_brawl": true
+				}
+			}
+		]
+	},
+
+	# --------------------------------------------------------------------------
+	# 9. ЛЕСОЗАГОТОВКА И ПРАВО НА ВЫРУБКУ (WC-01)
+	# --------------------------------------------------------------------------
+	"WC-01": {
+		"id": "WC-01",
+		"chain_id": "WOODCUTTER_CAMP_INIT",
+		"title": "Где лес ещё наш?",
+		"category": "Лесозаготовка и земля",
+		"icon": "wood_01",
+		"priority": 95,
+		"once": true,
+		"exclusive_group": "logging_zones",
+		"description": "Первый лагерь лесорубов возведён, и топоры наточены. Но старейшины и лесорубы ждут воли вождя: где именно дозволено валить вековой лес, чтобы не навлечь беду и не истребить священную рощу предков?",
+		"conditions": {
+			"required_building": "woodcutter_camp"
+		},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Выделить ближний лес у стоянки",
+				"desc": "Начать вырубку с ближайших рощ. Путь лесорубов короток, буфер лагеря быстро наполняется.",
+				"effects_desc": "🪓 Быстрая заготовка. Утверждается ближняя зона вырубки (до 8 клеток от лагеря).",
+				"consequences": {
+					"set_logging_zone_near": true,
+					"modify_loyalty": [{"actor_id": "ruler", "delta": 5.0}],
+					"unlock_practice": "near_logging_permitted"
+				}
+			},
+			{
+				"id": "B",
+				"title": "Рубить дальнюю чащу за границей стоянки",
+				"desc": "Беречь лес у лагеря для тени и сбора ягод; отправлять вальщиков в дальний массив.",
+				"effects_desc": "🌲 Сбережение рощи. Дальняя зона вырубки (от 8 до 24 клеток). Сохраняет припасы рощи (+5 еды).",
+				"consequences": {
+					"set_logging_zone_far": true,
+					"modify_resources": {"food": 5.0},
+					"unlock_practice": "preserve_home_grove"
+				}
+			},
+			{
+				"id": "C",
+				"title": "Объявить свободную вырубку по всей округе",
+				"desc": "Пусть лесорубы валят любые удобные деревья без ограничений по зонам.",
+				"effects_desc": "🪓 Свободная заготовка. Разрешена рубка любых обнаруженных деревьев племени.",
+				"consequences": {
+					"set_logging_zone_all": true,
+					"unlock_practice": "free_forest_harvest"
+				}
+			},
+			{
+				"id": "D",
+				"title": "Пока не дозволять вырубку живого леса",
+				"desc": "Собрать совет и повременить. Лесорубы не трогают деревья, пока не будет чёткой межи.",
+				"effects_desc": "🛑 Запрет валки. Зона не назначается; лесорубы останавливаются с недоумением (?).",
+				"consequences": {
+					"no_logging_zone": true
+				}
+			}
+		]
+	},
+
+	# --------------------------------------------------------------------------
+	# БОЛЬШОЙ ДОМ РОДА (GREAT LODGE) — 18 СЮЖЕТНЫХ ЦЕПОЧЕК
+	# --------------------------------------------------------------------------
+	"GL-01": {
+		"id": "GL-01",
+		"chain_id": "GL_HEARTH_DISPUTE",
+		"title": "Лучшее место у огня",
+		"category": "Родовые споры",
+		"icon": "hearth",
+		"priority": 85,
+		"once": true,
+		"description": "В Большом доме рода разгорелся спор: одна из семей заняла самое тёплое место непосредственно возле очага, разложила свои шкуры и не пускает других греться рядом.",
+		"conditions": {"min_days": 3, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Очаг принадлежит всему роду",
+				"desc": "Общий дом принадлежит всем поровну. Семья уступает место другим жильцам.",
+				"effects_desc": "🤝 Сплочённость рода +5, отношение семьи к вождю -5.",
+				"consequences": {"modify_harmony": 5.0, "cohesion": 5.0}
+			},
+			{
+				"id": "B",
+				"title": "Кто первый занял — того и место",
+				"desc": "Право первого захвата. Семьи начинают размечать свои углы и личное пространство.",
+				"effects_desc": "🛏 Зарождение частного пространства. Сплочённость -5, ускоряет перегородки.",
+				"consequences": {"modify_harmony": -5.0, "private_space_concept": true}
+			},
+			{
+				"id": "C",
+				"title": "Пусть старейшина дома решит спор",
+				"desc": "Передать право суда авторитетному старшему соплеменнику Большого дома.",
+				"effects_desc": "🗣 Родовое правосудие. Старейшина разрешает спор миром.",
+				"consequences": {"modify_harmony": 10.0, "clan_elder_influence": 5.0}
+			}
+		]
+	},
+
+	"GL-02": {
+		"id": "GL-02",
+		"chain_id": "GL_SHARED_CHILDREN",
+		"title": "Чужие дети",
+		"category": "Воспитание",
+		"icon": "childhood",
+		"priority": 84,
+		"once": true,
+		"description": "Пока взрослые охотятся и валят лес, маленькие дети без присмотра бегают возле костра. Жители Большого дома спорят, кто обязан следить за малышами.",
+		"conditions": {"min_days": 4, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Каждая семья отвечает только за своих детей",
+				"desc": "Родители вынуждены чаще отвлекаться от работы и сидеть дома.",
+				"effects_desc": "🏡 Семейная обособленность. Рабочее время родителей -15%.",
+				"consequences": {"family_individualism": true}
+			},
+			{
+				"id": "B",
+				"title": "Дети — общая забота всего рода",
+				"desc": "Взрослые по очереди присматривают за малышами. Открывает идею Детского угла.",
+				"effects_desc": "👶 Коллективный уход. Открывает улучшение: Детский угол.",
+				"consequences": {"unlock_upgrade_nursery": true, "modify_harmony": 8.0}
+			},
+			{
+				"id": "C",
+				"title": "Назначить Опекуна детей рода",
+				"desc": "Выбрать одного взрослого соплеменника для постоянного присмотра и игр с детьми.",
+				"effects_desc": "👩🍼 Появляется роль Опекуна. Родители получают +3 часа работы в день.",
+				"consequences": {"unlock_role_caretaker": true, "parent_work_boost": true}
+			}
+		]
+	},
+
+	"GL-03": {
+		"id": "GL-03",
+		"chain_id": "GL_ELDER_CARE",
+		"title": "Старик занимает место",
+		"category": "Традиции рода",
+		"icon": "praise",
+		"priority": 83,
+		"once": true,
+		"description": "В Большом доме живёт старый охотник, которому тяжело ходить на промысел. Молодые охотники ворчат: «Он занимает лучшую лежанку и ест наши припасы».",
+		"conditions": {"min_days": 5, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Старики заслужили покой и заботу рода",
+				"desc": "Почитать седины и опыт предков. Род берет старика на полное содержание.",
+				"effects_desc": "👴 Традиции +10, старики чувствуют безопасность. Открывает: Место старших.",
+				"consequences": {"traditions": 10.0, "elder_respect": true, "unlock_upgrade_elders": true}
+			},
+			{
+				"id": "B",
+				"title": "Пусть помогает детям и передаёт навыки",
+				"desc": "Старик присматривает за очагом и учит молодых секретам выслеживания дичи.",
+				"effects_desc": "📚 Передача мудрости. Старик становится наставником молодёжи.",
+				"consequences": {"knowledge_transfer_boost": true, "modify_harmony": 5.0}
+			},
+			{
+				"id": "C",
+				"title": "Кто не работает — тот не ест досыта",
+				"desc": "Урезать паёк нетрудоспособным жильцам.",
+				"effects_desc": "⚠️ Жестокая этика. Лояльность старших -20, традиции -10.",
+				"consequences": {"traditions": -10.0, "modify_harmony": -15.0}
+			}
+		]
+	},
+
+	"GL-04": {
+		"id": "GL-04",
+		"chain_id": "GL_ORAL_LORE",
+		"title": "Рассказ старого охотника",
+		"category": "Знания и опыт",
+		"icon": "book_01",
+		"priority": 80,
+		"once": true,
+		"description": "Вечером у очага Большого дома старый следопыт показал молодым, как по сломанной ветке определить направление зверя и куда метать копьё.",
+		"conditions": {"min_days": 6, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Мудрость старших — сила всего племени",
+				"desc": "Обустроить Круг знаний для регулярных занятий со стариками.",
+				"effects_desc": "📚 Открыто улучшение: Круг знаний. Молодые получают +2 к навыкам.",
+				"consequences": {"unlock_upgrade_knowledge": true, "young_skill_boost": 2.0}
+			},
+			{
+				"id": "B",
+				"title": "Настоящий охотник учится только в лесу",
+				"desc": "Не тратить время на посиделки, проверять молодых в реальном бою со зверем.",
+				"effects_desc": "🏹 Практическая закалка. Небольшой бонус к отваге охотников.",
+				"consequences": {"hunter_courage": 5.0}
+			}
+		]
+	},
+
+	"GL-05": {
+		"id": "GL-05",
+		"chain_id": "GL_HUNT_DISTRIBUTION",
+		"title": "Кому принадлежит добыча?",
+		"category": "Экономика рода",
+		"icon": "meat",
+		"priority": 82,
+		"once": true,
+		"description": "Охотник принёс в Большой дом крупного оленя. Его семья заявляет, что мясо принадлежит им, а соседи напоминают, что чинили его лук и кололи дрова для очага.",
+		"conditions": {"min_days": 7, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Вся добыча принадлежит дому рода",
+				"desc": "Коллективное владение припасами. Никто в Большом доме не останется голодным.",
+				"effects_desc": "🧺 Сплочённость +10, открывает Общие запасы дома.",
+				"consequences": {"unlock_upgrade_store": true, "modify_harmony": 10.0}
+			},
+			{
+				"id": "B",
+				"title": "Добыча принадлежит добытчику и его семье",
+				"desc": "Принцип частной собственности семьи.",
+				"effects_desc": "🍖 Личная мотивация охотников +15%, сплоченность дома -5.",
+				"consequences": {"modify_harmony": -5.0, "hunter_motivation": 15.0}
+			},
+			{
+				"id": "C",
+				"title": "Часть отдать на общий очаг (домашний налог)",
+				"desc": "Охотник оставляет лучшую часть семье, а треть отдаёт на общий котёл.",
+				"effects_desc": "⚖️ Баланс интересов. Прообраз первого налога поселения.",
+				"consequences": {"modify_harmony": 5.0, "tribal_tax_concept": true}
+			}
+		]
+	},
+
+	"GL-06": {
+		"id": "GL-06",
+		"chain_id": "GL_LODGE_ORPHAN",
+		"title": "Чужой сирота",
+		"category": "Забота о сиротах",
+		"icon": "adoption",
+		"priority": 86,
+		"once": true,
+		"description": "После гибели родителей на охоте ребёнок остался один. Соплеменники в Большом доме собрались у очага, решая его судьбу.",
+		"conditions": {"min_days": 8, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Большой дом принимает ребёнка под общую опеку",
+				"desc": "Сирота становится подопечным всего дома (Ward of Lodge).",
+				"effects_desc": "👶 Ребёнок накормлен и защищён, растёт в кругу рода.",
+				"consequences": {"ward_of_lodge": true, "modify_harmony": 8.0}
+			},
+			{
+				"id": "B",
+				"title": "Передать ребёнка ближайшим родственникам",
+				"desc": "Семья родственников берёт его в свою ячейку.",
+				"effects_desc": "👨👩👧 Укрепление семейных уз родственников.",
+				"consequences": {"family_adoption": true}
+			},
+			{
+				"id": "C",
+				"title": "Вождь назначает приёмных родителей",
+				"desc": "Прямое решение правителя поселения.",
+				"effects_desc": "👑 Авторитет правителя +5.",
+				"consequences": {"ruler_authority": 5.0}
+			}
+		]
+	},
+
+	"GL-07": {
+		"id": "GL-07",
+		"chain_id": "GL_FAVORITE_CHILD",
+		"title": "Любимый ребёнок",
+		"category": "Воспитание",
+		"icon": "dialog",
+		"priority": 78,
+		"once": true,
+		"description": "Родители заметили, что Опекун детей Большого дома уделяет больше внимания и ласки своему племяннику, обделяя других малышей.",
+		"conditions": {"min_days": 10, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Строго предупредить Опекуна о равной заботе",
+				"desc": "Все дети рода должны расти в одинаковой любви и справедливости.",
+				"effects_desc": "⚖️ Справедливость восстановлена, доверие родителей +10.",
+				"consequences": {"modify_harmony": 5.0}
+			},
+			{
+				"id": "B",
+				"title": "Заменить Опекуна на более беспристрастного",
+				"desc": "Назначить другого соплеменника присматривать за детским углом.",
+				"effects_desc": "🔄 Смена опекуна, спокойствие в доме.",
+				"consequences": {"replace_caretaker": true}
+			},
+			{
+				"id": "C",
+				"title": "Не вмешиваться в мелкие споры о детях",
+				"desc": "Пусть семьи сами договорятся у очага.",
+				"effects_desc": "⚠️ Небольшое недовольство родителей (-5 к согласию).",
+				"consequences": {"modify_harmony": -5.0}
+			}
+		]
+	},
+
+	"GL-08": {
+		"id": "GL-08",
+		"chain_id": "GL_FAMILY_CRAFT_SECRET",
+		"title": "Знание должно остаться в семье",
+		"category": "Ремесло и тайны",
+		"icon": "idea",
+		"priority": 79,
+		"once": true,
+		"description": "Старый кремнёвый мастер соглашается обучать секретам отщепа только своего родного сына, отказываясь учить других молодых соплеменников.",
+		"conditions": {"min_days": 11, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Знание мастера принадлежит всему племени",
+				"desc": "Обязать мастера передавать опыт в Круге знаний для всех учеников.",
+				"effects_desc": "📚 Быстрое распространение ремесла, мастер слегка недоволен.",
+				"consequences": {"knowledge_public": true, "young_skill_boost": 3.0}
+			},
+			{
+				"id": "B",
+				"title": "Это право мастера и его семьи",
+				"desc": "Уважать семейную династию и тайну ремесленного рода.",
+				"effects_desc": "👨👦 Семейные традиции +10, секреты династии крепнут.",
+				"consequences": {"family_craft_monopoly": true}
+			},
+			{
+				"id": "C",
+				"title": "Выделить мастеру дополнительную долю еды за учеников",
+				"desc": "Награда за каждого обученного соплеменника.",
+				"effects_desc": "🪙 Прообраз платы за обучение. Все довольны.",
+				"consequences": {"master_paid": true, "modify_harmony": 8.0}
+			}
+		]
+	},
+
+	"GL-09": {
+		"id": "GL-09",
+		"chain_id": "GL_TWO_ELDERS",
+		"title": "Два старейшины",
+		"category": "Власть в роду",
+		"icon": "handshake",
+		"priority": 81,
+		"once": true,
+		"description": "Два авторитетных соплеменника спорят о главенстве в Большом доме: один опирается на возраст и память предков, второй — молодой удачливый вожак охотников.",
+		"conditions": {"min_days": 12, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Признать главенство старшего по возрасту",
+				"desc": "Традиционная геронтократия: верность заветам отцов.",
+				"effects_desc": "👴 Традиции +10, авторитет стариков непоколебим.",
+				"consequences": {"traditional_elder_power": true, "traditions": 10.0}
+			},
+			{
+				"id": "B",
+				"title": "Признать вожака охотников за его дела",
+				"desc": "Меритократия: уважение за добычу и силу.",
+				"effects_desc": "🏹 Власть силы и пользы. Молодежь ликует (+10 к боевому духу).",
+				"consequences": {"meritocracy_power": true}
+			},
+			{
+				"id": "C",
+				"title": "Пусть весь дом рода голосует на сходке",
+				"desc": "Демократическое собрание жильцов у общего очага.",
+				"effects_desc": "🗳 Выборная власть в роду. Сплочённость дома +10.",
+				"consequences": {"clan_voting": true, "modify_harmony": 10.0}
+			}
+		]
+	},
+
+	"GL-10": {
+		"id": "GL-10",
+		"chain_id": "GL_STRONG_CLAN",
+		"title": "Род становится слишком сильным",
+		"category": "Политика поселения",
+		"icon": "diplomacy_01",
+		"priority": 87,
+		"once": true,
+		"description": "В Большом доме сплотился мощный род из 20 родственников. Старейшина дома заявляет вождю: «Наш род кормит племя и ставит хижины. Мы сами будем решать, по каким обычаям жить!».",
+		"conditions": {"min_days": 14, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Даровать роду внутреннюю автономию",
+				"desc": "Дом сам вершит суд и распределяет внутренние запасы.",
+				"effects_desc": "🤝 Родовая автономия. Согласие в доме +20, влияние вождя -5.",
+				"consequences": {"clan_autonomy": true, "modify_harmony": 20.0}
+			},
+			{
+				"id": "B",
+				"title": "Все соплеменники подчиняются единой воле Вождя",
+				"desc": "Не допускать раскола племени на независимые роды.",
+				"effects_desc": "👑 Авторитет вождя +15, род недоволен (-15 к согласию).",
+				"consequences": {"ruler_authority": 15.0, "modify_harmony": -15.0}
+			},
+			{
+				"id": "C",
+				"title": "Назначить старейшину рода своим наместником",
+				"desc": "Включить лидера рода в совет правления поселением.",
+				"effects_desc": "🏛 Зарождение знати и племенной администрации.",
+				"consequences": {"clan_nobility": true, "modify_harmony": 12.0}
+			}
+		]
+	},
+
+	"GL-11": {
+		"id": "GL-11",
+		"chain_id": "GL_NIGHT_FIRE",
+		"title": "Огонь ночью",
+		"category": "Безопасность дома",
+		"icon": "hearth",
+		"priority": 84,
+		"once": true,
+		"description": "Ночью искры из общего очага попали на сухую траву и шкуры. Жильцы вовремя залили пламя водой, но теперь боятся спать без присмотра за огнём.",
+		"conditions": {"min_days": 15, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Установить ночные дежурства Хранителя очага",
+				"desc": "Жители по очереди дежурят у огня, защищая дом от пожаров.",
+				"effects_desc": "🔥 Безопасность очага +100%, сплочённость рода +5.",
+				"consequences": {"fire_keeper_duty": true, "modify_harmony": 5.0}
+			},
+			{
+				"id": "B",
+				"title": "Гасить большой огонь перед сном",
+				"desc": "Оставлять только тлеющие угли для тепла.",
+				"effects_desc": "❄️ Безопасно, но в холодные ночи жильцы зябнут.",
+				"consequences": {"damp_hearth_night": true}
+			}
+		]
+	},
+
+	"GL-12": {
+		"id": "GL-12",
+		"chain_id": "GL_STRANGER_ADMISSION",
+		"title": "Чужак просит место",
+		"category": "Гостеприимство",
+		"icon": "friendship",
+		"priority": 77,
+		"once": true,
+		"description": "Одинокий скиталец из дальних земель пришёл к Большому дому рода и просит крова на зиму. Старейшины недовольны: «Он нам не родственник и говорит на чужом наречии».",
+		"conditions": {"min_days": 16, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Впустить путника под кров рода",
+				"desc": "Священный долг гостеприимства. Путник станет верным работником.",
+				"effects_desc": "🤝 Толерантность +10, поселение получает нового жителя.",
+				"consequences": {"stranger_admitted": true, "modify_harmony": 5.0}
+			},
+			{
+				"id": "B",
+				"title": "Дом рода — только для единокровных",
+				"desc": "Отказ чужакам во имя чистоты и спокойствия рода.",
+				"effects_desc": "🪶 Родовая обособленность +10, чужак уходит.",
+				"consequences": {"clan_purity": true}
+			},
+			{
+				"id": "C",
+				"title": "Пусть платит частью добытой им дичи",
+				"desc": "Прообраз аренды жилья чужаками.",
+				"effects_desc": "🪙 Экономическая выгода для дома.",
+				"consequences": {"rent_concept": true}
+			}
+		]
+	},
+
+	"GL-13": {
+		"id": "GL-13",
+		"chain_id": "GL_BUILDERS_RENT",
+		"title": "Они должны платить",
+		"category": "Собственность дома",
+		"icon": "building",
+		"priority": 83,
+		"once": true,
+		"description": "Семья, которая первой валила дубы и строила Большой дом, требует с новосёлов долю припасов: «Мы вложили свой труд и пот, пока остальные отдыхали!».",
+		"conditions": {"min_days": 18, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Дом строился для всего рода — все жильцы равны",
+				"desc": "Коллективное общественное здание племени.",
+				"effects_desc": "🏛 Общественная собственность. Сплочённость +10.",
+				"consequences": {"communal_ownership": true, "modify_harmony": 10.0}
+			},
+			{
+				"id": "B",
+				"title": "Строители имеют право на признание и долю",
+				"desc": "Признать семью строителей старшими хозяевами дома.",
+				"effects_desc": "👑 Зарождение домохозяев и аренды жилья.",
+				"consequences": {"landlord_concept": true}
+			}
+		]
+	},
+
+	"GL-14": {
+		"id": "GL-14",
+		"chain_id": "GL_MANY_ELDERS",
+		"title": "Слишком много стариков",
+		"category": "Баланс труда",
+		"icon": "work_tool",
+		"priority": 79,
+		"once": true,
+		"description": "В Большом доме собралось много пожилых соплеменников. Молодые рабочие жалуются: «Нам тяжело кормить и обогревать стольких, кто больше не держит топор».",
+		"conditions": {"min_days": 20, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Это священный долг рода — заботиться о стариках",
+				"desc": "Мораль и память предков превыше сухой выгоды.",
+				"effects_desc": "👴 Традиции +15, верность стариков на максимуме.",
+				"consequences": {"traditions": 15.0, "modify_harmony": 8.0}
+			},
+			{
+				"id": "B",
+				"title": "Каждый старик должен помогать общине по силам",
+				"desc": "Присмотр за детьми, плетение корзин, чинка одежды и наставления.",
+				"effects_desc": "🧺 Пожилые соплеменники полезны и чувствуют себя нужными.",
+				"consequences": {"elder_domestic_labor": true, "modify_harmony": 12.0}
+			}
+		]
+	},
+
+	"GL-15": {
+		"id": "GL-15",
+		"chain_id": "GL_LAST_BOW_MASTER",
+		"title": "Последний мастер",
+		"category": "Утрата знаний",
+		"icon": "hunting",
+		"priority": 88,
+		"once": true,
+		"description": "Старый оружейник Торек, единственный мастер сложного лука, тяжело заболел. Если он уйдёт к духам без учеников — секрет луков будет забыт на годы!",
+		"conditions": {"min_days": 22, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Срочно отправить трёх молодых соплеменников в ученики",
+				"desc": "Снять их с обычной работы, чтобы успеть перенять мастерство.",
+				"effects_desc": "🏹 Мастерство спасено! Молодые перенимают навык BowCraft.",
+				"consequences": {"master_skill_saved": true, "young_skill_boost": 5.0}
+			},
+			{
+				"id": "B",
+				"title": "Выбрать одного самого одарённого ученика",
+				"desc": "Один верный подмастерье неотлучно сидит у постели мастера.",
+				"effects_desc": "✨ Быстрое точечное обучение преемника.",
+				"consequences": {"apprentice_trained": true}
+			}
+		]
+	},
+
+	"GL-16": {
+		"id": "GL-16",
+		"chain_id": "GL_CROSS_CLAN_FRIENDS",
+		"title": "Дети разных родов",
+		"category": "Дружба и союзы",
+		"icon": "friendship",
+		"priority": 76,
+		"once": true,
+		"description": "Двое детей из ранее спорящих семей Большого дома подружились и вместе мастерят фигурки у очага. Родители требуют прекратить общение.",
+		"conditions": {"min_days": 24, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Поддержать дружбу детей — будущее за миром",
+				"desc": "Детская дружба примиряет семьи и прекращает вражду.",
+				"effects_desc": "🤝 Примирение родов! Гармония дома +15.",
+				"consequences": {"clans_reconciled": true, "modify_harmony": 15.0}
+			},
+			{
+				"id": "B",
+				"title": "Не вмешиваться — пусть семьи решают сами",
+				"desc": "Оставить семейные дела внутри дома.",
+				"effects_desc": "⚖️ Нейтралитет.",
+				"consequences": {}
+			}
+		]
+	},
+
+	"GL-17": {
+		"id": "GL-17",
+		"chain_id": "GL_OLD_VS_YOUNG",
+		"title": "Старики слишком влиятельны",
+		"category": "Конфликт поколений",
+		"icon": "dialog",
+		"priority": 80,
+		"once": true,
+		"description": "Благодаря Кругу знаний старики Большого дома приобрели огромное влияние. Молодые воины ропщут: «Они запрещают менять обычаи и тормозят новые идеи!».",
+		"conditions": {"min_days": 26, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Слушать старших — в традициях выживание племени",
+				"desc": "Уважение традиций отцов обеспечивает непоколебимую стабильность.",
+				"effects_desc": "📜 Традиции +15, стабильность общества.",
+				"consequences": {"traditions": 15.0}
+			},
+			{
+				"id": "B",
+				"title": "Задача старших — советовать, а решать молодым",
+				"desc": "Гармоничный баланс мудрости и молодости.",
+				"effects_desc": "⚖️ Баланс поколений. Скорость открытий +10%.",
+				"consequences": {"generational_balance": true, "modify_harmony": 10.0}
+			},
+			{
+				"id": "C",
+				"title": "Будущее принадлежит смелым и молодым",
+				"desc": "Ослабить влияние геронтократии ради быстрых реформ.",
+				"effects_desc": "💡 Новые идеи +20%, традиции -10.",
+				"consequences": {"traditions": -10.0, "innovation_boost": 20.0}
+			}
+		]
+	},
+
+	"GL-18": {
+		"id": "GL-18",
+		"chain_id": "GL_DANGEROUS_CUSTOM",
+		"title": "Ребёнок повторяет опасную традицию",
+		"category": "Мораль и законы",
+		"icon": "book_01",
+		"priority": 82,
+		"once": true,
+		"description": "Хранитель знаний рассказал детям у очага старинное предание о кровной мести и человеческих жертвах духам. Родители спорят: стоит ли учить детей жестоким обычаям прошлого?",
+		"conditions": {"min_days": 28, "required_building": "great_lodge"},
+		"choices": [
+			{
+				"id": "A",
+				"title": "Запретить передачу жестоких обычаев детям",
+				"desc": "Очистить устную традицию от варварских и опасных пережитков.",
+				"effects_desc": "🕊 Гуманизм и безопасность потомков. Риск внутренних убийств -50%.",
+				"consequences": {"humanist_education": true, "modify_harmony": 8.0}
+			},
+			{
+				"id": "B",
+				"title": "Древние обычаи неприкосновенны",
+				"desc": "Дети должны знать всё, как жили суровые предки.",
+				"effects_desc": "🩸 Непреклонные традиции предков. Мораль воинов +10.",
+				"consequences": {"ancient_blood_customs": true, "traditions": 10.0}
+			}
+		]
+	},
+
+	# --------------------------------------------------------------------------
+	# ЛИЧНЫЙ КОНФЛИКТ NPC: Старая обида
+	# Срабатывает когда два жителя накопили affinity < -50
+	# --------------------------------------------------------------------------
+	"NPC-FEUD-01": {
+		"id": "NPC-FEUD-01",
+		"chain_id": "NPC_FEUDS",
+		"title": "Старая обида",
+		"category": "Жизнь племени",
+		"icon": "quarrel",
+		"priority": 55,
+		"once": false,
+		"exclusive_group": "",
+		"description": "{actor_0} и {actor_1} давно терпят друг друга — и, похоже, терпение лопнуло. Они поссорились прямо посреди поселения. Соплеменники смотрят и ждут: вмешаешься или позволишь разобраться самим?",
+		"conditions": { "min_days": 10, "min_population": 5 },
+		"choices": [
+			{
+				"id": "A",
+				"title": "Разнять и усадить за общий котёл",
+				"desc": "Устроить примирительный ужин. Оба выговорятся, получат еды — может, остынут.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "🍲 Небольшое сближение. Но оба ещё долго будут коситься.",
+				"consequences": {
+					"modify_relations": [
+						{"actor_a": "{actor_0}", "actor_b": "{actor_1}", "delta_affinity": 20.0, "delta_respect": 5.0}
+					],
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": 5.0},
+						{"actor_id": "{actor_1}", "delta": 5.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "gratitude", "actor": "ruler", "target": "", "importance": 0.6, "desc": "Вождь помирил нас за общим столом", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "gratitude", "actor": "ruler", "target": "", "importance": 0.6, "desc": "Вождь помирил нас за общим столом", "permanent": false}
+					],
+					"modify_resources": {"food": -8.0}
+				}
+			},
+			{
+				"id": "B",
+				"title": "Выслушать обоих и вынести суд",
+				"desc": "Вождь выслушивает жалобы. Кто виноват — несёт наказание: несколько дней тяжёлой работы.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "⚖️ Один будет доволен, другой обижен. Уважение к вождю растёт.",
+				"consequences": {
+					"modify_relations": [
+						{"actor_a": "{actor_0}", "actor_b": "{actor_1}", "delta_affinity": -5.0, "delta_respect": 0.0}
+					],
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": 8.0},
+						{"actor_id": "{actor_1}", "delta": -5.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "acceptance", "actor": "ruler", "target": "", "importance": 0.7, "desc": "Вождь разобрал нашу ссору как подобает", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "disappointment", "actor": "ruler", "target": "", "importance": 0.7, "desc": "Вождь наказал меня в споре", "permanent": false}
+					],
+					"council_vote": true
+				}
+			},
+			{
+				"id": "C",
+				"title": "Пусть решают старейшины",
+				"desc": "Это их дело. Старейшины мудры и разберутся без тебя.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "🧓 Авторитет старейшин растёт. Ты остаёшься в стороне.",
+				"consequences": {
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": 2.0},
+						{"actor_id": "{actor_1}", "delta": 2.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "acceptance", "actor": "elders", "target": "", "importance": 0.5, "desc": "Старейшины разобрали нашу ссору", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "acceptance", "actor": "elders", "target": "", "importance": 0.5, "desc": "Старейшины разобрали нашу ссору", "permanent": false}
+					]
+				}
+			},
+			{
+				"id": "D",
+				"title": "Не вмешиваться — сами разберутся",
+				"desc": "Племя сильное. Личные дрязги — личное дело.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "😤 Конфликт тлеет дальше. Оба потеряют лояльность.",
+				"consequences": {
+					"no_intervention": true
+				}
+			}
+		]
+	},
+
+	# --------------------------------------------------------------------------
+	# СОБЫТИЕ: Доносчик в племени
+	# Кто-то начал шептать гадости о другом. Играет на социальном напряжении.
+	# --------------------------------------------------------------------------
+	"NPC-GOSSIP-01": {
+		"id": "NPC-GOSSIP-01",
+		"chain_id": "NPC_GOSSIP",
+		"title": "Злой язык",
+		"category": "Жизнь племени",
+		"icon": "gossip",
+		"priority": 45,
+		"once": false,
+		"exclusive_group": "",
+		"description": "{actor_0} распускает слухи о {actor_1}: будто тот ворует с общего котла и отлынивает от работы. Некоторые уже верят. {actor_1} в ярости и требует суда. Как поступить?",
+		"conditions": { "min_days": 15, "min_population": 6 },
+		"choices": [
+			{
+				"id": "A",
+				"title": "Публично осудить {actor_0} за сплетни",
+				"desc": "Слухи без доказательств — это яд для общины. Пусть {actor_0} публично извинится.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "✋ Репутация {actor_0} падает. {actor_1} доволен. Сплетни в племени поутихнут.",
+				"consequences": {
+					"modify_relations": [
+						{"actor_a": "{actor_0}", "actor_b": "{actor_1}", "delta_affinity": -20.0, "delta_respect": -10.0}
+					],
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": -12.0},
+						{"actor_id": "{actor_1}", "delta": 10.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "shame", "actor": "ruler", "target": "", "importance": 0.8, "desc": "Вождь осудил меня за сплетни", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "gratitude", "actor": "ruler", "target": "", "importance": 0.8, "desc": "Вождь защитил мою честь", "permanent": true}
+					]
+				}
+			},
+			{
+				"id": "B",
+				"title": "Расследовать: вдруг слухи правдивы?",
+				"desc": "Нельзя отметать обвинения не проверив. Отправь надёжного человека понаблюдать за {actor_1}.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "🔍 Оба под напряжением. Если кража найдётся — ты выиграл. Нет — потеряешь доверие.",
+				"consequences": {
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": 3.0},
+						{"actor_id": "{actor_1}", "delta": -8.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_1}", "type": "disappointment", "actor": "ruler", "target": "", "importance": 0.7, "desc": "Вождь усомнился в моей честности", "permanent": false},
+						{"actor_id": "{actor_0}", "type": "self_respect", "actor": "ruler", "target": "", "importance": 0.5, "desc": "Вождь воспринял мои слова серьёзно", "permanent": false}
+					]
+				}
+			},
+			{
+				"id": "C",
+				"title": "Помирить их — это личное дело",
+				"desc": "Посадить вместе за работу и трапезу. Совместный труд лечит.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "🤝 Напряжение снижается. Никто не доволен полностью, но ссора затихает.",
+				"consequences": {
+					"modify_relations": [
+						{"actor_a": "{actor_0}", "actor_b": "{actor_1}", "delta_affinity": 8.0, "delta_respect": 3.0}
+					],
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": 2.0},
+						{"actor_id": "{actor_1}", "delta": 2.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "acceptance", "actor": "ruler", "target": "", "importance": 0.4, "desc": "Вождь уладил наш спор миром", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "acceptance", "actor": "ruler", "target": "", "importance": 0.4, "desc": "Вождь уладил наш спор миром", "permanent": false}
+					]
+				}
+			},
+			{
+				"id": "D",
+				"title": "Пусть решают старейшины",
+				"desc": "Это внутреннее дело, пусть мудрецы разберутся сами.",
+				"group_value": "",
+				"tradition_id": "",
+				"effects_desc": "🧓 Старейшины примут решение. Твой авторитет не пострадает.",
+				"consequences": {
+					"modify_loyalty": [
+						{"actor_id": "{actor_0}", "delta": -2.0},
+						{"actor_id": "{actor_1}", "delta": -2.0}
+					],
+					"modify_memory": [
+						{"actor_id": "{actor_0}", "type": "acceptance", "actor": "elders", "target": "", "importance": 0.4, "desc": "Старейшины решили наш спор", "permanent": false},
+						{"actor_id": "{actor_1}", "type": "acceptance", "actor": "elders", "target": "", "importance": 0.4, "desc": "Старейшины решили наш спор", "permanent": false}
+					]
 				}
 			}
 		]

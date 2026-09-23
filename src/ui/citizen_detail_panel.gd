@@ -1,6 +1,8 @@
 class_name CitizenDetailPanel
 extends PanelContainer
 
+const EmoteTextureManager = preload("res://src/core/emote_texture_manager.gd")
+
 var current_citizen: CitizenNPC = null
 var is_following_camera: bool = false
 
@@ -11,6 +13,7 @@ var job_lbl: Label
 var workplace_lbl: Label
 var home_lbl: Label
 var action_lbl: Label
+var emote_icon: TextureRect
 var cargo_lbl: Label
 var cargo_icon: TextureRect
 
@@ -153,6 +156,13 @@ func _build_ui() -> void:
 	action_lbl.text = "Идёт к ягодным кустам"
 	action_lbl.add_theme_color_override("font_color", Color(0.95, 0.85, 0.4))
 	action_box.add_child(action_lbl)
+	
+	emote_icon = TextureRect.new()
+	emote_icon.custom_minimum_size = Vector2(18, 18)
+	emote_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	emote_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	emote_icon.visible = false
+	action_box.add_child(emote_icon)
 	
 	# 5. Груз / Инвентарь
 	var cargo_box = HBoxContainer.new()
@@ -370,6 +380,18 @@ func _update_ui_values() -> void:
 		home_lbl.text = "Под открытым небом"
 		
 	action_lbl.text = current_citizen.last_status_reason
+	
+	if current_citizen.active_emote_id != "" and current_citizen.emote_timer > 0.0:
+		var e_tex = EmoteTextureManager.get_emote_texture(current_citizen.active_emote_id)
+		if e_tex:
+			emote_icon.texture = e_tex
+			var e_info = EmoteTextureManager.get_emote_info(current_citizen.active_emote_id)
+			emote_icon.tooltip_text = "%s: %s" % [e_info.get("name", "Эмоция"), e_info.get("desc", "")]
+			emote_icon.visible = true
+		else:
+			emote_icon.visible = false
+	else:
+		emote_icon.visible = false
 	
 	if current_citizen.cargo_type != "" and current_citizen.cargo_amount > 0:
 		cargo_lbl.text = "%.1f ед. (%s)" % [current_citizen.cargo_amount, current_citizen.cargo_type]

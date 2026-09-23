@@ -5,10 +5,10 @@ const DAYS_PER_MONTH: int = 30
 const MONTHS_PER_YEAR: int = 12
 
 # Временные масштабы симуляции (PlanetKI Living Settlement Stage 1 TZ)
-const DAY_CYCLE_DURATION: float = 300.0   # 5 реальных минут на 1 сутки при 1x (210с день / 90с ночь)
-const DAYLIGHT_SECONDS: float = 210.0
-const NIGHT_SECONDS: float = 90.0
-const NPC_YEAR_DURATION: float = 1800.0    # 30 реальных минут на 1 биографический год при 1x (6 суток = 1 год)
+const DAY_CYCLE_DURATION: float = 600.0   # 10 реальных минут на 1 сутки при 1x (420с день / 180с ночь)
+const DAYLIGHT_SECONDS: float = 420.0
+const NIGHT_SECONDS: float = 180.0
+const NPC_YEAR_DURATION: float = 1800.0    # 30 реальных минут на 1 биографический год при 1x (3 суток = 1 год)
 const INITIAL_FOOD_DAYS: int = 5
 
 # Текущее время симуляции
@@ -26,9 +26,10 @@ var is_paused: bool = false
 var user_paused: bool = false
 var modal_pause_count: int = 0
 var game_speed: float = 1.0 # 1.0, 2.0, 4.0, 8.0
-var base_tick_interval: float = 300.0 # 300 секунд реального времени на 1 игровой день при 1x
-var tick_accumulator: float = 75.0 # Смещение на 06:00 (75 / 300 = 0.25 дня)
+var base_tick_interval: float = 600.0 # 600 секунд реального времени на 1 игровой день при 1x
+var tick_accumulator: float = 150.0 # Смещение на 06:00 (150 / 600 = 0.25 дня)
 var sim_time_total: float = 0.0 # Общее симуляционное время в секундах
+var event_check_timer: float = 0.0
 
 # Глобальное состояние игры
 var world_seed: String = "PLN-7A4F-9231-B"
@@ -59,6 +60,17 @@ var planet_data: Dictionary = {}
 var custom_map_to_play: Dictionary = {}
 var star_system_data: Dictionary = {}
 var history_log: Array[Dictionary] = []
+var trample_map: Dictionary = {} # Vector2i -> float (0.0 .. 1.0) интенсивность протоптанности тропинок
+
+# Персональные декорации NPC: таблички, кусты, скамейки, идолы, мусор и т.д.
+# Vector2i -> { "type": String, "placer_id": String, "placed_day": int, "variant": int }
+# type: "sign", "bush_planted", "bench", "idol", "trash", "flowers", "totem_small"
+var tile_decorations: Dictionary = {}
+
+func add_tile_trample(coord: Vector2i, amount: float = 0.05) -> void:
+	if coord.x < 0 or coord.y < 0:
+		return
+	trample_map[coord] = clampf(float(trample_map.get(coord, 0.0)) + amount, 0.0, 1.0)
 
 var culture_memory: RefCounted = null
 var civilization_event_manager: RefCounted = null
@@ -143,6 +155,14 @@ func _process(delta: float) -> void:
 	# 4. Перемещение и обновление таймеров армий
 	_process_armies_simulation(sim_delta)
 	
+	# 4b. Периодическая проверка событий цивилизации (HUT-01, HUT-02, WC-01 и др.)
+	event_check_timer += sim_delta
+	if event_check_timer >= 4.0:
+		event_check_timer = 0.0
+		var p_s = get_player_settlement()
+		if civilization_event_manager and is_instance_valid(civilization_event_manager) and p_s:
+			civilization_event_manager.process_daily_triggers(current_day, total_simulation_days, p_s)
+	
 	# 5. Продвижение времени суток и календарного дня
 	tick_accumulator += sim_delta
 	var step: float = base_tick_interval
@@ -198,7 +218,7 @@ func start_new_game(p_seed: String = "") -> void:
 	game_over_reason = ""
 	game_speed = 1.0
 	base_tick_interval = DAY_CYCLE_DURATION
-	tick_accumulator = 225.0 # 06:00 утра старт
+	tick_accumulator = 150.0 # 06:00 утра старт (150/600 = 0.25 дня)
 	sim_time_total = 0.0
 	total_simulation_days = 1
 	factions.clear()
@@ -206,6 +226,8 @@ func start_new_game(p_seed: String = "") -> void:
 	history_log.clear()
 	building_instances.clear()
 	tile_buildings.clear()
+	trample_map.clear()
+	tile_decorations.clear()
 	if task_service:
 		task_service.tasks.clear()
 	
@@ -235,11 +257,21 @@ func _advance_day() -> void:
 		EventBus.month_passed.emit(current_month, current_year)
 		
 	# Проверка фундаментальных событий цивилизации
-	var s = settlements.get("player_tribe_settlement", null)
-	if civilization_event_manager and is_instance_valid(civilization_event_manager):
+	var s = get_player_settlement()
+	if civilization_event_manager and is_instance_valid(civilization_event_manager) and s:
 		civilization_event_manager.process_daily_triggers(current_day, total_simulation_days, s)
 		
 	EventBus.day_passed.emit(current_day, current_month, current_year)
+
+func get_player_settlement() -> RefCounted:
+	if player_faction_id != "":
+		var s = settlements.get(player_faction_id + "_settlement", null)
+		if s:
+			return s
+	for s in settlements.values():
+		if s and (s.faction_id == player_faction_id or s.id == "player_tribe_settlement" or s.id == "player_settlement"):
+			return s
+	return settlements.get("player_tribe_settlement", null)
 
 func push_modal_pause() -> void:
 	modal_pause_count += 1

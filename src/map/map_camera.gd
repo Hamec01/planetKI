@@ -4,7 +4,7 @@ extends Camera2D
 var zoom_target: Vector2 = Vector2(1.4, 1.4)
 var zoom_speed: float = 12.0
 var min_zoom: float = 0.35
-var max_zoom: float = 2.8
+var max_zoom: float = 6.0
 
 var pan_speed: float = 800.0
 var is_dragging: bool = false

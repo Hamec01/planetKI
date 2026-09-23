@@ -1,6 +1,7 @@
 class_name WorldMapView
 extends Node2D
 
+const EmoteTextureManager = preload("res://src/core/emote_texture_manager.gd")
 const TILE_SIZE: float = 32.0
 
 var planet_data: Dictionary = {}
@@ -126,7 +127,7 @@ func _find_nearest_enemy_army(army: ArmyData) -> ArmyData:
 # ==============================================================================
 # ЖИТЕЛИ (NPC) — ПОЛУЧЕНИЕ ВЫБРАННОГО ГРАЖДАНИНА ПО КЛИКУ
 # ==============================================================================
-func _get_citizen_near_position(m_pos: Vector2, max_dist: float = 20.0) -> CitizenNPC:
+func _get_citizen_near_position(m_pos: Vector2, max_dist: float = 6.5) -> CitizenNPC:
 	var player_s = GameManager.settlements.get("player_tribe_settlement", null)
 	if not player_s or not player_s.population:
 		return null
@@ -135,13 +136,14 @@ func _get_citizen_near_position(m_pos: Vector2, max_dist: float = 20.0) -> Citiz
 	for c in player_s.population.citizens:
 		if c.state == CitizenNPC.State.SLEEPING and c.home_id != "":
 			continue
-		var d = c.pos.distance_to(m_pos)
+		var sprite_center = c.pos + Vector2(0.0, -4.0)
+		var d = sprite_center.distance_to(m_pos)
 		if d < best_dist:
 			best_dist = d
 			best_c = c
 	return best_c
 
-func _get_animal_near_position(m_pos: Vector2, max_dist: float = 24.0) -> WildAnimal:
+func _get_animal_near_position(m_pos: Vector2, max_dist: float = 14.0) -> WildAnimal:
 	if not GameManager.wildlife_manager:
 		return null
 	var best_a: WildAnimal = null
@@ -438,9 +440,34 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		var mouse_world = get_global_mouse_position()
 		var mouse_pos = get_viewport().get_mouse_position()
-		
+		var tile_under = Vector2i(int(floor(mouse_world.x / TILE_SIZE)), int(floor(mouse_world.y / TILE_SIZE)))
+		var has_valid_tile = planet_data.has("tiles") and tile_under.x >= 0 and tile_under.x < planet_data["width"] and tile_under.y >= 0 and tile_under.y < planet_data["height"]
+		var tile = planet_data["tiles"][tile_under.y][tile_under.x] if has_valid_tile else {}
+		var tile_has_building = has_valid_tile and (GameManager.tile_buildings.has(tile_under) or tile.get("settlement_id", "") != "")
+
+		# Если клик над зданием: сначала проверяем точное попадание в NPC (радиус 5.0)
+		if tile_has_building:
+			var clicked_citizen = _get_citizen_near_position(mouse_world, 5.0)
+			if clicked_citizen != null:
+				selected_nature_coord = Vector2i(-1, -1)
+				selected_nature_info = {}
+				selected_animal_id = ""
+				selected_tile_coord = Vector2i(-1, -1)
+				EventBus.citizen_selected.emit(clicked_citizen)
+				queue_redraw()
+				return
+			
+			# Иначе клик идет строго по зданию / клетке поселения
+			selected_tile_coord = tile_under
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = ""
+			EventBus.tile_right_clicked.emit(selected_tile_coord, tile, mouse_pos)
+			queue_redraw()
+			return
+
 		# 3.1 Клик ПКМ по дикому животному (фауна) -> открыть карточку зверя с охотой
-		var clicked_animal = _get_animal_near_position(mouse_world)
+		var clicked_animal = _get_animal_near_position(mouse_world, 14.0)
 		if clicked_animal != null:
 			selected_nature_coord = Vector2i(-1, -1)
 			selected_nature_info = {}
@@ -450,8 +477,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 			
-		# 3.2 Клик ПКМ по конкретному гражданину (NPC) -> открыть карточку жителя
-		var clicked_citizen = _get_citizen_near_position(mouse_world)
+		# 3.2 Клик ПКМ по конкретному гражданину (NPC) вне зданий
+		var clicked_citizen = _get_citizen_near_position(mouse_world, 6.5)
 		if clicked_citizen != null:
 			selected_nature_coord = Vector2i(-1, -1)
 			selected_nature_info = {}
@@ -461,10 +488,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 			
-		# 3.3 Клик ПКМ по клетке карты (природный ресурс, здание, свободная земля)
-		if hovered_tile_coord != Vector2i(-1, -1) and planet_data.has("tiles"):
-			selected_tile_coord = hovered_tile_coord
-			var tile = planet_data["tiles"][selected_tile_coord.y][selected_tile_coord.x]
+		# 3.3 Клик ПКМ по клетке карты (природный ресурс, свободная земля)
+		if has_valid_tile:
+			selected_tile_coord = tile_under
 			EventBus.tile_right_clicked.emit(selected_tile_coord, tile, mouse_pos)
 			queue_redraw()
 			return
@@ -472,9 +498,39 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 4. ОБЫЧНЫЙ ВЫБОР ОБЪЕКТА (СПРАЙТА) / АРМИИ / ЖИТЕЛЯ (ЛКМ)
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var mouse_world = get_global_mouse_position()
-		
-		# 4.1 Клик по конкретному гражданину (NPC)
-		var clicked_citizen = _get_citizen_near_position(mouse_world)
+		var tile_under = Vector2i(int(floor(mouse_world.x / TILE_SIZE)), int(floor(mouse_world.y / TILE_SIZE)))
+		var has_valid_tile = planet_data.has("tiles") and tile_under.x >= 0 and tile_under.x < planet_data["width"] and tile_under.y >= 0 and tile_under.y < planet_data["height"]
+		var tile = planet_data["tiles"][tile_under.y][tile_under.x] if has_valid_tile else {}
+		var tile_has_building = has_valid_tile and (GameManager.tile_buildings.has(tile_under) or tile.get("settlement_id", "") != "")
+
+		# Если клик над зданием или поселением:
+		# Проверяем клик по NPC только при ТОЧНОМ наведении на спрайт NPC (радиус 5.0)
+		if tile_has_building:
+			var clicked_citizen = _get_citizen_near_position(mouse_world, 5.0)
+			if clicked_citizen != null:
+				selected_nature_coord = Vector2i(-1, -1)
+				selected_nature_info = {}
+				selected_animal_id = ""
+				selected_tile_coord = Vector2i(-1, -1)
+				EventBus.citizen_selected.emit(clicked_citizen)
+				queue_redraw()
+				return
+			
+			# Иначе кликаем строго по самому зданию!
+			selected_tile_coord = tile_under
+			selected_nature_coord = Vector2i(-1, -1)
+			selected_nature_info = {}
+			selected_animal_id = ""
+			EventBus.tile_selected.emit(selected_tile_coord, tile)
+			if tile.get("settlement_id", "") != "":
+				var s_data = GameManager.settlements.get(tile["settlement_id"], null)
+				if s_data:
+					EventBus.settlement_selected.emit(s_data)
+			queue_redraw()
+			return
+
+		# 4.1 Клик по конкретному гражданину (NPC) на открытой местности
+		var clicked_citizen = _get_citizen_near_position(mouse_world, 6.5)
 		if clicked_citizen != null:
 			selected_nature_coord = Vector2i(-1, -1)
 			selected_nature_info = {}
@@ -485,7 +541,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 
 		# 4.2 Клик по дикому животному (фауна)
-		var clicked_animal = _get_animal_near_position(mouse_world)
+		var clicked_animal = _get_animal_near_position(mouse_world, 14.0)
 		if clicked_animal != null:
 			selected_nature_coord = Vector2i(-1, -1)
 			selected_nature_info = {}
@@ -521,24 +577,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 
-		# 4.5 Клик по зданию или центру поселения
-		var tile_under = Vector2i(int(floor(mouse_world.x / TILE_SIZE)), int(floor(mouse_world.y / TILE_SIZE)))
-		if planet_data.has("tiles") and tile_under.x >= 0 and tile_under.x < planet_data["width"] and tile_under.y >= 0 and tile_under.y < planet_data["height"]:
-			var tile = planet_data["tiles"][tile_under.y][tile_under.x]
-			if GameManager.tile_buildings.has(tile_under) or tile.get("settlement_id", "") != "":
-				selected_tile_coord = tile_under
-				selected_nature_coord = Vector2i(-1, -1)
-				selected_nature_info = {}
-				selected_animal_id = ""
-				EventBus.tile_selected.emit(selected_tile_coord, tile)
-				if tile["settlement_id"] != "":
-					var s_data = GameManager.settlements.get(tile["settlement_id"], null)
-					if s_data:
-						EventBus.settlement_selected.emit(s_data)
-				queue_redraw()
-				return
-
-		# 4.6 Клик по пустой земле (трава, вода, песок) — СБРОС ВЫБОРА!
+		# 4.5 Клик по пустой земле (трава, вода, песок) — СБРОС ВЫБОРА!
 		selected_nature_coord = Vector2i(-1, -1)
 		selected_nature_info = {}
 		selected_animal_id = ""
@@ -622,6 +661,7 @@ func _draw() -> void:
 	var max_ty = clampi(int(ceil((cam_pos.y + (vp_size.y * 0.5) / cam_zoom) / TILE_SIZE)) + margin, 0, height - 1)
 	
 	# 1. Базовые тайлы поверхности и плавные переходы биомов
+	# Первый проход: только земля — чтобы деревья соседних строк не обрезались тайлами
 	for y in range(min_ty, max_ty + 1):
 		for x in range(min_tx, max_tx + 1):
 			var tile = tiles[y][x]
@@ -654,34 +694,50 @@ func _draw() -> void:
 				var ov_tex = TileTextureManager.get_overlay_texture(ov["biome_folder"], ov["mask"])
 				if ov_tex:
 					draw_texture_rect(ov_tex, rect, false, mod_color)
-					
-			# 2. Природные объекты (деревья, скалы, кустарники, трава, цветы, грибы)
-			var custom_nat = tile.get("nature_object", "")
-			var n_data = TileTextureManager.get_nature_data(tile["biome"], tile["coord"], tile.get("resource", null), custom_nat)
-			if not n_data.is_empty() and n_data.get("tex", null) != null and tile["settlement_id"] == "" and not GameManager.tile_buildings.has(Vector2i(x, y)):
-				var c = rect.get_center()
-				var n_tex: Texture2D = n_data["tex"]
-				var orig_size = n_tex.get_size()
-				var aspect = orig_size.x / maxf(1.0, orig_size.y)
-				var target_h: float = n_data.get("scale_h", 20.0)
-				var target_w: float = target_h * aspect
-				
-				# Основание объекта на земле тайла
-				var foot_y = c.y + 11.0
-				var n_rect = Rect2(c.x - target_w * 0.5, foot_y - target_h, target_w, target_h)
-				
-				# Мягкая эллиптическая тень под основанием
-				var shadow_radius = target_w * (0.30 if n_data.get("category", "") == "tree" else 0.40)
-				draw_circle(Vector2(c.x, foot_y - 1.0), shadow_radius, Color(0, 0, 0, 0.22))
-				
-				draw_texture_rect(n_tex, n_rect, false)
-				
+
 			# Иконки ресурсов отображаются ТОЛЬКО в специальном режиме карты "Ресурсы"
 			if tile["resource"] != null and current_map_mode == "resources":
 				_draw_resource_icon(rect, tile["resource"]["type"])
 
+	# 1.5. Протоптанные тропинки между домами и костром
+	# Рисуются ДО деревьев — деревья должны быть поверх тропинок
+	_draw_beaten_footpaths()
+
+	# 2. Второй проход: природные объекты (деревья, скалы, кустарники, трава, цветы, грибы)
+	# Отдельный проход гарантирует что деревья не будут обрезаться тайлами земли следующей строки,
+	# а тропинки не залезают поверх деревьев
+	for y in range(min_ty, max_ty + 1):
+		for x in range(min_tx, max_tx + 1):
+			var tile = tiles[y][x]
+			if tile["settlement_id"] != "" or GameManager.tile_buildings.has(Vector2i(x, y)):
+				continue
+			var custom_nat = tile.get("nature_object", "")
+			var n_data = TileTextureManager.get_nature_data(tile["biome"], tile["coord"], tile.get("resource", null), custom_nat)
+			if n_data.is_empty() or n_data.get("tex", null) == null:
+				continue
+			var rect = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+			var c = rect.get_center()
+			var n_tex: Texture2D = n_data["tex"]
+			var orig_size = n_tex.get_size()
+			var aspect = orig_size.x / maxf(1.0, orig_size.y)
+			var target_h: float = n_data.get("scale_h", 20.0)
+			var target_w: float = target_h * aspect
+			
+			# Основание объекта на земле тайла
+			var foot_y = c.y + 11.0
+			var n_rect = Rect2(c.x - target_w * 0.5, foot_y - target_h, target_w, target_h)
+			
+			# Мягкая эллиптическая тень под основанием
+			var shadow_radius = target_w * (0.30 if n_data.get("category", "") == "tree" else 0.40)
+			draw_circle(Vector2(c.x, foot_y - 1.0), shadow_radius, Color(0, 0, 0, 0.22))
+			
+			draw_texture_rect(n_tex, n_rect, false)
+
 	# 2. Построенные и строящиеся здания
 	_draw_visible_settlement_buildings()
+
+	# 2.5. Персональные декорации NPC (таблички, кусты, скамейки, идолы, мусор)
+	_draw_npc_decorations()
 
 	# 3. Центры поселений
 	for s_id in GameManager.settlements:
@@ -712,6 +768,44 @@ func _draw() -> void:
 	# 9. ПОДСВЕТКА ВЫБРАННОГО ДИКОГО ЖИВОТНОГО
 	if selected_animal_id != "":
 		_draw_selected_animal_highlight()
+
+# --- ОТРИСОВКА ПРОТОПТАННЫХ ТРОПИНОК МЕЖДУ ДОМАМИ И КОСТРОМ ---
+func _draw_beaten_footpaths() -> void:
+	if not GameManager:
+		return
+		
+	# 1. Динамические тропинки от поселений (от домов к костру и между соседними хижинами)
+	for s_id in GameManager.settlements:
+		var s: SettlementData = GameManager.settlements[s_id]
+		if not s:
+			continue
+		var paths = s.get_settlement_footpaths()
+		for p_data in paths:
+			var pts: Array = p_data.get("points", [])
+			if pts.size() < 2:
+				continue
+			var packed_pts = PackedVector2Array()
+			for pt in pts:
+				if pt is Vector2:
+					packed_pts.append(pt)
+			if packed_pts.size() >= 2:
+				var is_hub = (p_data.get("type", "") == "hub")
+				# Внешняя мягкая кайма земли/пыли
+				draw_polyline(packed_pts, Color(0.42, 0.32, 0.20, 0.35 if is_hub else 0.25), 4.5 if is_hub else 3.5, true)
+				# Основное тело тропинки (утоптанная глина/земля)
+				draw_polyline(packed_pts, Color(0.58, 0.46, 0.32, 0.70 if is_hub else 0.55), 2.6 if is_hub else 2.0, true)
+				# Центральная светлая дорожка (наиболее вытоптанный центр)
+				draw_polyline(packed_pts, Color(0.70, 0.58, 0.42, 0.85 if is_hub else 0.65), 1.2 if is_hub else 0.9, true)
+
+	# 2. Протоптанные клетки от частого передвижения жителей (GameManager.trample_map)
+	if GameManager.trample_map:
+		for coord in GameManager.trample_map:
+			var wear = float(GameManager.trample_map[coord])
+			if wear >= 0.15:
+				var center = Vector2(coord.x * TILE_SIZE + 16, coord.y * TILE_SIZE + 16)
+				var radius = 6.0 + wear * 6.0
+				var alpha = clampf(wear * 0.45, 0.12, 0.40)
+				draw_circle(center, radius, Color(0.52, 0.40, 0.26, alpha))
 
 # --- ОТРИСОВКА РЕЖИМА СТРОИТЕЛЬСТВА НА КАРТЕ ---
 func _draw_building_placement_preview() -> void:
@@ -822,10 +916,39 @@ func _draw_visible_settlement_buildings() -> void:
 		var b_size = TILE_SIZE * 0.88
 		var b_rect = Rect2(c.x - b_size * 0.5, c.y - b_size * 0.5, b_size, b_size)
 		
-		draw_circle(c, b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+		var b_inst: BuildingInstance = null
+		if GameManager and GameManager.building_instances:
+			if GameManager.building_instances.has(coord):
+				b_inst = GameManager.building_instances[coord]
+			else:
+				for bi in GameManager.building_instances.values():
+					if bi is BuildingInstance and bi.pos == coord:
+						b_inst = bi
+						break
 		
-		var b_tex = BuildingTextureManager.get_texture(b_id)
+		var b_tex: Texture2D = null
+		if b_id == "hut" or b_id.begins_with("hut"):
+			if b_inst and b_inst.condition <= 0.0:
+				b_tex = BuildingTextureManager.get_texture("dest_house")
+			elif b_inst and b_inst.is_upgrade_unlocked("hut_annex"):
+				b_tex = BuildingTextureManager.get_texture("hut_annex")
+			else:
+				b_tex = BuildingTextureManager.get_texture("hut_main")
+			if b_tex == null:
+				b_tex = BuildingTextureManager.get_texture("hut")
+		elif b_id == "great_lodge":
+			if b_inst and b_inst.condition <= 0.0:
+				b_tex = BuildingTextureManager.get_texture("destr_great_lodge")
+			elif b_inst:
+				var var_key = "great_lodge_%d" % b_inst.visual_variant
+				b_tex = BuildingTextureManager.get_texture(var_key)
+			if b_tex == null:
+				b_tex = BuildingTextureManager.get_texture("great_lodge")
+		else:
+			b_tex = BuildingTextureManager.get_texture(b_id)
+		
 		if status == "constructing":
+			draw_circle(c, b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false, Color(1, 1, 1, 0.45))
 			
@@ -845,8 +968,88 @@ func _draw_visible_settlement_buildings() -> void:
 			draw_rect(Rect2(p_rect.position.x + 1, p_rect.position.y + 1, (p_rect.size.x - 2) * pct, p_rect.size.y - 2), Color(0.35, 0.88, 0.35, 0.95))
 			draw_rect(p_rect, Color(0.85, 0.7, 0.3, 0.7), false, 1.0)
 		else:
-			if b_tex:
-				draw_texture_rect(b_tex, b_rect, false)
+			# Отрисовка хижины с пристройками или Большого дома рода с пристройками
+			if (b_id == "hut" or b_id.begins_with("hut")) and b_inst != null:
+				# 1. Пристройка на заднем плане: Кладовая (hut_pantry)
+				if b_inst.is_upgrade_unlocked("hut_pantry"):
+					var pantry_tex = BuildingTextureManager.get_texture("hut_pantry")
+					if pantry_tex:
+						var p_size = b_size * 0.48
+						var p_rect = Rect2(c.x + b_size * 0.18, c.y - b_size * 0.48, p_size, p_size)
+						draw_circle(p_rect.get_center() + Vector2(0, p_size * 0.35), p_size * 0.35, Color(0.12, 0.15, 0.1, 0.45))
+						draw_texture_rect(pantry_tex, p_rect, false)
+				
+				# 2. Основной дом хижины (main_house / House_update / dest_house)
+				draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+				if b_tex:
+					draw_texture_rect(b_tex, b_rect, false)
+				
+				# 3. Пристройка на переднем плане справа: Огород (hut_garden)
+				if b_inst.is_upgrade_unlocked("hut_garden"):
+					var garden_tex = BuildingTextureManager.get_texture("hut_garden")
+					if garden_tex:
+						var g_size = b_size * 0.52
+						var g_rect = Rect2(c.x + b_size * 0.15, c.y + b_size * 0.08, g_size, g_size)
+						draw_texture_rect(garden_tex, g_rect, false)
+				
+				# 4. Пристройка на переднем плане слева: Сарай (hut_shed / barn)
+				if b_inst.is_upgrade_unlocked("hut_shed"):
+					var shed_tex = BuildingTextureManager.get_texture("hut_shed")
+					if shed_tex:
+						var s_size = b_size * 0.50
+						var s_rect = Rect2(c.x - b_size * 0.58, c.y + b_size * 0.06, s_size, s_size)
+						draw_circle(s_rect.get_center() + Vector2(0, s_size * 0.35), s_size * 0.35, Color(0.12, 0.15, 0.1, 0.45))
+						draw_texture_rect(shed_tex, s_rect, false)
+			elif b_id == "great_lodge" and b_inst != null:
+				# Большой дом рода с пристройками
+				# 1. Пристройка на заднем плане: Детский угол (great_lodge_nursery)
+				if b_inst.is_upgrade_unlocked("nursery_corner"):
+					var nursery_tex = BuildingTextureManager.get_texture("great_lodge_nursery")
+					if nursery_tex:
+						var n_size = b_size * 0.52
+						var n_rect = Rect2(c.x - b_size * 0.55, c.y - b_size * 0.45, n_size, n_size)
+						draw_texture_rect(nursery_tex, n_rect, false)
+
+				# 2. Пристройка сбоку: Место опекуна (great_lodge_caretaker)
+				if b_inst.is_upgrade_unlocked("caretaker_quarters"):
+					var care_tex = BuildingTextureManager.get_texture("great_lodge_caretaker")
+					if care_tex:
+						var ck_size = b_size * 0.48
+						var ck_rect = Rect2(c.x - b_size * 0.65, c.y - b_size * 0.10, ck_size, ck_size)
+						draw_texture_rect(care_tex, ck_rect, false)
+
+				# 3. Основной Большой дом рода
+				draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.46, Color(0.18, 0.22, 0.16, 0.6))
+				if b_tex:
+					draw_texture_rect(b_tex, b_rect, false)
+
+				# 4. Пристройка справа: Общие запасы (great_lodge_store)
+				if b_inst.is_upgrade_unlocked("communal_store"):
+					var store_tex = BuildingTextureManager.get_texture("great_lodge_store")
+					if store_tex:
+						var st_size = b_size * 0.50
+						var st_rect = Rect2(c.x + b_size * 0.22, c.y - b_size * 0.35, st_size, st_size)
+						draw_texture_rect(store_tex, st_rect, false)
+
+				# 5. Пристройка на переднем плане: Круг знаний (great_lodge_knowledge)
+				if b_inst.is_upgrade_unlocked("knowledge_circle"):
+					var know_tex = BuildingTextureManager.get_texture("great_lodge_knowledge")
+					if know_tex:
+						var kn_size = b_size * 0.56
+						var kn_rect = Rect2(c.x + b_size * 0.12, c.y + b_size * 0.08, kn_size, kn_size)
+						draw_texture_rect(know_tex, kn_rect, false)
+
+				# 6. Родовые знаки поверх фасада (great_lodge_totems)
+				if b_inst.is_upgrade_unlocked("clan_totems"):
+					var totem_tex = BuildingTextureManager.get_texture("great_lodge_totems")
+					if totem_tex:
+						var tt_size = b_size * 0.45
+						var tt_rect = Rect2(c.x - tt_size * 0.5, c.y - b_size * 0.25, tt_size, tt_size)
+						draw_texture_rect(totem_tex, tt_rect, false)
+			else:
+				draw_circle(c, b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+				if b_tex:
+					draw_texture_rect(b_tex, b_rect, false)
 
 # --- ОТРИСОВКА ЦЕНТРА ПОСЕЛЕНИЯ ---
 func _draw_settlement_hub(rect: Rect2, s: SettlementData) -> void:
@@ -907,7 +1110,7 @@ func _draw_citizens() -> void:
 				
 			var p = c.pos
 			var char_tex = c.get_texture()
-			var char_size = Vector2(12.0, 12.0)
+			var char_size = Vector2(7.5, 7.5)
 			
 			var is_moving = (c.state in [CitizenNPC.State.MOVING_TO_WORK, CitizenNPC.State.CARRYING, CitizenNPC.State.GOING_HOME, CitizenNPC.State.FLEEING] or not c.path.is_empty())
 			var is_working = (c.state in [CitizenNPC.State.WORKING, CitizenNPC.State.GATHERING, CitizenNPC.State.BUTCHERING])
@@ -916,7 +1119,7 @@ func _draw_citizens() -> void:
 			var char_rect = Rect2(p.x - char_size.x * 0.5, p.y - char_size.y + 2.0 + bob, char_size.x, char_size.y)
 			
 			# Тень под ногами
-			draw_circle(p + Vector2(0, 1.5), 2.5, Color(0, 0, 0, 0.35))
+			draw_circle(p + Vector2(0, 1.5), 1.8, Color(0, 0, 0, 0.35))
 			
 			if char_tex:
 				draw_texture_rect(char_tex, char_rect, false)
@@ -941,8 +1144,25 @@ func _draw_citizens() -> void:
 				
 			# Индикатор сна под открытым небом
 			if c.state == CitizenNPC.State.SLEEPING:
-				draw_string(font, p + Vector2(-6, -char_size.y - 2), "zZ", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.6, 0.8, 1.0, 0.85))
+				var z_bob = sin(anim_time * 3.0 + float(c.seed_val % 20)) * 2.0
+				draw_string(font, p + Vector2(-6, -char_size.y - 4.0 + z_bob), "zZ", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.6, 0.85, 1.0, 0.9))
 				
+			# Индикатор ожидания / простоя (?)
+			elif c.state == CitizenNPC.State.WAITING:
+				var wait_bob = sin(anim_time * 6.0 + float(c.seed_val % 50)) * 1.5
+				var badge_pos = p + Vector2(0, -char_size.y - 8.0 + wait_bob)
+				draw_circle(badge_pos, 5.2, Color(0.9, 0.7, 0.12, 0.95))
+				draw_arc(badge_pos, 5.2, 0, TAU, 16, Color(1.0, 0.95, 0.6, 0.95), 1.0)
+				draw_string(font, badge_pos + Vector2(-2.5, 3.5), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.12, 0.08, 0.02, 1.0))
+				
+			# Индикатор отдыха у костра / дома
+			elif c.state == CitizenNPC.State.RESTING:
+				var rest_bob = sin(anim_time * 4.0) * 1.2
+				var badge_pos = p + Vector2(0, -char_size.y - 7.5 + rest_bob)
+				draw_circle(badge_pos, 4.5, Color(0.18, 0.45, 0.6, 0.92))
+				draw_arc(badge_pos, 4.5, 0, TAU, 16, Color(0.6, 0.85, 1.0, 0.9), 1.0)
+				draw_string(font, badge_pos + Vector2(-3.5, 3.0), "~", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 0.9, 0.5))
+
 			# Значок переносимого груза
 			if c.cargo_type != "" and c.cargo_amount > 0:
 				var cargo_icon = ItemTextureManager.get_icon(c.cargo_type)
@@ -952,14 +1172,68 @@ func _draw_citizens() -> void:
 					draw_texture_rect(cargo_icon, Rect2(icon_pos + Vector2(0.5, 0.5), Vector2(7.0, 7.0)), false)
 				else:
 					draw_circle(icon_pos + Vector2(4.0, 4.0), 2.5, Color(0.9, 0.7, 0.2))
+
+			# Активное графическое облачко-эмоция / состояние над персонажем (Emote Bubble)
+			if c.emote_timer > 0.0 and c.active_emote_id != "":
+				var emote_tex = EmoteTextureManager.get_emote_texture(c.active_emote_id)
+				if emote_tex:
+					# Плавное появление (pop-in) и плавное исчезновение (fade-out)
+					var pop_progress = clampf((c.emote_max_duration - c.emote_timer) / 0.2, 0.0, 1.0)
+					var fade_progress = clampf(c.emote_timer / 0.35, 0.0, 1.0)
+					var e_scale = pop_progress * (0.95 + 0.05 * sin(anim_time * 5.0))
+					var e_alpha = fade_progress
 					
-			# Речевое облачко при общении
+					var e_bob = sin(anim_time * 4.0 + float(c.seed_val % 30)) * 1.5
+					# Размер иконки на карте: 14x14 пикселей (аккуратно, видно, но не закрывает обзор)
+					var e_size = Vector2(14.0, 14.0) * e_scale
+					var emote_center = p + Vector2(0.0, -char_size.y - 8.0 + e_bob)
+					var emote_rect = Rect2(emote_center.x - e_size.x * 0.5, emote_center.y - e_size.y * 0.5, e_size.x, e_size.y)
+					
+					draw_texture_rect(emote_tex, emote_rect, false, Color(1, 1, 1, e_alpha))
+
+			# Анимированное облачко беседы и диалог при общении (TALKING)
+			if c.state == CitizenNPC.State.TALKING:
+				var bubble_p = p + Vector2(0, -char_size.y - 9.0 + bob)
+				var b_rect = Rect2(bubble_p.x - 7.0, bubble_p.y - 5.0, 14.0, 10.0)
+				# Фон значка диалога
+				draw_rect(b_rect, Color(0.08, 0.13, 0.22, 0.95), true)
+				draw_rect(b_rect, Color(0.4, 0.78, 1.0, 0.9), false, 1.0)
+				# Хвостик бабла
+				var tail_pts = PackedVector2Array([
+					Vector2(bubble_p.x - 2.0, bubble_p.y + 5.0),
+					Vector2(bubble_p.x + 2.0, bubble_p.y + 5.0),
+					Vector2(bubble_p.x, bubble_p.y + 7.5)
+				])
+				draw_colored_polygon(tail_pts, Color(0.08, 0.13, 0.22, 0.95))
+				draw_polyline(tail_pts, Color(0.4, 0.78, 1.0, 0.9), 1.0)
+				# 3 анимированные прыгающие точки беседы
+				for d_i in range(3):
+					var d_jump = sin(anim_time * 8.0 + float(d_i) * 1.2) * 1.2
+					draw_circle(Vector2(bubble_p.x - 4.0 + float(d_i) * 4.0, bubble_p.y + d_jump), 1.1, Color(0.85, 0.95, 1.0, 0.95))
+				
+				# Если беседуют супруги или растут романтические чувства — сердечко над головой
+				if c.talk_partner_id != "":
+					var rel = c.get_relationship(c.talk_partner_id)
+					if rel.get("married", false) or float(rel.get("romance", 0.0)) >= 20.0:
+						var heart_p = bubble_p + Vector2(0, -9.0 + sin(anim_time * 5.0) * 1.5)
+						draw_circle(heart_p + Vector2(-1.5, -1.0), 1.8, Color(1.0, 0.25, 0.45, 0.95))
+						draw_circle(heart_p + Vector2(1.5, -1.0), 1.8, Color(1.0, 0.25, 0.45, 0.95))
+						var h_poly = PackedVector2Array([
+							heart_p + Vector2(-3.0, -0.5),
+							heart_p + Vector2(3.0, -0.5),
+							heart_p + Vector2(0.0, 3.0)
+						])
+						draw_colored_polygon(h_poly, Color(1.0, 0.25, 0.45, 0.95))
+
+			# Речевое облачко с текстом фразы при общении
 			if c.speech_timer > 0.0 and c.speech_bubble != "":
 				var txt_size = font.get_string_size(c.speech_bubble, HORIZONTAL_ALIGNMENT_LEFT, -1, 9)
-				var b_rect = Rect2(p.x - txt_size.x * 0.5 - 4, p.y - char_size.y - 18.0, txt_size.x + 8, 13)
-				draw_rect(b_rect, Color(0.1, 0.12, 0.16, 0.92), true)
-				draw_rect(b_rect, Color(0.7, 0.85, 1.0, 0.85), false, 1.0)
-				draw_string(font, Vector2(b_rect.position.x + 4, b_rect.position.y + 10), c.speech_bubble, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 1.0, 0.9))
+				var text_y_off = -28.0 if c.state == CitizenNPC.State.TALKING else -18.0
+				var b_rect = Rect2(p.x - txt_size.x * 0.5 - 5, p.y - char_size.y + text_y_off, txt_size.x + 10, 13)
+				draw_rect(Rect2(b_rect.position + Vector2(1, 1), b_rect.size), Color(0, 0, 0, 0.4), true)
+				draw_rect(b_rect, Color(0.08, 0.12, 0.18, 0.95), true)
+				draw_rect(b_rect, Color(0.5, 0.8, 1.0, 0.9), false, 1.0)
+				draw_string(font, Vector2(b_rect.position.x + 5, b_rect.position.y + 10), c.speech_bubble, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 1.0, 0.92))
 				
 			# Визуальная анимация рубки дерева со щепками
 			if c.job_id == "woodcutter" and c.state == CitizenNPC.State.WORKING:
@@ -1185,3 +1459,136 @@ func _draw_resource_icon(rect: Rect2, res_type: String) -> void:
 		draw_texture_rect(tex, icon_rect, false)
 	else:
 		draw_circle(c, 4.0, Color(1.0, 0.8, 0.2, 0.9))
+
+# --- ОТРИСОВКА ПЕРСОНАЛЬНЫХ ДЕКОРАЦИЙ NPC ---
+func _draw_npc_decorations() -> void:
+	if not GameManager or GameManager.tile_decorations.is_empty():
+		return
+
+	var font = ThemeDB.fallback_font
+
+	# Culling границы экрана
+	var cam = get_viewport().get_camera_2d()
+	var cam_pos = cam.global_position if cam else Vector2.ZERO
+	var cam_zoom = cam.zoom.x if (cam and cam.zoom.x > 0.01) else 1.0
+	var vp_size = get_viewport_rect().size
+	var margin_px = TILE_SIZE * 2
+	var screen_rect = Rect2(
+		cam_pos.x - (vp_size.x * 0.5) / cam_zoom - margin_px,
+		cam_pos.y - (vp_size.y * 0.5) / cam_zoom - margin_px,
+		(vp_size.x / cam_zoom) + margin_px * 2,
+		(vp_size.y / cam_zoom) + margin_px * 2
+	)
+
+	for coord in GameManager.tile_decorations:
+		var world_x = coord.x * TILE_SIZE + 16.0
+		var world_y = coord.y * TILE_SIZE + 16.0
+		if not screen_rect.has_point(Vector2(world_x, world_y)):
+			continue
+
+		var deco = GameManager.tile_decorations[coord]
+		var dtype = deco.get("type", "")
+		var variant = int(deco.get("variant", 0))
+		var center = Vector2(world_x, world_y)
+
+		match dtype:
+			"sign":
+				# Деревянная табличка: столбик + прямоугольная доска
+				var post_top = center + Vector2(0, -9)
+				var post_bot = center + Vector2(0, 2)
+				draw_line(post_bot, post_top, Color(0.55, 0.38, 0.22), 1.5)
+				var board_rect = Rect2(center.x - 6, center.y - 13, 12, 7)
+				draw_rect(board_rect, Color(0.70, 0.52, 0.30, 0.95))
+				draw_rect(board_rect, Color(0.40, 0.28, 0.15, 0.9), false, 1.0)
+				# Черточки как "надпись"
+				draw_line(center + Vector2(-4, -11), center + Vector2(4, -11), Color(0.25, 0.18, 0.10, 0.8), 1.0)
+				draw_line(center + Vector2(-3, -9), center + Vector2(3, -9), Color(0.25, 0.18, 0.10, 0.6), 1.0)
+
+			"bush_planted":
+				# Посаженный куст — тёмно-зелёный компактный кружок с листьями
+				var bush_col = [Color(0.25, 0.55, 0.20), Color(0.30, 0.60, 0.18), Color(0.20, 0.50, 0.25)][variant]
+				draw_circle(center + Vector2(0, -2), 5.5, Color(0, 0, 0, 0.18))
+				draw_circle(center + Vector2(-2, -4), 4.5, bush_col)
+				draw_circle(center + Vector2(2, -3), 4.0, bush_col.lightened(0.1))
+				draw_circle(center + Vector2(0, -6), 3.5, bush_col.lightened(0.05))
+				# Маленькая ягодка/цветочек
+				if variant == 1:
+					draw_circle(center + Vector2(-1, -5), 1.5, Color(0.9, 0.25, 0.20))
+				elif variant == 2:
+					draw_circle(center + Vector2(1, -4), 1.5, Color(0.95, 0.85, 0.2))
+
+			"bench":
+				# Скамейка: две ножки + сиденье
+				var bench_col = Color(0.58, 0.42, 0.25)
+				var dark_col = Color(0.38, 0.27, 0.14)
+				# Ножки
+				draw_line(center + Vector2(-5, 0), center + Vector2(-5, -4), dark_col, 1.5)
+				draw_line(center + Vector2(5, 0), center + Vector2(5, -4), dark_col, 1.5)
+				# Сиденье
+				draw_rect(Rect2(center.x - 7, center.y - 6, 14, 3), bench_col)
+				draw_rect(Rect2(center.x - 7, center.y - 6, 14, 3), dark_col, false, 0.8)
+				# Спинка (только у варианта со спинкой)
+				if variant != 1:
+					draw_rect(Rect2(center.x - 6, center.y - 10, 12, 2), bench_col.darkened(0.1))
+
+			"flowers":
+				# Цветочная клумба: несколько разноцветных точек
+				var petal_colors = [
+					[Color(1.0, 0.35, 0.35), Color(1.0, 0.9, 0.2), Color(0.9, 0.55, 0.85)],
+					[Color(0.9, 0.85, 0.2), Color(0.95, 0.5, 0.2), Color(0.8, 0.3, 0.7)],
+					[Color(0.55, 0.7, 1.0), Color(1.0, 0.9, 0.4), Color(0.8, 0.35, 0.35)]
+				][variant]
+				# Стебли
+				for i in range(3):
+					var fx = center.x + [-3.5, 0.5, 3.0][i]
+					var fy = center.y + [-1.0, -2.5, 0.0][i]
+					draw_line(Vector2(fx, fy + 3), Vector2(fx, fy - 2), Color(0.3, 0.55, 0.2), 1.0)
+					draw_circle(Vector2(fx, fy - 2), 2.5, petal_colors[i])
+
+			"totem_small":
+				# Небольшой тотем: вертикальный столб с маской
+				draw_line(center + Vector2(0, 3), center + Vector2(0, -10), Color(0.50, 0.34, 0.18), 3.0)
+				# Маска
+				var mask_rect = Rect2(center.x - 4, center.y - 14, 8, 7)
+				draw_rect(mask_rect, Color(0.72, 0.50, 0.28, 0.95))
+				draw_rect(mask_rect, Color(0.35, 0.22, 0.10), false, 1.0)
+				# Глаза
+				draw_circle(center + Vector2(-2, -12), 1.2, Color(0.15, 0.10, 0.05))
+				draw_circle(center + Vector2(2, -12), 1.2, Color(0.15, 0.10, 0.05))
+				# Перья сверху
+				draw_line(center + Vector2(0, -14), center + Vector2(-3, -19), Color(0.85, 0.25, 0.15), 1.5)
+				draw_line(center + Vector2(0, -14), center + Vector2(0, -20), Color(0.90, 0.80, 0.10), 1.5)
+				draw_line(center + Vector2(0, -14), center + Vector2(3, -19), Color(0.85, 0.25, 0.15), 1.5)
+
+			"idol":
+				# Большой идол предков: массивный столб с резной головой
+				draw_line(center + Vector2(0, 4), center + Vector2(0, -12), Color(0.48, 0.32, 0.16), 5.0)
+				# Голова
+				draw_circle(center + Vector2(0, -15), 6.0, Color(0.62, 0.44, 0.24))
+				draw_circle(center + Vector2(0, -15), 6.0, Color(0.32, 0.20, 0.08), false, 1.2)
+				# Черты лица — глаза
+				draw_circle(center + Vector2(-2.5, -16), 1.5, Color(0.10, 0.07, 0.03))
+				draw_circle(center + Vector2(2.5, -16), 1.5, Color(0.10, 0.07, 0.03))
+				# Рот — полукруг (линия)
+				draw_line(center + Vector2(-2, -13), center + Vector2(2, -13), Color(0.20, 0.12, 0.05), 1.5)
+				# Рога/украшения
+				draw_line(center + Vector2(-3, -20), center + Vector2(-5, -24), Color(0.70, 0.50, 0.20), 2.0)
+				draw_line(center + Vector2(3, -20), center + Vector2(5, -24), Color(0.70, 0.50, 0.20), 2.0)
+				# Подпись под идолом (имя создателя) — маленький текст
+				var placer = deco.get("placer_name", "")
+				if placer != "":
+					draw_string(font, center + Vector2(0, 8), placer, HORIZONTAL_ALIGNMENT_CENTER, -1, 7, Color(0.9, 0.8, 0.5, 0.75))
+
+			"trash":
+				# Мусор: несимметричные мазки грязно-серого/коричневого
+				var trash_col = Color(0.40, 0.35, 0.22, 0.80)
+				var dark_trash = Color(0.28, 0.24, 0.14, 0.70)
+				draw_circle(center + Vector2(-2, 1), 3.5, trash_col)
+				draw_circle(center + Vector2(2, -1), 2.8, dark_trash)
+				draw_circle(center + Vector2(0, 2), 2.2, trash_col.darkened(0.1))
+				if variant == 1:
+					# Кость/щепка
+					draw_line(center + Vector2(-3, -2), center + Vector2(3, 2), Color(0.75, 0.70, 0.55, 0.8), 1.5)
+				else:
+					# Тряпка
+					draw_rect(Rect2(center.x - 3, center.y - 3, 5, 3), Color(0.55, 0.48, 0.30, 0.7))
