@@ -5612,7 +5612,13 @@ func _ready() -> void:
 	s134.economy.add_resource("food", 5.0)
 	s134.deposit_food_batch({"amount": 5.0, "food_type": "meat"})
 	var food134 = s134.economy.get_resource("food")
-	assert(ctrl.try_eat()["ok"] and ruler134.hunger == 100.0, "Ruler eats at the hearth")
+	# ПКМ по очагу — Король ест из общего котла
+	ctrl.order_interact(hearth134, {"kind": "hearth"})
+	for i134 in range(60):
+		if ctrl.action.is_empty():
+			break
+		ctrl._tick_action(ruler134, 0.2)
+	assert(ruler134.hunger == 100.0, "Ruler eats at the hearth (right-click)")
 	assert(s134.economy.get_resource("food") < food134, "Ruler's meal comes out of the common stores")
 	# Разговор: голодному — еда со склада
 	var talk_npc = CitizenNPC.new("talk134", "Голодный Путята", "m", 33, "adult")
@@ -5677,7 +5683,10 @@ func _ready() -> void:
 	angry.loyalty = 5.0
 	assert(NPCDialogue.refuses_to_talk(angry, ruler134), "A hostile NPC refuses to talk")
 	var angry_topics = NPCDialogue.get_topics(s134, angry, ruler134)
-	assert(angry_topics.size() == 1 and angry_topics[0]["id"] == "discontent", "Hostile NPC only voices discontent")
+	var angry_ids: Array[String] = []
+	for at134 in angry_topics:
+		angry_ids.append(at134["id"])
+	assert(angry_ids == ["discontent", "deed"], "Hostile NPC only voices discontent (the King may still attack) — got %s" % str(angry_ids))
 	# Окно разговора
 	var dw = DialogueWindow.new()
 	add_child(dw)
@@ -5694,6 +5703,196 @@ func _ready() -> void:
 	assert(not GameManager.hero_control_active and not ruler134.custom_data.get("player_controlled", false), "Leaving hero mode returns the ruler to the AI")
 	ctrl.queue_free()
 	print("OK 134. Direct ruler control (walk, obstacles, eating) and living NPC dialogue with real consequences.")
+
+	# --------------------------------------------------------------------------
+	# TEST 135: РЕЖИМ КОРОЛЯ — ДОБЫЧА, СУМКА, ОХОТА, ЦВЕТЫ, НАСИЛИЕ И РЕАКЦИЯ МИРА
+	# --------------------------------------------------------------------------
+	var s135: SettlementData = GameManager.get_player_settlement()
+	var ruler135 = PlayerHero.get_ruler(s135)
+	var hero135: PlayerHero = s135.hero
+	hero135.bag.clear()
+	var ctrl135 = HeroController.new()
+	add_child(ctrl135)
+	ctrl135.set_active(true)
+	ruler135.health = ruler135.max_health
+	ruler135.stamina_current = ruler135.stamina_max
+	ruler135.hunger = 100.0
+	# Открытое место рядом с Королём
+	var base135 = GameManager.nav_grid.world_to_tile(s135._get_hearth_pos())
+	var open135: Array[Vector2i] = []
+	for r135 in range(2, 14):
+		for dy135 in range(-r135, r135 + 1):
+			for dx135 in range(-r135, r135 + 1):
+				var t135 = base135 + Vector2i(dx135, dy135)
+				if open135.size() < 6 and GameManager.nav_grid.is_tile_walkable(t135) and not GameManager.tile_buildings.has(t135) and not GameManager.resource_manager.nodes.has(t135):
+					var neighbours_free = true
+					for off135 in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+						if not GameManager.nav_grid.is_tile_walkable(t135 + off135):
+							neighbours_free = false
+					if neighbours_free:
+						var far_enough = true
+						for o135 in open135:
+							if absi(o135.x - t135.x) + absi(o135.y - t135.y) < 3:
+								far_enough = false
+						if far_enough:
+							open135.append(t135)
+	assert(open135.size() >= 4, "Test setup: open tiles near the camp")
+	var run_action = func(max_ticks: int) -> void:
+		for i in range(max_ticks):
+			if ctrl135.action.is_empty():
+				break
+			ctrl135._tick_action(ruler135, 0.25)
+	# 1. Рубка дерева: дерево убывает и исчезает, древесина в сумке; вне зоны вырубки традиционалисты недовольны
+	var tree135 = open135[0]
+	GameManager.resource_manager._create_node(tree135, "tree_birch")
+	ruler135.pos = GameManager.nav_grid.tile_to_world_center(tree135 + Vector2i(-1, 0))
+	s135.set_logging_zone([open135[3]])
+	var keeper135 = CitizenNPC.new("keeper135", "Хранитель Святослав", "m", 50, "elder")
+	keeper135.settlement_id = s135.id
+	keeper135.traits["tradition"] = 95.0
+	keeper135.pos = ruler135.pos + Vector2(0.0, 20.0)
+	keeper135.social_cooldown = 999.0
+	s135.population.citizens.append(keeper135)
+	ruler135.equipment["weapon"] = "work_axe"
+	assert(ctrl135.order_interact(GameManager.nav_grid.tile_to_world_center(tree135), {"kind": "chop", "coord": tree135}), "Right-click on a tree orders chopping")
+	run_action.call(200)
+	assert(not GameManager.resource_manager.nodes.has(tree135), "The felled tree disappears from the map")
+	assert(float(hero135.bag.get("wood", 0.0)) >= 17.9, "Wood goes into the King's bag (%.1f)" % float(hero135.bag.get("wood", 0.0)))
+	assert(keeper135.has_memory("ruler_felled_forest"), "A traditionalist witness disapproves of felling outside the logging grove")
+	ruler135.equipment["weapon"] = "unarmed"
+	s135.set_logging_zone([])
+	# 2. Камень и ягоды
+	var rock135 = open135[1]
+	GameManager.resource_manager._create_node(rock135, "rock_small_pebbles")
+	ruler135.pos = GameManager.nav_grid.tile_to_world_center(rock135 + Vector2i(-1, 0))
+	ruler135.stamina_current = ruler135.stamina_max
+	ctrl135.order_interact(Vector2.ZERO, {"kind": "mine", "coord": rock135})
+	run_action.call(200)
+	assert(float(hero135.bag.get("stone", 0.0)) > 0.0 and not GameManager.resource_manager.nodes.has(rock135), "Stone is mined into the bag and the scatter is gone")
+	var bush135 = open135[2]
+	GameManager.resource_manager._create_node(bush135, "bush_berries_red")
+	ruler135.pos = GameManager.nav_grid.tile_to_world_center(bush135 + Vector2i(-1, 0))
+	ctrl135.order_interact(Vector2.ZERO, {"kind": "gather", "coord": bush135})
+	run_action.call(200)
+	assert(float(hero135.bag.get("berries", 0.0)) > 0.0, "Berries go into the bag")
+	ruler135.hunger = 40.0
+	assert(hero135.eat_from_bag(s135, "berries")["ok"] and ruler135.hunger == 100.0, "The King eats from his own bag")
+	assert(HeroAnimations.current(ruler135) in ["gather", "idle", "walk"], "Actions record the animation slot for future animations")
+	# 2b. Рыбалка на настоящем рыбном месте
+	var fish_coord = Vector2i(-1, -1)
+	for fc in GameManager.resource_manager.nodes:
+		if GameManager.resource_manager.nodes[fc]["category"] == "fish" and not GameManager.resource_manager.nodes[fc]["depleted"]:
+			fish_coord = fc
+			break
+	if fish_coord != Vector2i(-1, -1):
+		ruler135.pos = GameManager.resource_manager.nodes[fish_coord]["pos"]
+		ruler135.stamina_current = ruler135.stamina_max
+		ctrl135.order_interact(Vector2.ZERO, {"kind": "fish", "coord": fish_coord})
+		ctrl135._tick_action(ruler135, 0.25)
+		assert(float(hero135.bag.get("fish", 0.0)) > 0.0, "The King catches fish into the bag")
+		ctrl135.cancel_action()
+	# 2c. Опыт за дела: рубка/добыча/сбор дают опыт героя
+	assert(hero135.xp_log.size() > 0 and String(hero135.xp_log[0].get("reason", "")) != "", "RPG actions grant hero experience")
+	# 2d. Отдых дома восстанавливает силы
+	if ruler135.home_id != "" and ruler135.home_pos != Vector2.ZERO:
+		ruler135.pos = ruler135.home_pos
+		ruler135.energy = 40.0
+		ctrl135.order_interact(ruler135.home_pos, {"kind": "home"})
+		ctrl135._tick_action(ruler135, 0.25)
+		assert(ruler135.energy > 40.0 and ruler135.state == CitizenNPC.State.RESTING, "Resting at home restores the King's strength")
+		ctrl135.cancel_action()
+	# 2e. Помощь на стройке тем же шагом, что у строителя
+	var site135 = open135[2]
+	GameManager.resource_manager.remove_node(site135)
+	s135.economy.add_resource("wood", 50.0)
+	s135.start_construction("hut", site135)
+	if GameManager.tile_buildings.has(site135):
+		var site_b = GameManager.tile_buildings[site135]
+		site_b["materials_delivered"] = site_b.get("materials_required", {}).duplicate()
+		var days0 = float(site_b.get("days_left", 1.0))
+		ruler135.pos = GameManager.nav_grid.tile_to_world_center(site135) + Vector2(-20.0, 0.0)
+		ruler135.stamina_current = ruler135.stamina_max
+		ctrl135.order_interact(Vector2.ZERO, {"kind": "build", "coord": site135})
+		ctrl135._tick_action(ruler135, 0.25)
+		assert(float(site_b.get("days_left", 1.0)) < days0, "The King's hands advance the construction")
+		ctrl135.cancel_action()
+	# 3. Цветы
+	var flower135 = open135[3]
+	GameManager.planet_data["tiles"][flower135.y][flower135.x]["nature_object"] = "flowers_white"
+	ruler135.pos = GameManager.nav_grid.tile_to_world_center(flower135)
+	ctrl135.order_interact(Vector2.ZERO, {"kind": "flowers", "coord": flower135})
+	run_action.call(40)
+	assert(float(hero135.bag.get("flowers", 0.0)) == 1.0 and GameManager.planet_data["tiles"][flower135.y][flower135.x]["nature_object"] == "none", "Picked flowers leave the meadow and go into the bag")
+	# Подарок цветов в разговоре
+	var lady135 = CitizenNPC.new("lady135", "Любава", "f", 24, "adult")
+	lady135.settlement_id = s135.id
+	lady135.loyalty = 70.0
+	var fl_ids: Array[String] = []
+	for t135 in NPCDialogue.get_topics(s135, lady135, ruler135):
+		fl_ids.append(t135["id"])
+	assert(fl_ids.has("flowers") and fl_ids.has("deed"), "Flowers in the bag can be given; attack is always possible")
+	NPCDialogue.respond(s135, lady135, ruler135, "flowers", "give")
+	assert(not hero135.bag.has("flowers") and lady135.has_memory("flowers_from_ruler"), "Flowers really change hands")
+	# 4. Сдача сумки на склад
+	var wood_store = s135.economy.get_resource("wood")
+	ruler135.pos = s135._get_storage_pos(ruler135)
+	ctrl135.order_interact(ruler135.pos, {"kind": "storage"})
+	run_action.call(20)
+	assert(s135.economy.get_resource("wood") > wood_store and not hero135.bag.has("wood"), "The bag is unloaded into the settlement stores")
+	# 5. Охота: зверь, туша, разделка в сумку
+	var hare135 = WildAnimal.new("hare135", "hare_brown", GameManager.nav_grid.tile_to_world_center(open135[0]))
+	GameManager.wildlife_manager.animals[hare135.id] = hare135
+	ruler135.pos = hare135.pos + Vector2(-20.0, 0.0)
+	ruler135.stamina_current = ruler135.stamina_max
+	var xp_level_135 = hero135.level * 100000.0 + hero135.xp
+	ctrl135.order_interact(hare135.pos, {"kind": "animal", "id": hare135.id})
+	for i135 in range(300):
+		if ctrl135.action.is_empty():
+			break
+		hare135.pos = ruler135.pos + Vector2(12.0, 0.0) # заяц не успевает убежать — проверяем бой и разделку
+		ctrl135._tick_action(ruler135, 0.25)
+	assert(not GameManager.wildlife_manager.animals.has(hare135.id), "The King kills the animal")
+	assert(float(hero135.bag.get("meat", 0.0)) > 0.0 and float(hero135.bag.get("leather", 0.0)) > 0.0, "The carcass is butchered into meat and hide in the bag")
+	assert(hero135.level * 100000.0 + hero135.xp > xp_level_135, "Hunting gives hero experience")
+	# 6. Насилие над соплеменником
+	var victim135 = CitizenNPC.new("victim135", "Тихий Будимир", "m", 30, "adult")
+	victim135.settlement_id = s135.id
+	victim135.traits["bravery"] = 10.0
+	victim135.traits["temper"] = 10.0
+	victim135.family_id = "fam_victim135"
+	victim135.pos = GameManager.nav_grid.tile_to_world_center(open135[1])
+	s135.population.citizens.append(victim135)
+	var brother135 = CitizenNPC.new("brother135", "Брат Жданко", "m", 34, "adult")
+	brother135.settlement_id = s135.id
+	brother135.family_id = "fam_victim135"
+	brother135.pos = victim135.pos + Vector2(30.0, 0.0)
+	s135.population.citizens.append(brother135)
+	var guard135 = CitizenNPC.new("guard135", "Стражник Ратша", "m", 32, "adult")
+	guard135.settlement_id = s135.id
+	guard135.job_id = "guard"
+	guard135.loyalty = 30.0
+	guard135.pos = victim135.pos + Vector2(0.0, 40.0)
+	s135.population.citizens.append(guard135)
+	var stability135 = s135.economy.stability
+	ruler135.pos = victim135.pos + Vector2(-20.0, 0.0)
+	ruler135.health = ruler135.max_health
+	assert(ctrl135.order_attack_citizen(victim135), "The King can attack a fellow citizen")
+	ctrl135.perform_action_step(ruler135)
+	assert(victim135.has_grudge_against(ruler135.citizen_id) and brother135.has_memory("ruler_violence"), "The victim and witnesses remember the assault")
+	assert(brother135.has_grudge_against(ruler135.citizen_id), "Kin of the victim turn against the King")
+	assert(ctrl135.fight_defenders.has(guard135), "A distrustful guard steps in to defend the victim")
+	for i135 in range(400):
+		if not victim135.is_alive:
+			break
+		ctrl135.action["timer"] = 0.0
+		victim135.pos = ruler135.pos + Vector2(10.0, 0.0)
+		ctrl135.perform_action_step(ruler135)
+	assert(not victim135.is_alive and victim135.death_cause.begins_with("Убит вождём"), "The victim can be killed by the King")
+	assert(brother135.has_memory("kin_murdered_by_ruler") and s135.economy.stability < stability135, "Murder shakes the tribe and the kin remember it")
+	ctrl135.set_active(false)
+	assert(not guard135.custom_data.has("fighting_ruler"), "Fight flags are cleared when the King leaves")
+	ctrl135.queue_free()
+	print("OK 135. King mode: chop/mine/gather/flowers into the bag, eat, unload to stores, hunt & butcher, gifts, assault and murder with world reaction.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

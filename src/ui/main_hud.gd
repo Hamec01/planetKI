@@ -171,7 +171,7 @@ func _setup_top_left_notification_badges() -> void:
 			event_registry_panel.toggle_tab(2)
 	)
 	
-	mode_toggle_btn = _create_badge_button("⚔ Путь вождя [V]", "Переключиться на управление самим вождём: инвентарь, персонаж, навыки", func():
+	mode_toggle_btn = _create_badge_button("👑 Режим Короля [V]", "Играть за самого себя: ходить, говорить, добывать, сражаться", func():
 		set_hero_mode(not hero_mode)
 	)
 	notification_badges_container.add_child(mode_toggle_btn)
@@ -280,13 +280,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 			
 		# Режим «Путь вождя»: WASD, E и F принадлежат герою (ходьба, разговор, еда)
-		if hero_mode and event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_E, KEY_F]:
+		if hero_mode and event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_E]:
 			if event.keycode == KEY_E and hero_controller:
 				var npc = hero_controller.try_talk()
 				if npc:
 					_open_dialogue(npc)
-			elif event.keycode == KEY_F and hero_controller:
-				hero_controller.try_eat()
+			get_viewport().set_input_as_handled()
+			return
+		# Режим Короля: клавиши стратегии (стройка, жители, законы, армия...) не работают —
+		# для этого нужно вернуться в Режим Императора
+		if hero_mode and event.keycode in [KEY_B, KEY_U, KEY_L, KEY_R, KEY_M]:
+			EventBus.notification_toast.emit("👑 Режим Короля", "Управление племенем — в Режиме Императора [V].", "info")
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_ESCAPE and dialogue_window and dialogue_window.visible:
@@ -540,7 +544,7 @@ func _setup_hero_bar() -> void:
 	hbox.add_theme_constant_override("separation", 10)
 	hero_bar.add_child(hbox)
 	var hint = Label.new()
-	hint.text = "ПКМ — идти / подойти к жителю • WASD — идти • E — говорить • F — поесть"
+	hint.text = "ПКМ: идти • говорить • рубить • добывать • собирать • бить • очаг — поесть • склад — сдать сумку | WASD • E"
 	hint.add_theme_font_size_override("font_size", 10)
 	hint.add_theme_color_override("font_color", Color(0.8, 0.75, 0.6))
 	hbox.add_child(hint)
@@ -594,8 +598,32 @@ func set_hero_mode(enabled: bool) -> void:
 	elif hero_panel:
 		hero_panel.visible = false
 	if mode_toggle_btn:
-		mode_toggle_btn.text = "🏛 Правление [V]" if enabled else "⚔ Путь вождя [V]"
-		mode_toggle_btn.tooltip_text = "Вернуться к управлению поселением" if enabled else "Переключиться на управление самим вождём: инвентарь, персонаж, навыки"
+		mode_toggle_btn.text = "🏛 Режим Императора [V]" if enabled else "👑 Режим Короля [V]"
+		mode_toggle_btn.tooltip_text = "Вернуться к управлению племенем: стройка, жители, законы, совет" if enabled else "Играть за самого себя: ходить, говорить, добывать, сражаться"
+	_apply_strategy_ui_visibility(not enabled)
+
+# Режим Короля убирает всё, что относится к стратегии; Режим Императора возвращает
+func _apply_strategy_ui_visibility(show: bool) -> void:
+	for n in [stone_label, wood_label, food_label, metal_label, kubriki_label, knowledge_label]:
+		if n and n.get_parent():
+			n.get_parent().visible = show
+	if pop_label and pop_label.get_parent():
+		pop_label.get_parent().visible = show
+	if loyalty_label and loyalty_label.get_parent():
+		loyalty_label.get_parent().visible = show
+	for b in [badge_decisions_btn, badge_incidents_btn, badge_chronicle_btn, badge_council_btn]:
+		if b:
+			b.visible = show
+	if show:
+		return
+	for m in [rts_build_menu, building_detail_panel, civilization_event_modal, event_registry_panel, traditions_modal, elder_council_modal, faith_modal, settlement_roster_modal, cemetery_memorial_modal]:
+		if m and m.visible:
+			m.visible = false
+	if map_mode_panel:
+		map_mode_panel.visible = false
+	if cursor_context_menu:
+		cursor_context_menu.visible = false
+	tab_opened.emit("close_strategy", null)
 
 func _open_dialogue(npc: CitizenNPC) -> void:
 	if dialogue_window == null:
@@ -605,6 +633,10 @@ func _open_dialogue(npc: CitizenNPC) -> void:
 		dialogue_window.closed.connect(func():
 			if hero_controller:
 				hero_controller.in_dialogue = false
+		)
+		dialogue_window.attack_requested.connect(func(victim):
+			if hero_controller:
+				hero_controller.order_attack_citizen(victim)
 		)
 	if dialogue_window.visible:
 		return

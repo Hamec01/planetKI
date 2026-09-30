@@ -138,6 +138,13 @@ func _on_battle_started(_battle_data: Dictionary) -> void:
 	pass
 
 func _on_tab_opened(tab_name: String, extra_data: Variant = null) -> void:
+	if tab_name == "close_strategy":
+		# Режим Короля: окна стратегии (поселение, фракция) закрываются
+		if settlement_panel:
+			settlement_panel.visible = false
+		if faction_view:
+			faction_view.visible = false
+		return
 	if tab_name == "settlement":
 		settlement_panel.open_for_player(0)
 	elif tab_name == "settlement_buildings" or tab_name == "buildings":

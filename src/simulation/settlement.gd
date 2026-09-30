@@ -2315,6 +2315,9 @@ func update_citizens(delta: float) -> void:
 		if c.custom_data.get("player_controlled", false):
 			_update_player_controlled(c, delta)
 			continue
+		# Житель в драке с Королём (жертва или заступник) — его ведёт бой, а не распорядок дня
+		if c.custom_data.get("fighting_ruler", false):
+			continue
 
 		# 2b. Таймер устойчивости текущего выбора (Hysteresis / Commitment) (S08)
 		if c.commitment_timer > 0.0:
@@ -3876,37 +3879,19 @@ func update_citizens(delta: float) -> void:
 						if GameManager.tile_buildings.has(c.target_coord):
 							var b = GameManager.tile_buildings[c.target_coord]
 							if b.get("status", "") == "constructing":
-								var is_missing = false
-								for r in b.get("materials_required", {}):
-									if float(b.get("materials_delivered", {}).get(r, 0.0)) < float(b["materials_required"][r]):
-										is_missing = true
-										break
-								if is_missing:
+								var work_res = apply_construction_work(c, c.target_coord)
+								if work_res["result"] == "missing_materials":
 									c.state = CitizenNPC.State.WAITING
 									c.last_status_reason = "Стройка остановлена: нет материалов на площадке"
 									c.decision_cooldown = 2.0
+								elif work_res["result"] == "completed":
+									c.last_status_reason = "Завершил строительство здания"
+									c.state = CitizenNPC.State.IDLE
+									c.task_id = ""
+									c.decision_cooldown = 1.0
 								else:
-									b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70)
-									c.add_work_xp("building", 0.25)
-									if b["days_left"] <= 0.0:
-										b["status"] = "active"
-										var b_inst = GameManager.get_or_create_building_instance(c.target_coord, b["id"], id)
-										b["instance_id"] = b_inst.instance_id
-										if not buildings.has(b["id"]):
-											buildings.append(b["id"])
-										for q_i in range(construction_queue.size() - 1, -1, -1):
-											if construction_queue[q_i].get("coord", Vector2i(-1, -1)) == c.target_coord:
-												construction_queue.remove_at(q_i)
-										c.last_status_reason = "Завершил строительство здания"
-										var b_name = BuildingDB.get_building(b["id"]).get("name", b["id"])
-										EventBus.notification_toast.emit("Стройка завершена", "Построено: %s" % b_name, "good")
-										auto_assign_workplaces()
-										c.state = CitizenNPC.State.IDLE
-										c.task_id = ""
-										c.decision_cooldown = 1.0
-									else:
-										c.work_timer = 0.65
-										c.last_status_reason = "Строит здание (осталось %.1f дней)" % b["days_left"]
+									c.work_timer = 0.65
+									c.last_status_reason = "Строит здание (осталось %.1f дней)" % b["days_left"]
 						else:
 							c.state = CitizenNPC.State.IDLE
 							c.decision_cooldown = 1.0
@@ -4757,6 +4742,34 @@ func _apply_weather_and_clothing(c: CitizenNPC, season: String, delta: float) ->
 		c.health = maxf(0.0, c.health - COLD_HEALTH_DRAIN * delta)
 		if c.health <= 0.0 and c.death_cause == "":
 			c.death_cause = "Замёрз зимой без тёплой одежды"
+
+# Один шаг работы на стройплощадке (строитель или сам Король).
+# Возвращает {"result": "missing_materials" | "progress" | "completed" | "none"}
+func apply_construction_work(worker: CitizenNPC, coord: Vector2i) -> Dictionary:
+	if not GameManager.tile_buildings.has(coord):
+		return {"result": "none"}
+	var b = GameManager.tile_buildings[coord]
+	if b.get("status", "") != "constructing":
+		return {"result": "none"}
+	for r in b.get("materials_required", {}):
+		if float(b.get("materials_delivered", {}).get(r, 0.0)) < float(b["materials_required"][r]):
+			return {"result": "missing_materials"}
+	b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70)
+	worker.add_work_xp("building", 0.25)
+	if b["days_left"] > 0.0:
+		return {"result": "progress"}
+	b["status"] = "active"
+	var b_inst = GameManager.get_or_create_building_instance(coord, b["id"], id)
+	b["instance_id"] = b_inst.instance_id
+	if not buildings.has(b["id"]):
+		buildings.append(b["id"])
+	for q_i in range(construction_queue.size() - 1, -1, -1):
+		if construction_queue[q_i].get("coord", Vector2i(-1, -1)) == coord:
+			construction_queue.remove_at(q_i)
+	var b_name = BuildingDB.get_building(b["id"]).get("name", b["id"])
+	EventBus.notification_toast.emit("Стройка завершена", "Построено: %s" % b_name, "good")
+	auto_assign_workplaces()
+	return {"result": "completed", "name": b_name}
 
 # --- Диспетчеры модулей профессий (src/simulation/professions) ---
 

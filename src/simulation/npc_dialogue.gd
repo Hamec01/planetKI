@@ -134,6 +134,7 @@ static func get_topics(s: SettlementData, npc: CitizenNPC, ruler: CitizenNPC) ->
 	if refuses_to_talk(npc, ruler):
 		if not _on_cooldown(npc, "discontent"):
 			topics.append(_topic("discontent", "😠", "Ты для меня больше не вождь. Слишком много зла я от тебя видел.", [_opt("promise", "Я исправлюсь. Дай мне шанс."), _opt("rebuke", "Знай своё место!")]))
+		_append_deeds(s, npc, ruler, topics)
 		return topics
 	var adult = npc.cohort in ["youth", "adult", "elder"]
 	if npc.hunger < 45.0 and not _on_cooldown(npc, "hunger"):
@@ -186,7 +187,15 @@ static func get_topics(s: SettlementData, npc: CitizenNPC, ruler: CitizenNPC) ->
 			topics.append(_topic("gossip", "👂", gossip, [_opt("listen", "Любопытно... Что ещё говорят?")]))
 	if not _on_cooldown(npc, "smalltalk"):
 		topics.append(_topic("smalltalk", "💬", "", [_opt("how", "Как живёшь?")]))
+	_append_deeds(s, npc, ruler, topics)
 	return topics
+
+# Поступки Короля в разговоре: подарить цветы из сумки или напасть
+static func _append_deeds(s: SettlementData, npc: CitizenNPC, ruler: CitizenNPC, topics: Array[Dictionary]) -> void:
+	if s.hero and float(s.hero.bag.get("flowers", 0.0)) >= 1.0 and not _on_cooldown(npc, "flowers") and not refuses_to_talk(npc, ruler):
+		topics.append(_topic("flowers", "🌸", "", [_opt("give", "Подарить цветы %s" % npc.name)]))
+	if npc.cohort != "child":
+		topics.append(_topic("deed", "⚔", "", [_opt("attack", "Напасть на %s" % npc.name)]))
 
 # Житель сам окликает вождя, если у него что-то неотложное. Возвращает реплику или ""
 static func get_urgent_call(s: SettlementData, npc: CitizenNPC, ruler: CitizenNPC) -> String:
@@ -349,6 +358,20 @@ static func respond(s: SettlementData, npc: CitizenNPC, ruler: CitizenNPC, topic
 		"gossip:listen":
 			_warm(npc, ruler, 1.0)
 			reply = "Только я тебе ничего не говорил!"
+		"flowers:give":
+			if s.hero and s.hero.bag_take("flowers", 1.0) > 0.0:
+				HeroAnimations.play(ruler, "give")
+				_warm(npc, ruler, 10.0, 2.0)
+				var romantic = npc.cohort in ["youth", "adult"] and npc.gender != ruler.gender and npc.get_spouses().is_empty() and not npc.is_related_to(ruler)
+				if romantic:
+					npc.add_romance(ruler.citizen_id, 10.0)
+				npc.add_memory("flowers_from_ruler", "ruler", ruler.citizen_id, 1.5, "Вождь подарил мне цветы")
+				npc.show_emote("romance" if romantic else "joy", 3.5, 3)
+				reply = "Ох... это мне? Какие красивые!" if romantic else "Спасибо, вождь! Порадую ими дом."
+			else:
+				reply = "..."
+		"deed:attack":
+			return {"reply": "Вождь, что ты задумал?!", "attack": true}
 		"smalltalk:how":
 			_warm(npc, ruler, 1.0)
 			reply = describe_life(s, npc)

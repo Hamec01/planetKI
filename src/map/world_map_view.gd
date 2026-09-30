@@ -258,6 +258,55 @@ func _get_nature_object_at_position(m_pos: Vector2) -> Dictionary:
 # ==============================================================================
 var hero_move_marker_pos: Vector2 = Vector2.ZERO
 var hero_move_marker_time: float = 0.0
+var hero_move_marker_color: Color = Color(0.4, 1.0, 0.45)
+
+const HERO_FLOWER_SPRITES: Array[String] = ["flowers_white", "flowers_yellow", "flowers_purple", "flowers_poppies", "bush_flowers"]
+
+# Что под курсором для приказа Королю (ПКМ, как в MOBA)
+func resolve_hero_target(m_world: Vector2) -> Dictionary:
+	var npc = _get_citizen_near_position(m_world, 14.0)
+	if npc and not npc.is_ruler:
+		return {"kind": "citizen", "ref": npc, "marker": npc.pos}
+	if GameManager.wildlife_manager:
+		var animal = _get_animal_near_position(m_world, 18.0)
+		if animal and animal.is_alive() and not animal.is_tamed:
+			return {"kind": "animal", "id": animal.id, "marker": animal.pos}
+		for carc in GameManager.wildlife_manager.carcasses.values():
+			if carc["pos"].distance_to(m_world) <= 16.0:
+				return {"kind": "carcass", "id": carc["id"], "marker": carc["pos"]}
+	var coord = Vector2i(int(floor(m_world.x / TILE_SIZE)), int(floor(m_world.y / TILE_SIZE)))
+	if GameManager.tile_buildings.has(coord) and GameManager.tile_buildings[coord].get("status", "") == "constructing":
+		return {"kind": "build", "coord": coord, "marker": Vector2(coord.x * TILE_SIZE + 16.0, coord.y * TILE_SIZE + 16.0)}
+	var sprite_hit = _get_nature_object_at_position(m_world)
+	if not sprite_hit.is_empty():
+		coord = sprite_hit.get("coord", coord)
+	if GameManager.resource_manager and GameManager.resource_manager.nodes.has(coord):
+		var node: Dictionary = GameManager.resource_manager.nodes[coord]
+		if not node.get("depleted", false):
+			match String(node.get("category", "")):
+				"wood": return {"kind": "chop", "coord": coord, "marker": node["pos"]}
+				"stone", "metal": return {"kind": "mine", "coord": coord, "marker": node["pos"]}
+				"food": return {"kind": "gather", "coord": coord, "marker": node["pos"]}
+				"fish": return {"kind": "fish", "coord": coord, "marker": node["pos"]}
+	# Здания (очаг, склад, свой дом) — после конкретного объекта под курсором
+	var s = GameManager.get_player_settlement()
+	if s is SettlementData:
+		var hearth_p = s._get_hearth_pos()
+		if hearth_p.distance_to(m_world) <= 26.0:
+			return {"kind": "hearth", "marker": hearth_p}
+		var ruler = PlayerHero.get_ruler(s)
+		if ruler:
+			var storage_p = s._get_storage_pos(ruler)
+			if storage_p.distance_to(m_world) <= 26.0:
+				return {"kind": "storage", "marker": storage_p}
+			if ruler.home_id != "" and ruler.home_pos != Vector2.ZERO and ruler.home_pos.distance_to(m_world) <= 26.0:
+				return {"kind": "home", "marker": ruler.home_pos}
+	if planet_data.has("tiles") and coord.y >= 0 and coord.y < planet_data["tiles"].size() and coord.x >= 0 and coord.x < planet_data["tiles"][coord.y].size():
+		var tile = planet_data["tiles"][coord.y][coord.x]
+		var nat = TileTextureManager.get_nature_name(tile["biome"], coord, tile.get("resource", null), tile.get("nature_object", ""))
+		if nat in HERO_FLOWER_SPRITES:
+			return {"kind": "flowers", "coord": coord, "marker": Vector2(coord.x * TILE_SIZE + 16.0, coord.y * TILE_SIZE + 16.0)}
+	return {"kind": "ground", "marker": m_world}
 
 func _process(delta: float) -> void:
 	if hero_move_marker_time > 0.0:
@@ -484,14 +533,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if GameManager.hero_control_active and placement_building_id == "" and relocation_source_coord == Vector2i(-1, -1):
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			var hero_click = get_global_mouse_position()
-			var clicked_npc = _get_citizen_near_position(hero_click, 14.0)
-			if clicked_npc and clicked_npc.is_ruler:
-				clicked_npc = null
-			EventBus.hero_move_order.emit(hero_click, clicked_npc)
-			hero_move_marker_pos = clicked_npc.pos if clicked_npc else hero_click
+			var hero_target = resolve_hero_target(hero_click)
+			EventBus.hero_interact_order.emit(hero_click, hero_target)
+			hero_move_marker_pos = hero_target.get("marker", hero_click)
+			hero_move_marker_color = Color(0.4, 1.0, 0.45) if hero_target.get("kind", "ground") == "ground" else (Color(1.0, 0.35, 0.3) if hero_target.get("kind", "") in ["animal", "attack_citizen"] else Color(1.0, 0.85, 0.35))
 			hero_move_marker_time = 0.6
 			get_viewport().set_input_as_handled()
 			queue_redraw()
+			return
+		# Левый клик в Режиме Короля не открывает окна стратегии (постройки, жители, клетки)
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			get_viewport().set_input_as_handled()
 			return
 
 	# 0. РЕЖИМ ПЕРЕМЕЩЕНИЯ ЗДАНИЙ
@@ -1229,7 +1281,8 @@ func _draw() -> void:
 	# 9. Метка приказа движения вождю (ПКМ в режиме «Путь вождя»)
 	if hero_move_marker_time > 0.0:
 		var k = hero_move_marker_time / 0.6
-		draw_arc(hero_move_marker_pos, 4.0 + (1.0 - k) * 10.0, 0.0, TAU, 20, Color(0.4, 1.0, 0.45, k), 2.0)
+		var mc = hero_move_marker_color
+		draw_arc(hero_move_marker_pos, 4.0 + (1.0 - k) * 10.0, 0.0, TAU, 20, Color(mc.r, mc.g, mc.b, k), 2.0)
 
 # --- ОТРИСОВКА ОДНОГО ПРИРОДНОГО ОБЪЕКТА (ДЕРЕВО / КАМЕНЬ / КУСТ) ---
 func _draw_single_nature_object(n_data: Dictionary, c: Vector2, foot_y: float) -> void:

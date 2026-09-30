@@ -11,6 +11,31 @@ var is_dragging: bool = false
 
 var map_bounds_rect: Rect2 = Rect2(0, 0, 5120, 5120)
 
+# Режим Короля: камера близко к герою, как в League of Legends / Dota 2
+const KING_ZOOM: float = 3.0
+const KING_MIN_ZOOM: float = 2.2
+const KING_MAX_ZOOM: float = 4.5
+var _king_mode_camera: bool = false
+var _saved_zoom: Vector2 = Vector2(1.4, 1.4)
+var _saved_min_zoom: float = 0.35
+var _saved_max_zoom: float = 6.0
+
+func _sync_king_camera() -> void:
+	if GameManager.hero_control_active == _king_mode_camera:
+		return
+	_king_mode_camera = GameManager.hero_control_active
+	if _king_mode_camera:
+		_saved_zoom = zoom_target
+		_saved_min_zoom = min_zoom
+		_saved_max_zoom = max_zoom
+		min_zoom = KING_MIN_ZOOM
+		max_zoom = KING_MAX_ZOOM
+		zoom_target = Vector2(KING_ZOOM, KING_ZOOM)
+	else:
+		min_zoom = _saved_min_zoom
+		max_zoom = _saved_max_zoom
+		zoom_target = _saved_zoom
+
 func _ready() -> void:
 	zoom = Vector2(1.4, 1.4)
 	zoom_target = zoom
@@ -23,6 +48,7 @@ func _on_world_generated(world_data: Dictionary) -> void:
 	map_bounds_rect = Rect2(0, 0, w * tile_sz, h * tile_sz)
 
 func _process(delta: float) -> void:
+	_sync_king_camera()
 	# Плавная интерполяция зума строго с фиксацией точки под курсором мыши
 	if zoom.distance_to(zoom_target) > 0.001:
 		var prev_zoom = zoom.x

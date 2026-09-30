@@ -46,6 +46,26 @@ const SLOTS: Dictionary = {
 	"helmet": {"name": "⛑ Шлем", "empty": ""}
 }
 
+# Личная сумка Короля: то, что он сам добыл (ресурс -> количество).
+# Вместимость ограничена весом и растёт с силой.
+const BAG_ITEMS: Dictionary = {
+	"wood": {"name": "🪵 Древесина", "weight": 1.0},
+	"stone": {"name": "🪨 Камень", "weight": 1.5},
+	"metal": {"name": "⛏ Руда", "weight": 1.5},
+	"berries": {"name": "🫐 Ягоды и грибы", "weight": 0.3, "food": true},
+	"meat": {"name": "🥩 Мясо", "weight": 0.5, "food": true},
+	"fish": {"name": "🐟 Рыба", "weight": 0.5, "food": true},
+	"leather": {"name": "🟫 Шкуры", "weight": 0.5},
+	"fur": {"name": "🐾 Мех", "weight": 0.5},
+	"bone": {"name": "🦴 Кости", "weight": 0.3},
+	"feathers": {"name": "🪶 Перья", "weight": 0.1},
+	"flowers": {"name": "🌸 Цветы", "weight": 0.1}
+}
+const BAG_BASE_CAPACITY: float = 20.0
+const MEAL_AMOUNT: float = 0.25 # как у жителей: 0.25 ед. пищи — сытная еда
+
+var bag: Dictionary = {}
+
 var level: int = 1
 var xp: float = 0.0
 var unspent_attr_points: int = 0
@@ -249,6 +269,81 @@ func unequip(s: SettlementData, slot: String) -> bool:
 	apply_to_ruler(s)
 	return true
 
+# --- СУМКА ---
+
+func get_bag_capacity(s: SettlementData) -> float:
+	return BAG_BASE_CAPACITY + float(get_attribute(s, "strength")) * 1.5
+
+func get_bag_weight() -> float:
+	var w = 0.0
+	for item in bag:
+		w += float(bag[item]) * float(BAG_ITEMS.get(item, {"weight": 1.0})["weight"])
+	return w
+
+# Положить в сумку сколько влезет. Возвращает сколько положено.
+func bag_add(s: SettlementData, item: String, amount: float) -> float:
+	if amount <= 0.0 or not BAG_ITEMS.has(item):
+		return 0.0
+	var unit_w = float(BAG_ITEMS[item]["weight"])
+	var free = maxf(0.0, get_bag_capacity(s) - get_bag_weight())
+	var fits = minf(amount, free / unit_w) if unit_w > 0.0 else amount
+	if fits <= 0.0:
+		return 0.0
+	bag[item] = float(bag.get(item, 0.0)) + fits
+	return fits
+
+func bag_take(item: String, amount: float) -> float:
+	var have = float(bag.get(item, 0.0))
+	var taken = minf(have, amount)
+	if taken <= 0.0:
+		return 0.0
+	if have - taken <= 0.0001:
+		bag.erase(item)
+	else:
+		bag[item] = have - taken
+	return taken
+
+func is_bag_full(s: SettlementData, item: String) -> bool:
+	return get_bag_weight() + float(BAG_ITEMS.get(item, {"weight": 1.0})["weight"]) * 0.25 > get_bag_capacity(s)
+
+# Съесть еду из сумки: как у жителей, 0.25 ед. — сытная еда
+func eat_from_bag(s: SettlementData, item: String) -> Dictionary:
+	var ruler = get_ruler(s)
+	if ruler == null:
+		return {"ok": false, "reason": "Короля нет в живых"}
+	if not BAG_ITEMS.get(item, {}).get("food", false):
+		return {"ok": false, "reason": "Это нельзя съесть"}
+	if float(bag.get(item, 0.0)) < MEAL_AMOUNT:
+		return {"ok": false, "reason": "В сумке слишком мало"}
+	if ruler.hunger >= 90.0:
+		return {"ok": false, "reason": "Король сыт"}
+	bag_take(item, MEAL_AMOUNT)
+	ruler.hunger = 100.0
+	ruler.show_emote("eat", 3.0, 3)
+	return {"ok": true, "reason": "Король поел: %s" % BAG_ITEMS[item]["name"]}
+
+# Сдать сумку на склад поселения: ресурсы реально зачисляются в экономику
+func deposit_bag(s: SettlementData) -> Dictionary:
+	var ruler = get_ruler(s)
+	if ruler == null or bag.is_empty():
+		return {"ok": false, "reason": "Сумка пуста"}
+	var parts: Array[String] = []
+	for item in bag.keys():
+		var amt = float(bag[item])
+		if item == "flowers":
+			continue # цветы Король оставляет себе — для подарков
+		var res_key = item
+		var batch = {}
+		if item in ["berries", "meat", "fish"]:
+			res_key = "food"
+			batch = {"food_type": item, "created_sim_time": GameManager.sim_time_total, "max_freshness_sec": 4500.0 if item != "berries" else 3600.0, "spoilage_progress": 0.0}
+		s.deposit_resource(res_key, amt, ruler.name, batch)
+		parts.append("%s %.1f" % [BAG_ITEMS[item]["name"], amt])
+		bag.erase(item)
+	if parts.is_empty():
+		return {"ok": false, "reason": "Сдавать нечего (цветы остаются у Короля)"}
+	return {"ok": true, "reason": "Сдано на склад: " + ", ".join(parts)}
+
 # --- СОХРАНЕНИЕ ---
 
 func serialize() -> Dictionary:
@@ -259,7 +354,8 @@ func serialize() -> Dictionary:
 		"unspent_skill_points": unspent_skill_points,
 		"allocated": allocated.duplicate(),
 		"skill_ranks": skill_ranks.duplicate(),
-		"xp_log": xp_log.duplicate(true)
+		"xp_log": xp_log.duplicate(true),
+		"bag": bag.duplicate()
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -275,6 +371,11 @@ func deserialize(data: Dictionary) -> void:
 	for sk in ranks:
 		if SKILLS.has(sk):
 			skill_ranks[sk] = mini(int(ranks[sk]), int(SKILLS[sk]["max_rank"]))
+	bag = {}
+	var saved_bag: Dictionary = data.get("bag", {})
+	for item in saved_bag:
+		if BAG_ITEMS.has(item):
+			bag[item] = float(saved_bag[item])
 	xp_log.clear()
 	for e in data.get("xp_log", []):
 		if e is Dictionary:

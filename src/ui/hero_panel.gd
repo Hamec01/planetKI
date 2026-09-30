@@ -114,7 +114,7 @@ func _build_ui() -> void:
 	add_child(main)
 	var top = HBoxContainer.new()
 	main.add_child(top)
-	var title = _label("⚔ ВОЖДЬ", 14, Color(1.0, 0.9, 0.45))
+	var title = _label("👑 КОРОЛЬ", 14, Color(1.0, 0.9, 0.45))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(title)
 	var close_btn = Button.new()
@@ -144,7 +144,7 @@ func refresh() -> void:
 		return
 	var hero: PlayerHero = s.hero
 	var sig = "%d|%d|%d|%d|%s|%s|%s|%s|%d|%d" % [tabs.current_tab, hero.level, hero.unspent_attr_points, hero.unspent_skill_points,
-		str(hero.allocated), str(hero.skill_ranks), str(ruler.equipment), str(s.equipment_stockpile), int(ruler.health), int(hero.xp)]
+		str(hero.allocated), str(hero.skill_ranks), str(ruler.equipment), str(s.equipment_stockpile), int(ruler.health), int(hero.xp)] + str(hero.bag) + str(int(ruler.hunger / 10.0))
 	if sig == _signature:
 		return
 	_signature = sig
@@ -162,7 +162,31 @@ func _fill_inventory(s: SettlementData, hero: PlayerHero, ruler: CitizenNPC) -> 
 	var stats = ruler.get_combat_stats()
 	inventory_box.add_child(_label("Бой: урон %.1f • броня %d • точность %d%% • удар раз в %.2fс • оружие: %s" % [
 		float(stats["raw_damage"]), int(stats["armor"]), int(float(stats["accuracy"]) * 100.0), float(stats["attack_interval"]), stats["weapon_name"]], 11, Color(0.8, 0.9, 1.0)))
-	inventory_box.add_child(_label("Надето на вожде:", 11, Color(0.7, 0.85, 1.0)))
+	# Сумка Короля: то, что он сам добыл
+	inventory_box.add_child(_label("🎒 Сумка: %.1f / %.1f (вместимость растёт с силой) • сытость %d" % [hero.get_bag_weight(), hero.get_bag_capacity(s), int(ruler.hunger)], 11, Color(0.7, 0.85, 1.0)))
+	if hero.bag.is_empty():
+		inventory_box.add_child(_label("Пусто. ПКМ по дереву, камню, кусту, цветам или туше — Король добудет сам.", 10, Color(0.75, 0.75, 0.75)))
+	for item in hero.bag:
+		var bc = _card(false)
+		var bv: VBoxContainer = bc[1]
+		var brow = HBoxContainer.new()
+		bv.add_child(brow)
+		var blbl = _label("%s × %.2f" % [PlayerHero.BAG_ITEMS.get(item, {"name": item})["name"], float(hero.bag[item])], 11, Color(0.95, 0.92, 0.8))
+		blbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		brow.add_child(blbl)
+		if PlayerHero.BAG_ITEMS.get(item, {}).get("food", false):
+			var eat_btn = _button("Съесть", "Сытная еда: %.2f ед." % PlayerHero.MEAL_AMOUNT)
+			var eat_item = item
+			eat_btn.pressed.connect(func():
+				var res = hero.eat_from_bag(s, eat_item)
+				status_lbl.text = String(res["reason"])
+				_signature = ""
+				refresh()
+			)
+			brow.add_child(eat_btn)
+		inventory_box.add_child(bc[0])
+	inventory_box.add_child(_label("Сдать добычу — ПКМ по складу. Цветы остаются у Короля для подарков в разговоре.", 9, Color(0.7, 0.72, 0.78)))
+	inventory_box.add_child(_label("Надето на Короле:", 11, Color(0.7, 0.85, 1.0)))
 	for slot in PlayerHero.SLOTS:
 		var c = _card(false)
 		var v: VBoxContainer = c[1]

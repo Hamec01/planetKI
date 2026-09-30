@@ -8,6 +8,7 @@ extends PanelContainer
 # ==============================================================================
 
 signal closed
+signal attack_requested(npc: CitizenNPC)
 
 var npc: CitizenNPC = null
 var name_lbl: Label
@@ -88,6 +89,7 @@ func open_with(p_npc: CitizenNPC) -> void:
 	npc.facing_dir = (ruler.pos - npc.pos).normalized()
 	ruler.state = CitizenNPC.State.TALKING
 	ruler.facing_dir = (npc.pos - ruler.pos).normalized()
+	HeroAnimations.play(ruler, "talk")
 	var greet = NPCDialogue.get_greeting(npc, ruler)
 	line_lbl.text = "«%s»" % greet["text"]
 	npc.shout(greet["text"], 3.0)
@@ -133,6 +135,11 @@ func _choose(topic_id: String, option_id: String, npc_line: String) -> void:
 		close()
 		return
 	var res = NPCDialogue.respond(s, npc, ruler, topic_id, option_id)
+	if res.get("attack", false):
+		var victim = npc
+		close()
+		attack_requested.emit(victim)
+		return
 	line_lbl.text = ("«%s»\n" % npc_line if npc_line != "" else "") + "— %s" % res["reply"]
 	npc.shout(res["reply"], 3.5)
 	_rebuild(s, ruler)
