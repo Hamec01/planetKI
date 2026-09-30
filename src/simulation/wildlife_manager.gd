@@ -401,6 +401,7 @@ func create_carcass_from_animal(animal: WildAnimal) -> Dictionary:
 		"extra_material": animal.extra_material,
 		"extra_material_count": animal.extra_material_count,
 		"extra_remaining": animal.extra_material_count,
+		"bone_remaining": bones_for_meat(animal.meat_yield),
 		"reserved_by": animal.reserved_by,
 		"assigned_hunters": assigned_hunters,
 		"decay_timer": 300.0 # 5 минут игрового времени
@@ -408,17 +409,42 @@ func create_carcass_from_animal(animal: WildAnimal) -> Dictionary:
 	carcasses[c_id] = carcass
 	return carcass
 
+# Сырьё туши -> складской ресурс поселения (шкуры идут в "leather", как в ценах построек)
+const CARCASS_MATERIAL_TO_RESOURCE: Dictionary = {
+	"hide": "leather",
+	"small_hide": "leather",
+	"leather": "leather",
+	"fur": "fur",
+	"feathers": "feathers"
+}
+
+static func material_to_resource(material: String) -> String:
+	return CARCASS_MATERIAL_TO_RESOURCE.get(material, material)
+
+# Кости есть у любой крупной и средней дичи: 1 кость на каждые 6 ед. мяса туши
+static func bones_for_meat(max_meat: float) -> int:
+	return int(floor(max_meat / 6.0))
+
 func harvest_carcass(carcass_id: String, max_amount: float) -> Dictionary:
 	if not carcasses.has(carcass_id):
-		return {"meat": 0.0, "material": "", "material_count": 0}
+		return {"meat": 0.0, "material": "", "material_count": 0, "byproducts": {}}
 	var c = carcasses[carcass_id]
 	var take_meat = min(max_amount, c["meat_remaining"])
 	c["meat_remaining"] -= take_meat
 	
-	# Забираем сопутствующий материал (шкурка/мех/перья)
+	# Первый разделывающий снимает шкуру/мех/перья и забирает кости — они уходят с ним физически
 	var mat = c.get("extra_material", "")
-	var mat_cnt = c.get("extra_remaining", 0)
+	var mat_cnt = int(c.get("extra_remaining", 0))
 	c["extra_remaining"] = 0
+	var bone_cnt = int(c.get("bone_remaining", bones_for_meat(float(c.get("max_meat", 0.0)))))
+	c["bone_remaining"] = 0
+	
+	var byproducts: Dictionary = {}
+	if mat != "" and mat_cnt > 0:
+		var res_key = material_to_resource(mat)
+		byproducts[res_key] = float(byproducts.get(res_key, 0.0)) + float(mat_cnt)
+	if bone_cnt > 0:
+		byproducts["bone"] = float(byproducts.get("bone", 0.0)) + float(bone_cnt)
 	
 	if c["meat_remaining"] <= 0.0:
 		carcasses.erase(carcass_id)
@@ -426,7 +452,8 @@ func harvest_carcass(carcass_id: String, max_amount: float) -> Dictionary:
 	return {
 		"meat": take_meat,
 		"material": mat,
-		"material_count": mat_cnt
+		"material_count": mat_cnt,
+		"byproducts": byproducts
 	}
 
 func serialize() -> Dictionary:

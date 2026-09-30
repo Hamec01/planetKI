@@ -95,15 +95,12 @@ func _on_event_resolved(event_id: String, choice_index: int, results: Dictionary
 			
 	_recalculate_settlement_morale()
 
-func _on_person_died(p_settlement_id: String, reason: String) -> void:
+func _on_person_died(p_settlement_id: String, _reason: String) -> void:
 	if settlement == null or (p_settlement_id != "" and settlement.id != p_settlement_id):
 		return
 		
-	var citizens_list = _get_citizens()
-	for c in citizens_list:
-		if c != null and c.is_alive:
-			c.receive_world_event("citizen_died", {"deceased_name": reason, "deceased_id": ""})
-			
+	# Личная реакция (горе родных, вдовство) выполняется поселением в _notify_citizen_death
+	# с конкретным покойным; здесь только пересчёт общего настроя
 	_recalculate_settlement_morale()
 
 func _on_law_enacted(faction_id: String, law_id: String) -> void:
@@ -161,6 +158,4 @@ func _recalculate_settlement_morale() -> void:
 			
 	if count > 0:
 		var avg_loyalty = total_loyalty / float(count)
-		if "loyalty" in settlement:
-			settlement.loyalty = avg_loyalty
 		EventBus.loyalty_changed.emit(settlement.id if "id" in settlement else "player_faction", avg_loyalty)

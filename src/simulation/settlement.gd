@@ -219,16 +219,7 @@ func deposit_resource(res_name: String, amount: float, source_name: String = "",
 	var is_player = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "player_tribe_settlement" or id == "test_s")
 	if is_player:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
-		var res_names_ru = {
-			"wood": "древесины",
-			"food": "пищи",
-			"stone": "камня",
-			"metal": "металла",
-			"leather": "кожи",
-			"bones": "костей",
-			"fur": "меха"
-		}
-		var name_ru = res_names_ru.get(res_name, res_name)
+		var name_ru = RESOURCE_NAMES_RU.get(res_name, res_name)
 		var total_amt = int(economy.get_resource(res_name))
 		var msg = "+%d %s на склад поселения (Всего: %d)" % [int(amount), name_ru, total_amt]
 		if source_name != "":
@@ -246,7 +237,11 @@ func _on_order_harvest_resource(target_coord: Vector2i, category: String) -> voi
 func _dispatch_priority_worker(target_coord: Vector2i, category: String) -> void:
 	if not population or population.citizens.is_empty():
 		return
-	var target_job = "woodcutter" if category == "wood" else ("forager" if category == "food" else "quarryman")
+	var target_job = "quarryman"
+	match category:
+		"wood": target_job = "woodcutter"
+		"food": target_job = "forager"
+		"metal": target_job = "miner"
 	for c in population.citizens:
 		if c.job_id == target_job and c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
 			var node = GameManager.resource_manager.nodes.get(target_coord, {}) if GameManager.resource_manager else {}
@@ -254,14 +249,18 @@ func _dispatch_priority_worker(target_coord: Vector2i, category: String) -> void
 			var t_pos = p[-1] if not p.is_empty() else (node.get("pos", GameManager.nav_grid.tile_to_world_center(target_coord)) if (GameManager and GameManager.nav_grid) else Vector2.ZERO)
 			if GameManager.resource_manager:
 				GameManager.resource_manager.reserve_node(target_coord, c.citizen_id)
-			c.task_id = "chop_tree" if category == "wood" else "gather"
+			match category:
+				"wood": c.task_id = "chop_tree"
+				"stone": c.task_id = "mine_stone"
+				"metal": c.task_id = "mine_ore"
+				_: c.task_id = "gather"
 			c.target_coord = target_coord
 			c.target_pos = t_pos
 			c.target_id = node.get("id", "")
 			c.path = p
 			c.path_index = 0
 			c.state = CitizenNPC.State.MOVING_TO_WORK
-			c.last_status_reason = "Идёт на первоочередную вырубку дерева" if category == "wood" else "Идёт на первоочередной сбор"
+			c.last_status_reason = "Идёт на первоочередную вырубку дерева" if category == "wood" else ("Идёт на первоочередную добычу" if category in ["stone", "metal"] else "Идёт на первоочередной сбор")
 			if GameManager.task_service:
 				var tid = GameManager.task_service.create_task(c.task_id, c.target_id, target_coord, t_pos)
 				GameManager.task_service.assign_actor(tid, c.citizen_id)
@@ -1602,6 +1601,7 @@ func sim_daily_tick(season: String) -> void:
 	var prod = calculate_daily_production(season)
 	var spoilage_factor = get_granary_spoilage_factor()
 	var _econ_result = economy.sim_daily_tick(population.get_total_population(), prod, spoilage_factor)
+	_update_social_fabric()
 	
 	if faction_id == GameManager.player_faction_id:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -1674,18 +1674,14 @@ func sim_daily_tick(season: String) -> void:
 				var c1: CitizenNPC = eligible_adults[i]
 				var c2: CitizenNPC = eligible_adults[j]
 				if c1.gender != c2.gender and not c1.is_related_to(c2):
-					var shares_home = (c1.home_id != "" and c1.home_id == c2.home_id)
-					var r1 = c1.get_relationship(c2.citizen_id)
-					if not r1.get("married", false):
-						var romance_gain = 8.0 if shares_home else (4.0 if randf() < 0.6 else 0.0)
-						if romance_gain > 0.0:
-							var cur_rom = float(r1.get("romance", 0.0)) + romance_gain
-							c1.add_relationship(c2.citizen_id, r1.get("type", "friend"), 60.0, cur_rom, false)
-							c2.add_relationship(c1.citizen_id, r1.get("type", "friend"), 60.0, cur_rom, false)
-							if cur_rom >= 50.0 and c1.can_marry(c2, marriage_law).get("allowed", false):
-								c1.marry(c2, marriage_law)
-								EventBus.notification_toast.emit("Новый союз", "%s и %s заключили семейный союз" % [c1.name, c2.name], "good")
-								auto_assign_housing()
+					var romance_gain = _get_daily_romance_gain(c1, c2)
+					if romance_gain > 0.0:
+						var cur_rom = c1.add_romance(c2.citizen_id, romance_gain)
+						c2.add_romance(c1.citizen_id, romance_gain)
+						if cur_rom >= 50.0 and c1.can_marry(c2, marriage_law).get("allowed", false):
+							c1.marry(c2, marriage_law)
+							EventBus.notification_toast.emit("Новый союз", "%s и %s заключили семейный союз" % [c1.name, c2.name], "good")
+							auto_assign_housing()
 
 		# Естественное зарождение новой жизни у супругов
 		for c in population.citizens:
@@ -1704,9 +1700,83 @@ func sim_daily_tick(season: String) -> void:
 	auto_assign_housing()
 	auto_assign_workplaces()
 
+# Суточная жизнь общества: настроение людей определяет лояльность племени,
+# время лечит мелкие обиды, а клики сплачивают своих и заражают недовольством
+func _update_social_fabric() -> void:
+	if not population:
+		return
+	var living: Array[CitizenNPC] = []
+	var loyalty_sum = 0.0
+	for c in population.citizens:
+		if c.is_alive and not c.is_ruler:
+			living.append(c)
+			loyalty_sum += c.loyalty
+	if living.is_empty():
+		return
+	
+	# 1. Лояльность племени (HUD) тянется к реальному настроению жителей
+	var avg_loyalty = loyalty_sum / float(living.size())
+	economy.loyalty = clampf(lerpf(economy.loyalty, avg_loyalty, 0.25), 0.0, 100.0)
+	
+	# 2. Время лечит: неприязнь без памятной обиды понемногу остывает
+	for c in living:
+		for other_id in c.relationships:
+			var rel: Dictionary = c.relationships[other_id]
+			var aff = float(rel.get("affinity", 0.0))
+			if aff < 0.0 and not c.has_grudge_against(other_id):
+				rel["affinity"] = minf(0.0, aff + 1.0)
+	
+	# 3. Клики: братство сближает своих, круг недовольных тянет за собой друзей
+	if relationship_graph:
+		for cl in relationship_graph.get_cliques():
+			var members: Array[CitizenNPC] = []
+			for m_id in cl.member_ids:
+				var m = population.find_citizen(m_id)
+				if m and m.is_alive:
+					members.append(m)
+			if cl.type == "rebels":
+				for rebel in members:
+					for friend_id in rebel.get_friends():
+						var friend = population.find_citizen(friend_id)
+						if friend and friend.is_alive and not friend.is_ruler and not cl.member_ids.has(friend_id):
+							friend.loyalty = clampf(friend.loyalty - 0.5, 0.0, 100.0)
+			else:
+				for i in range(members.size()):
+					for j in range(i + 1, members.size()):
+						members[i].modify_relationship(members[j].citizen_id, 0.5, 0.2)
+						members[j].modify_relationship(members[i].citizen_id, 0.5, 0.2)
+
+# Суточный рост романтики: чувства растут только между теми, кто реально общается и
+# симпатизирует друг другу. Враги, обиженные и чужие супруги не влюбляются «по таймеру».
+func _get_daily_romance_gain(c1: CitizenNPC, c2: CitizenNPC) -> float:
+	var r1 = c1.get_relationship(c2.citizen_id)
+	var r2 = c2.get_relationship(c1.citizen_id)
+	if r1.get("married", false):
+		return 0.0
+	if marriage_law == "monogamy" and (not c1.get_spouses().is_empty() or not c2.get_spouses().is_empty()):
+		return 0.0
+	if c1.has_grudge_against(c2.citizen_id) or c2.has_grudge_against(c1.citizen_id):
+		return 0.0
+	var aff = minf(c1.get_relationship_affinity(c2.citizen_id), c2.get_relationship_affinity(c1.citizen_id))
+	if r1.get("type", "") == "ex_spouse" and aff < 60.0:
+		return 0.0
+	var shares_home = (c1.home_id != "" and c1.home_id == c2.home_id)
+	if shares_home and aff >= 0.0:
+		return 6.0
+	if r1.is_empty() or r2.is_empty() or aff < 20.0:
+		return 0.0
+	return 3.0 if randf() < 0.6 else 0.0
+
 func sim_monthly_tick(season: String) -> void:
 	var food_ratio = 1.0
-	var pop_res = population.sim_monthly_tick(food_ratio, get_housing_capacity(), season)
+	var pop_res = population.sim_monthly_tick(food_ratio, get_housing_capacity(), season, false)
+	# Естественная смерть проходит тот же путь, что и гибель: освобождаются дом и работа,
+	# родные горюют, сироты получают опекуна, тело предают земле
+	for dying in pop_res.get("dying", []):
+		var dying_c = population.find_citizen(dying["id"])
+		if dying_c and dying_c.is_alive:
+			dying_c.death_cause = dying["reason"]
+			_process_citizen_death(dying_c)
 	if pop_res["births"] > 0:
 		EventBus.person_born.emit(id)
 	if pop_res["deaths"] > 0:
@@ -1845,15 +1915,33 @@ func _process_citizen_death(c: CitizenNPC) -> void:
 		c.task_instance_id = ""
 	c.task_id = ""
 	
-	# 4. Если погиб правитель
+	# 4. Близкие узнают о гибели: вдовство, опека над сиротами, горе родных
+	_notify_citizen_death(c)
+	
+	# 5. Если погиб правитель
 	if c.is_ruler:
 		EventBus.ruler_died.emit(c.name, c.last_status_reason)
 		if GameManager and GameManager.has_method("trigger_game_over"):
 			GameManager.trigger_game_over("Вождь племени %s погиб. Племя осталось без предводителя." % c.name)
 		return
 		
-	# 5. Проводы и погребение соплеменника
+	# 6. Проводы и погребение соплеменника
 	_conduct_funeral_rites(c)
+
+# Смерть меняет жизнь живых: супруг становится вдовцом, сироты получают опекуна,
+# а горюют только те, кто действительно был близок покойному
+func _notify_citizen_death(dead: CitizenNPC) -> void:
+	for cit in population.citizens:
+		if cit == dead or not cit.is_alive:
+			continue
+		if cit.spouse_id == dead.citizen_id:
+			cit.spouse_id = ""
+		var rel: Dictionary = cit.relationships.get(dead.citizen_id, {})
+		if not rel.is_empty() and (rel.get("married", false) or rel.get("type", "") == "spouse"):
+			rel["married"] = false
+			rel["type"] = "late_spouse"
+		cit.receive_world_event("citizen_died", {"deceased_id": dead.citizen_id, "deceased_name": dead.name})
+	handle_citizen_death(dead.citizen_id)
 
 func _conduct_funeral_rites(c: CitizenNPC) -> void:
 	if c.is_buried or c.custom_data.get("funeral_in_progress", false):
@@ -2630,9 +2718,21 @@ func update_citizens(delta: float) -> void:
 					c.morale = minf(100.0, c.morale + 4.0)
 					c.add_work_xp("gathering", 0.5)
 					if randf() < 0.50 and economy:
-						deposit_resource("food", 2.0, c.name)
+						# Улов несут в амбар ногами, а не зачисляют с берега
+						c.cargo_type = "food"
+						c.cargo_amount = 2.0
+						c.cargo_batch = {
+							"food_type": "fish",
+							"amount": 2.0,
+							"created_sim_time": GameManager.sim_time_total,
+							"max_freshness_sec": 3000.0,
+							"spoilage_progress": 0.0
+						}
+						c.state = CitizenNPC.State.CARRYING
+						c.path = GameManager.nav_grid.find_path(c.pos, _get_storage_pos(c)) if GameManager.nav_grid else []
+						c.path_index = 0
 						c.show_emote("joy", 3.0, 2)
-						c.last_status_reason = "Удачно порыбачил вечерком (+2 рыбы)"
+						c.last_status_reason = "Удачно порыбачил вечерком, несёт 2 рыбы в амбар"
 					else:
 						c.show_emote("calm", 3.0, 1)
 						c.last_status_reason = "Спокойно отдохнул на вечерней рыбалке"
@@ -2922,19 +3022,18 @@ func update_citizens(delta: float) -> void:
 						GameManager.wildlife_manager.release_carcass(c.target_id, c.citizen_id)
 						c.target_id = ""
 						var meat = h_res.get("meat", 0.0) if h_res is Dictionary else float(h_res)
-						if h_res is Dictionary:
-							var mat = h_res.get("material", "")
-							var mat_cnt = h_res.get("material_count", 0)
-							if mat != "" and mat_cnt > 0:
-								deposit_resource(mat, float(mat_cnt), c.name)
-						if meat > 0.0:
+						# Шкура, мех, перья и кости не телепортируются на склад: охотник несёт их вместе с тушей
+						var byproducts: Dictionary = h_res.get("byproducts", {}) if h_res is Dictionary else {}
+						c.custom_data["hunt_byproducts"] = byproducts.duplicate()
+						if meat > 0.0 or not byproducts.is_empty():
 							c.cargo_type = "carcass"
 							c.cargo_amount = meat
+							c.add_work_xp("hunting_tracking", 0.6)
 							var camp_p = _find_hunting_camp_pos(c)
 							c.path = GameManager.nav_grid.find_path(c.pos, camp_p)
 							c.path_index = 0
 							c.state = CitizenNPC.State.CARRYING
-							c.last_status_reason = "Несёт тушу в охотничий лагерь"
+							c.last_status_reason = "Несёт тушу в охотничий лагерь" if meat > 0.0 else "Несёт снятую шкуру в охотничий лагерь"
 						else:
 							c.state = CitizenNPC.State.IDLE
 							c.decision_cooldown = 1.0
@@ -3706,12 +3805,18 @@ func update_citizens(delta: float) -> void:
 						c.decision_cooldown = 1.0
 						c.last_status_reason = "Пополнил домашний запас еды"
 						continue
-					elif c.cargo_type != "" and c.cargo_amount > 0:
+					elif (c.cargo_type != "" and c.cargo_amount > 0) or c.custom_data.has("hunt_byproducts"):
+						# Шкуры, мех, кости и перья, принесённые охотником вместе с мясом
+						if c.custom_data.has("hunt_byproducts"):
+							var hunt_extras: Dictionary = c.custom_data["hunt_byproducts"]
+							c.custom_data.erase("hunt_byproducts")
+							for res_key in hunt_extras:
+								deposit_resource(res_key, float(hunt_extras[res_key]), c.name)
 						deposit_resource(c.cargo_type, c.cargo_amount, c.name, c.cargo_batch)
 						if GameManager.task_service and c.task_instance_id != "":
 							GameManager.task_service.complete_task(c.task_instance_id)
 							c.task_instance_id = ""
-						c.last_status_reason = "Сдал %d %s в амбар" % [int(c.cargo_amount), c.cargo_type]
+						c.last_status_reason = "Сдал %d %s в амбар" % [int(c.cargo_amount), RESOURCE_NAMES_RU.get(c.cargo_type, c.cargo_type)]
 						c.cargo_type = ""
 						c.cargo_amount = 0.0
 						c.cargo_batch.clear()
@@ -3818,10 +3923,14 @@ func update_citizens(delta: float) -> void:
 				var meat_mult = camp_inst.get_meat_yield_mult() if camp_inst else 1.0
 				var fur_bonus = camp_inst.get_fur_bonus() if camp_inst else 0
 				var bone_bonus = camp_inst.get_bone_bonus() if camp_inst else 0
-				if fur_bonus > 0:
-					deposit_resource("leather", float(fur_bonus), c.name)
-				if bone_bonus > 0:
-					deposit_resource("bone", float(bone_bonus), c.name)
+				# Бонусы площадки разделки зависят от реальной добычи: шкуру можно выделать лучше
+				# только если она была снята с туши, кости — только если туша их дала
+				var byproducts: Dictionary = c.custom_data.get("hunt_byproducts", {})
+				if fur_bonus > 0 and (byproducts.has("leather") or byproducts.has("fur")):
+					byproducts["leather"] = float(byproducts.get("leather", 0.0)) + float(fur_bonus)
+				if bone_bonus > 0 and byproducts.has("bone"):
+					byproducts["bone"] = float(byproducts.get("bone", 0.0)) + float(bone_bonus)
+				c.custom_data["hunt_byproducts"] = byproducts
 				var final_meat = c.cargo_amount * meat_mult
 				c.cargo_type = "food"
 				var is_smoked = camp_inst.is_smokehouse_unlocked() if camp_inst else false
@@ -3838,6 +3947,9 @@ func update_citizens(delta: float) -> void:
 				c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
 				c.path_index = 0
 				c.last_status_reason = "Несёт %d копчёного мяса в амбар" % int(final_meat) if is_smoked else "Несёт %d еды в амбар" % int(final_meat)
+				var extras_txt = _format_hunt_byproducts(byproducts)
+				if extras_txt != "":
+					c.last_status_reason += " и " + extras_txt
 				if GameManager.task_service and c.task_instance_id != "":
 					GameManager.task_service.set_delivering(c.task_instance_id)
 			continue
@@ -3930,6 +4042,7 @@ func update_citizens(delta: float) -> void:
 						if h_amount > 0.0:
 							c.cargo_type = "wood"
 							c.cargo_amount += h_amount
+							c.add_work_xp("woodcutting", 0.4)
 							
 						# Проверяем оставшийся запас в дереве
 						var node = GameManager.resource_manager.nodes.get(c.target_coord, {}) if GameManager.resource_manager else {}
@@ -3973,20 +4086,24 @@ func update_citizens(delta: float) -> void:
 							c.work_timer = randf_range(4.5, 6.0)
 							c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
 				elif c.job_id in ["quarryman", "miner"]:
+					# Что добыто, определяет сама порода: из рудной жилы — руда, из валуна — камень
 					var res_cat = "stone" if c.job_id == "quarryman" else "metal"
 					var h_amount = 0.0
 					if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
+						var rock_node = GameManager.resource_manager.nodes.get(c.target_coord, {})
+						res_cat = rock_node.get("category", res_cat)
 						h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, 4.0)
 						GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 					if h_amount > 0.0:
 						c.cargo_type = res_cat
 						c.cargo_amount = h_amount
+						c.add_work_xp("ore_mining" if res_cat == "metal" else "stone_mining", 0.3)
 					c.target_coord = Vector2i(-1, -1)
 					c.state = CitizenNPC.State.CARRYING
 					var dest_p = _get_storage_pos(c)
 					c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
 					c.path_index = 0
-					c.last_status_reason = "Несёт %d %s на склад" % [int(c.cargo_amount), c.cargo_type]
+					c.last_status_reason = "Несёт %d %s на склад" % [int(c.cargo_amount), "руды" if c.cargo_type == "metal" else "камня"]
 					if GameManager.task_service and c.task_instance_id != "":
 						GameManager.task_service.set_delivering(c.task_instance_id)
 				elif c.job_id == "builder" or c.task_id in ["build", "upgrade_work"]:
@@ -4006,6 +4123,7 @@ func update_citizens(delta: float) -> void:
 									c.decision_cooldown = 2.0
 								else:
 									up["work_left"] = maxf(0.0, float(up.get("work_left", 4.0)) - 1.5)
+									c.add_work_xp("building", 0.25)
 									if up["work_left"] <= 0.0:
 										var up_id = up["id"]
 										b_inst.unlock_upgrade(up_id)
@@ -4034,6 +4152,7 @@ func update_citizens(delta: float) -> void:
 									c.decision_cooldown = 2.0
 								else:
 									b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70)
+									c.add_work_xp("building", 0.25)
 									if b["days_left"] <= 0.0:
 										b["status"] = "active"
 										var b_inst = GameManager.get_or_create_building_instance(c.target_coord, b["id"], id)
@@ -4080,17 +4199,10 @@ func update_citizens(delta: float) -> void:
 					c.decision_cooldown = randf_range(2.0, 5.0)
 					c.last_status_reason = "Патрулирует периметр"
 				else:
-					var res_type = _get_cargo_for_job(c.job_id)
-					if res_type != "":
-						c.cargo_type = res_type
-						c.cargo_amount = randi_range(2, 4)
-						c.state = CitizenNPC.State.CARRYING
-						c.path = GameManager.nav_grid.find_path(c.pos, c.home_pos)
-						c.path_index = 0
-						c.last_status_reason = "Несёт %d %s в поселение" % [int(c.cargo_amount), c.cargo_type]
-					else:
-						c.state = CitizenNPC.State.IDLE
-						c.decision_cooldown = randf_range(2.0, 4.0)
+					# Ресурсы появляются только из реальных узлов карты, туш и полей —
+					# «работа на месте» без цели ничего не создаёт из воздуха
+					c.state = CitizenNPC.State.IDLE
+					c.decision_cooldown = randf_range(2.0, 4.0)
 			continue
 			
 		# Свободный выбор нового действия (IDLE или WAITING)
@@ -5213,16 +5325,6 @@ func _get_job_action_name(job: String) -> String:
 		"warrior": return "Отрабатывает удары"
 		_: return "Занят делом"
 
-func _get_cargo_for_job(job: String) -> String:
-	match job:
-		"woodcutter": return "wood"
-		"quarryman": return "stone"
-		"miner": return "metal"
-		"hunter", "forager", "farmer": return "food"
-		"craftsman": return "kubriki"
-		"builder": return ""
-		_: return ""
-
 func _find_chat_partner(citizen: CitizenNPC) -> CitizenNPC:
 	if citizen.social_cooldown > 0.0:
 		return null
@@ -5293,6 +5395,13 @@ func _start_social_dialog(c1: CitizenNPC, c2: CitizenNPC) -> void:
 		emote2 = "disgust"
 		c1.spouse_id = ""
 		c2.spouse_id = ""
+		# Союз действительно расторгнут: иначе get_spouses() продолжает считать их супругами
+		for pair in [[c1, c2], [c2, c1]]:
+			var div_rel: Dictionary = pair[0].relationships.get(pair[1].citizen_id, {})
+			if not div_rel.is_empty():
+				div_rel["married"] = false
+				div_rel["type"] = "ex_spouse"
+				div_rel["romance"] = 0.0
 		c1.modify_relationship(c2.citizen_id, -25.0, -50.0)
 		c2.modify_relationship(c1.citizen_id, -25.0, -50.0)
 		c1.add_memory("divorce", "breakup", c2.citizen_id, 3.5, "Развёлся с %s после тяжёлой ссоры" % c2.name)
@@ -5591,6 +5700,10 @@ func _try_visit_friend(c: CitizenNPC) -> bool:
 	c.decision_cooldown = 1.0
 	return true
 
+# Свободен для досуга: не занят делом (визит на могилу, рыбалка и т.п. тоже идут в RESTING)
+func _is_free_for_leisure(c: CitizenNPC) -> bool:
+	return c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING] or (c.state == CitizenNPC.State.RESTING and c.task_id == "")
+
 func _try_start_dating_walk(c: CitizenNPC) -> bool:
 	if not population or population.citizens.is_empty():
 		return false
@@ -5600,7 +5713,7 @@ func _try_start_dating_walk(c: CitizenNPC) -> bool:
 	# Если уже состоит в браке — идёт на прогулку с супругом
 	if c.spouse_id != "":
 		var sp = get_citizen_by_id(c.spouse_id)
-		if sp and sp.is_alive and sp.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.RESTING] and sp.pos.distance_to(c.pos) <= 300.0:
+		if sp and sp.is_alive and _is_free_for_leisure(sp) and sp.pos.distance_to(c.pos) <= 300.0:
 			partner = sp
 	else:
 		# Ищет объект взаимной симпатии противоположного пола
@@ -5611,11 +5724,15 @@ func _try_start_dating_walk(c: CitizenNPC) -> bool:
 				continue
 			if other.spouse_id != "" and marriage_law == "monogamy":
 				continue
-			if other.state not in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.RESTING]:
+			if not _is_free_for_leisure(other):
 				continue
-			var aff = c.get_relationship_affinity(other.citizen_id)
+			if c.has_grudge_against(other.citizen_id) or other.has_grudge_against(c.citizen_id):
+				continue
+			# Симпатия должна быть взаимной: на прогулку зовут тех, с кем уже сложились тёплые отношения,
+			# а с малознакомыми — лишь изредка и только при отсутствии неприязни
+			var aff = minf(c.get_relationship_affinity(other.citizen_id), other.get_relationship_affinity(c.citizen_id))
 			var rom = float(c.get_relationship(other.citizen_id).get("romance", 0.0))
-			if rom >= 15.0 or aff >= 30.0 or randf() < 0.25:
+			if rom >= 15.0 or aff >= 30.0 or (aff >= 0.0 and randf() < 0.08):
 				partner = other
 				break
 	if partner == null:
@@ -5821,6 +5938,25 @@ func _get_storage_pos(c: CitizenNPC) -> Vector2:
 				if GameManager.nav_grid:
 					return GameManager.nav_grid.tile_to_world_center(b.pos)
 	return c.home_pos
+
+const RESOURCE_NAMES_RU: Dictionary = {
+	"wood": "древесины",
+	"food": "пищи",
+	"stone": "камня",
+	"metal": "руды",
+	"leather": "шкур",
+	"fur": "меха",
+	"bone": "костей",
+	"feathers": "перьев"
+}
+
+func _format_hunt_byproducts(byproducts: Dictionary) -> String:
+	var parts: Array[String] = []
+	for res_key in byproducts:
+		var amt = int(byproducts[res_key])
+		if amt > 0:
+			parts.append("%d %s" % [amt, RESOURCE_NAMES_RU.get(res_key, res_key)])
+	return ", ".join(parts)
 
 func _get_animal_display_name(type_id: String) -> String:
 	match type_id:

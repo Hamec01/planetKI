@@ -868,15 +868,16 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 		var boost_amt = float(consequences["young_skill_boost"])
 		for c in pop.citizens:
 			if c.age < 30 and c.cohort in ["youth", "adult"]:
-				c.skills["hunting"] = minf(100.0, float(c.skills.get("hunting", 10.0)) + boost_amt)
-				c.skills["woodcutting"] = minf(100.0, float(c.skills.get("woodcutting", 10.0)) + boost_amt)
+				# Опыт идёт в реальные профессиональные ключи, влияющие на скорость работы
+				c.skill_hunter = c.skill_hunter + boost_amt
+				c.skill_woodcutter = c.skill_woodcutter + boost_amt
 				c.skills["survival"] = minf(100.0, float(c.skills.get("survival", 10.0)) + boost_amt)
 
 	if (consequences.has("young_hunter_skill_boost") or consequences.has("skill_boost_youth")) and pop:
 		var h_boost = float(consequences.get("young_hunter_skill_boost", consequences.get("skill_boost_youth", 2.0)))
 		for c in pop.citizens:
 			if c.job_id == "hunter" or (c.age < 25 and c.cohort in ["youth", "adult"]):
-				c.skill_hunter = minf(100.0, c.skill_hunter + h_boost)
+				c.skill_hunter = c.skill_hunter + h_boost
 
 	# --- ПОСЛЕДСТВИЯ АГРАРНОЙ ЭВОЛЮЦИИ И ЗЕМЛЕДЕЛИЯ ---
 	if settlement:

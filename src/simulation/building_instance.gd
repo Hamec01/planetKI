@@ -729,6 +729,16 @@ func transfer_knowledge(apprentice: RefCounted, amount: float, p_settlement: Ref
 		if float(master.skills[sk]) > best_val:
 			best_val = float(master.skills[sk])
 			best_skill = sk
+	# Профессиональный опыт (рубка, охота, стройка) наставник тоже передаёт
+	var best_prof = ""
+	var best_prof_val = 0.0
+	for pk in master.experience:
+		if float(master.experience[pk]) > best_prof_val:
+			best_prof_val = float(master.experience[pk])
+			best_prof = pk
+	if best_prof != "" and best_prof_val > apprentice.get_profession_xp(best_prof):
+		var curr_xp = apprentice.get_profession_xp(best_prof)
+		apprentice.experience[best_prof] = curr_xp + minf(amount * 0.2, best_prof_val - curr_xp)
 	if best_skill != "" and best_val > float(apprentice.skills.get(best_skill, 0.0)):
 		var curr = float(apprentice.skills.get(best_skill, 10.0))
 		var growth = minf(amount * 0.2, best_val - curr)

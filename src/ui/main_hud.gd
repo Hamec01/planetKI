@@ -23,6 +23,9 @@ extends CanvasLayer
 @onready var tile_title_label: Label = $TileInfoPanel/MarginContainer/VBox/Title
 @onready var tile_details_label: Label = $TileInfoPanel/MarginContainer/VBox/Details
 
+# Добыча охотников: шкуры, мех, кости, перья (создаётся кодом рядом с металлом)
+var hunt_goods_label: Label = null
+
 # Горизонтальная нижняя панель RTS (Control Dock Bar)
 var bottom_dock_bar: PanelContainer
 var map_mode_panel: PanelContainer
@@ -308,6 +311,13 @@ func _unhandled_input(event: InputEvent) -> void:
 					map_mode_panel.visible = false
 
 func _setup_top_bar_icons() -> void:
+	if metal_label and hunt_goods_label == null:
+		hunt_goods_label = Label.new()
+		hunt_goods_label.name = "HuntGoodsLabel"
+		hunt_goods_label.mouse_filter = Control.MOUSE_FILTER_PASS
+		var res_parent = metal_label.get_parent()
+		res_parent.add_child(hunt_goods_label)
+		res_parent.move_child(hunt_goods_label, metal_label.get_index() + 1)
 	_attach_icon(food_label, "food")
 	_attach_icon(wood_label, "wood")
 	_attach_icon(stone_label, "stone")
@@ -650,6 +660,14 @@ func _update_ui() -> void:
 		metal_label.text = "⛏ %d" % int(econ.get_resource("metal"))
 		metal_label.tooltip_text = _format_tooltip("Металл", econ.get_resource("metal"), metal_inc, {"Добыча": metal_inc})
 		
+		if hunt_goods_label:
+			var leather_amt = econ.get_resource("leather")
+			var fur_amt = econ.get_resource("fur")
+			var bone_amt = econ.get_resource("bone")
+			var feathers_amt = econ.get_resource("feathers")
+			hunt_goods_label.text = "🟫 %d  🐾 %d  🦴 %d" % [int(leather_amt), int(fur_amt), int(bone_amt)]
+			hunt_goods_label.tooltip_text = "Добыча охотников на складе\nШкуры: %d\nМех: %d\nКости: %d\nПерья: %d" % [int(leather_amt), int(fur_amt), int(bone_amt), int(feathers_amt)]
+		
 		var kub_inc = float(inc.get("kubriki", 0.0))
 		kubriki_label.text = "🪙 %d" % int(econ.get_resource("kubriki"))
 		kubriki_label.tooltip_text = _format_tooltip("Кубрики", econ.get_resource("kubriki"), kub_inc, {"Ремесло": kub_inc})
@@ -904,7 +922,7 @@ func _refresh_nature_context_live() -> void:
 	var max_amt = float(node.get("max_amount", 100.0))
 	var is_depleted = node.get("depleted", false) or res_amt <= 0.0
 	var res_type = node.get("type", "wood")
-	var unit_name = "дров" if res_type == "wood" else ("ед. пищи" if res_type in ["berries", "mushrooms"] else "камня")
+	var unit_name = _get_nature_unit_name(res_type)
 	
 	ctx_progress_bar.max_value = max_amt
 	ctx_progress_bar.value = res_amt
@@ -926,6 +944,13 @@ func _refresh_nature_context_live() -> void:
 						break
 			status_text = "Добывается: " + worker_name
 		ctx_desc_lbl.text = "Запас ресурса: %d / %d %s\nСтатус: %s" % [int(res_amt), int(max_amt), unit_name, status_text]
+
+func _get_nature_unit_name(res_type: String) -> String:
+	match res_type:
+		"wood": return "дров"
+		"berries", "mushrooms", "fish": return "ед. пищи"
+		"metal": return "руды"
+		_: return "камня"
 
 func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 	var coord: Vector2i = info.get("coord", Vector2i(-1, -1))
@@ -973,10 +998,10 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 	# 3. Подзаголовок
 	if has_res:
 		var cat_names = {
-			"wood": "Лесной ресурс • 18-20 древесины в дереве",
+			"wood": "Лесной ресурс • Лесоруб • %d древесины" % int(max_amt),
 			"food": "Сбор пищи • Ягоды и грибы",
-			"stone": "Каменная порода • Каменоломня",
-			"metal": "Металлическая руда"
+			"stone": "Каменная порода • Каменотёс • не восстанавливается",
+			"metal": "Рудная жила • Рудокоп • не восстанавливается"
 		}
 		ctx_coords_lbl.text = cat_names.get(node.get("category", "wood"), "Природный ресурс")
 	else:
@@ -988,7 +1013,7 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 		ctx_progress_bar.max_value = max_amt
 		ctx_progress_bar.value = res_amt
 		
-		var unit_name = "дров" if res_type == "wood" else ("ед. пищи" if res_type in ["berries", "mushrooms"] else "камня")
+		var unit_name = _get_nature_unit_name(res_type)
 		var status_text = "Готово к заготовке"
 		var res_by = node.get("reserved_by", "")
 		if res_by != "":
@@ -1009,7 +1034,17 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 		# Кнопка действия
 		ctx_action_btn.visible = true
 		ctx_action_btn.disabled = false
-		if cat == "tree":
+		if res_type == "metal":
+			ctx_action_btn.text = "⛏ Добыть руду (Приоритет)"
+			ctx_action_btn.pressed.connect(func():
+				EventBus.order_harvest_resource.emit(coord, "metal")
+			)
+		elif res_type == "stone":
+			ctx_action_btn.text = "⛏ Добыть камень (Приоритет)"
+			ctx_action_btn.pressed.connect(func():
+				EventBus.order_harvest_resource.emit(coord, "stone")
+			)
+		elif res_type == "wood":
 			ctx_action_btn.text = "🪓 Вырубить дерево (Приоритет)"
 			ctx_action_btn.pressed.connect(func():
 				EventBus.order_harvest_resource.emit(coord, "wood")
@@ -1018,11 +1053,6 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 			ctx_action_btn.text = "🧺 Собрать урожай (Приоритет)"
 			ctx_action_btn.pressed.connect(func():
 				EventBus.order_harvest_resource.emit(coord, "food")
-			)
-		elif cat == "rock":
-			ctx_action_btn.text = "⛏ Добыть камень (Приоритет)"
-			ctx_action_btn.pressed.connect(func():
-				EventBus.order_harvest_resource.emit(coord, "stone")
 			)
 		else:
 			ctx_action_btn.visible = false

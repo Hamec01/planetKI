@@ -464,28 +464,28 @@ const UPGRADES: Dictionary = {
 		"id": "partitions", "building_type": "great_lodge",
 		"name": "🛏 Спальные перегородки", "desc": "Примитивные перегородки из дерева и шкур. Конфликты -20%, сон +10%, приватность семейных зон.",
 		"category": "living", "unlock_type": "ordinary",
-		"cost": {"wood": 12, "hides": 6}, "prerequisites": [],
+		"cost": {"wood": 12, "leather": 6}, "prerequisites": [],
 		"effects": {"conflict_reduction": 0.20, "sleep_quality": 0.10}
 	},
 	"nursery_corner": {
 		"id": "nursery_corner", "building_type": "great_lodge",
 		"name": "👶 Детский угол", "desc": "Безопасное место внутри дома для совместной заботы о детях несколькими семьями.",
 		"category": "childcare", "unlock_type": "ordinary",
-		"cost": {"wood": 10, "hides": 4}, "prerequisites": [],
+		"cost": {"wood": 10, "leather": 4}, "prerequisites": [],
 		"effects": {"shared_childcare": true}
 	},
 	"caretaker_quarters": {
 		"id": "caretaker_quarters", "building_type": "great_lodge",
 		"name": "👩🍼 Место опекуна", "desc": "Открывает общественную роль: Опекун детей (следит за детьми до 8 чел., освобождает родителей для работы).",
 		"category": "childcare", "unlock_type": "ordinary",
-		"cost": {"wood": 12, "hides": 6}, "prerequisites": ["nursery_corner"],
+		"cost": {"wood": 12, "leather": 6}, "prerequisites": ["nursery_corner"],
 		"effects": {"unlock_role_caretaker": true}
 	},
 	"elders_quarters": {
 		"id": "elders_quarters", "building_type": "great_lodge",
 		"name": "👴 Место старших", "desc": "Особая зона для одиноких стариков: помощь общине, присмотр за очагом и наставления молодым.",
 		"category": "eldercare", "unlock_type": "ordinary",
-		"cost": {"wood": 8, "stone": 8, "hides": 4}, "prerequisites": [],
+		"cost": {"wood": 8, "stone": 8, "leather": 4}, "prerequisites": [],
 		"effects": {"elder_shelter": true}
 	},
 	"knowledge_circle": {
@@ -499,7 +499,7 @@ const UPGRADES: Dictionary = {
 		"id": "clan_totems", "building_type": "great_lodge",
 		"name": "🪶 Родовые знаки", "desc": "Стены украшаются шкурами, рогами и символами предков. Лояльность традициям +10, сплоченность +5.",
 		"category": "tradition", "unlock_type": "ordinary",
-		"cost": {"wood": 6, "bones": 4, "hides": 4}, "prerequisites": [],
+		"cost": {"wood": 6, "bone": 4, "leather": 4}, "prerequisites": [],
 		"effects": {"tradition_loyalty": 10.0, "cohesion": 5.0}
 	},
 	"clan_council": {
@@ -520,7 +520,7 @@ const UPGRADES: Dictionary = {
 		"id": "infirmary_corner", "building_type": "great_lodge",
 		"name": "🩹 Место ухода", "desc": "Лежанки для раненых, больных и рожениц (+15% к восстановлению здоровья, зарождение целительства).",
 		"category": "medicine", "unlock_type": "ordinary",
-		"cost": {"wood": 10, "hides": 6}, "prerequisites": [],
+		"cost": {"wood": 10, "leather": 6}, "prerequisites": [],
 		"effects": {"healing_speed": 0.15}
 	}
 }

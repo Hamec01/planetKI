@@ -19,7 +19,9 @@ var resources: Dictionary = {
 	"herbs": 5.0,
 	"mushrooms": 0.0,
 	"leather": 5.0,
+	"fur": 0.0,
 	"bone": 4.0,
+	"feathers": 0.0,
 	"clay": 0.0
 }
 
@@ -32,10 +34,19 @@ var faith: float = 50.0        # 0 - 100 (религиозность)
 # Дневное потребление пищи на 1 жителя
 const FOOD_CONSUMPTION_PER_POP_DAILY: float = 0.08 # ~2.4 единицы еды в месяц на человека
 
+# Показатели общества (0..100) — не складские ресурсы. Раньше add_resource("faith", ...)
+# заводил на складе фиктивный ресурс "faith", и вера племени от молитв не менялась.
+const SOCIAL_STATS: Array[String] = ["faith", "loyalty", "stability", "military_spirit"]
+
 func get_resource(res_name: String) -> float:
+	if res_name in SOCIAL_STATS:
+		return float(get(res_name))
 	return float(resources.get(res_name, 0.0))
 
 func add_resource(res_name: String, amount: float) -> void:
+	if res_name in SOCIAL_STATS:
+		set(res_name, clampf(float(get(res_name)) + amount, 0.0, 100.0))
+		return
 	resources[res_name] = maxf(0.0, float(resources.get(res_name, 0.0)) + amount)
 
 

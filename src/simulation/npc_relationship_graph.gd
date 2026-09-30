@@ -86,7 +86,7 @@ func _recalculate_cliques(settlement: RefCounted) -> void:
 	for c in citizens_list:
 		if c != null and c.is_alive and (c.job_id == "hunter" or c.get_personality_archetype() == "fighter"):
 			hunter_members.append(c.citizen_id)
-			var h_lvl = float(c.skills.get("hunter", 0.0)) + float(c.traits.get("bravery", 50.0))
+			var h_lvl = c.get_profession_xp("hunter") + float(c.traits.get("bravery", 50.0))
 			if h_lvl > max_hunter_skill:
 				max_hunter_skill = h_lvl
 				hunter_leader = c.citizen_id
@@ -104,7 +104,7 @@ func _recalculate_cliques(settlement: RefCounted) -> void:
 	var worker_leader = ""
 	var max_worker_dil = -1.0
 	for c in citizens_list:
-		if c != null and c.is_alive and (c.job_id in ["builder", "woodcutter", "stonecutter", "miner"]):
+		if c != null and c.is_alive and (c.job_id in ["builder", "woodcutter", "quarryman", "miner"]):
 			worker_members.append(c.citizen_id)
 			var dil = float(c.traits.get("diligence", 50.0))
 			if dil > max_worker_dil:

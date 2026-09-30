@@ -122,7 +122,12 @@ func _ready() -> void:
 	print("OK 6. MapResourceManager initialized with %d resource nodes." % res_mgr.nodes.size())
 	
 	# 7. Проверка резервирования точки (исключение коллизий двух собирателей)
+	# Возобновляемая точка (ягоды/грибы/рыба): после сбора остаётся на карте пустой до восстановления
 	var test_coord = res_mgr.nodes.keys()[0]
+	for rc in res_mgr.nodes:
+		if res_mgr.nodes[rc]["category"] in MapResourceManager.RENEWABLE_CATEGORIES:
+			test_coord = rc
+			break
 	var res_ok1 = res_mgr.reserve_node(test_coord, "cit_6")
 	assert(res_ok1, "First citizen must successfully reserve node")
 	
@@ -146,6 +151,36 @@ func _ready() -> void:
 	var harvest_again = res_mgr.harvest_from_node(test_coord, 5.0)
 	assert(harvest_again == 0.0, "Depleted node must yield 0 resources")
 	print("OK 8. Node depletion and zero double-harvesting verified.")
+	
+	# 8b. Камень — это камень: валун не отрастает, а распадается на россыпь и исчезает
+	var st_rock_coord = Vector2i(-1, -1)
+	for rc in res_mgr.nodes:
+		if res_mgr.nodes[rc]["category"] == "stone" and res_mgr.nodes[rc]["original_sprite"] == "rock_round_boulder":
+			st_rock_coord = rc
+			break
+	if st_rock_coord == Vector2i(-1, -1):
+		st_rock_coord = Vector2i(3, 3)
+		res_mgr._create_node(st_rock_coord, "rock_round_boulder")
+	var st_boulder_amt = float(res_mgr.nodes[st_rock_coord]["amount"])
+	assert(res_mgr.harvest_from_node(st_rock_coord, st_boulder_amt) == st_boulder_amt, "Boulder yields its whole stone amount")
+	assert(res_mgr.nodes.has(st_rock_coord) and res_mgr.nodes[st_rock_coord]["original_sprite"] == "rock_small_pebbles", "Worked-out boulder turns into a pebble scatter")
+	assert(not res_mgr.nodes[st_rock_coord]["depleted"] and res_mgr.nodes[st_rock_coord]["category"] == "stone", "Pebble scatter is still minable stone")
+	assert(not res_mgr.nodes[st_rock_coord]["blocks"], "Pebble scatter does not block the path")
+	res_mgr.harvest_from_node(st_rock_coord, 100.0)
+	assert(not res_mgr.nodes.has(st_rock_coord), "Fully mined stone disappears from the map")
+	res_mgr.update_regrowth(9999.0)
+	assert(not res_mgr.nodes.has(st_rock_coord), "Stone never regrows")
+	# Рудная жила: добывается руда, а после неё остаётся каменная россыпь
+	var st_ore_coord = Vector2i(4, 3)
+	res_mgr._create_node(st_ore_coord, "rock_red_stone")
+	res_mgr.harvest_from_node(st_ore_coord, 100.0)
+	assert(res_mgr.nodes.has(st_ore_coord) and res_mgr.nodes[st_ore_coord]["category"] == "stone", "Depleted ore vein leaves stone rubble")
+	res_mgr.remove_node(st_ore_coord)
+	# Деревья зимнего леса и сухостой — настоящая древесина
+	assert(MapResourceManager.RESOURCE_NATURE_CONFIG["tree_spruce_snow"]["category"] == "wood", "Snowy spruce is choppable wood")
+	assert(MapResourceManager.RESOURCE_NATURE_CONFIG["tree_dead"]["category"] == "wood", "Dead tree is choppable wood")
+	assert(MapResourceManager.RESOURCE_NATURE_CONFIG["rock_snow_boulder"]["category"] == "stone", "Snowy boulder is minable stone")
+	print("OK 8b. Stone is finite: boulder -> pebbles -> gone, ore -> rubble, snowy trees are wood.")
 	
 	# 9. Проверка отключения пассивного начисления в экономике (собиратели и охотники)
 	var daily_prod = s.calculate_daily_production("Лето")
@@ -557,6 +592,10 @@ func _ready() -> void:
 	assert(m_carcass["extra_material"] == "hide" and m_carcass["extra_remaining"] == 3, "Moose carcass must contain 3 hides")
 	var m_harvest = wild_mgr.harvest_carcass(m_carcass["id"], 8.0)
 	assert(m_harvest["meat"] == 8.0 and m_harvest["material"] == "hide" and m_harvest["material_count"] == 3, "Harvest yields meat + hides")
+	assert(float(m_harvest["byproducts"].get("leather", 0.0)) == 3.0, "Moose hides become 3 leather for settlement economy")
+	assert(float(m_harvest["byproducts"].get("bone", 0.0)) == 3.0, "Moose carcass yields 3 bones (22 meat / 6)")
+	var m_second = wild_mgr.harvest_carcass(m_carcass["id"], 8.0)
+	assert(m_second["byproducts"].is_empty(), "Hides and bones are taken only once from a carcass")
 	print("OK 32. Large carcass multi-yield and material trophies (hide, fur, feathers) verified.")
 
 	# 33. Регрессионный тест: поиск hunting_camp через BuildingInstance и tile_buildings
@@ -599,7 +638,7 @@ func _ready() -> void:
 	assert(GameManager.planet_data["tiles"][test_plant_c.y][test_plant_c.x]["nature_object"] == "tree_young", "Tile must show tree_young after planting")
 	GameManager.resource_manager.update_regrowth(35.0)
 	assert(GameManager.planet_data["tiles"][test_plant_c.y][test_plant_c.x]["nature_object"] == "tree_pine", "Tile must mature into tree_pine")
-	assert(GameManager.resource_manager.nodes[test_plant_c]["amount"] == 100.0, "Mature planted tree must have 100 wood")
+	assert(GameManager.resource_manager.nodes[test_plant_c]["amount"] == MapResourceManager.RESOURCE_NATURE_CONFIG["tree_pine"]["amount"], "Mature planted pine holds as much wood as a wild pine")
 	print("OK 35. Reforestation: planting tree_young and maturation into 100-wood tree verified.")
 
 	# 36. Разблокировка базовых зданий 1-й эпохи
@@ -2272,7 +2311,7 @@ func _ready() -> void:
 	s09_restored_resources.deserialize(s09_resource_save)
 	assert(s09_restored_resources.growing_trees.has(s09_plant_tile), "S09 T81: Unfinished sapling growth survives serialization")
 	s09_restored_resources.update_regrowth(25.0)
-	assert(s09_restored_resources.nodes[s09_plant_tile]["amount"] == 100.0, "S09 T81: Restored sapling matures into a full tree")
+	assert(s09_restored_resources.nodes[s09_plant_tile]["amount"] == MapResourceManager.RESOURCE_NATURE_CONFIG["tree_oak"]["amount"], "S09 T81: Restored sapling matures into a full oak")
 	print("OK 81. S09 Staged tree growth and unfinished regrowth persistence verified.")
 
 	# 82. Запретную зону нельзя завести без закона, а закон и зона сохраняются
@@ -4172,6 +4211,10 @@ func _ready() -> void:
 	# 1. Проверка регистрации препятствий (здания, деревья, камни) и навигации вокруг них
 	assert(GameManager.nav_grid != null, "GameManager.nav_grid must be initialized")
 	var obs_building_coord = Vector2i(30, 30)
+	# Расчищаем полосу теста от природных препятствий (деревья и валуны — настоящие препятствия)
+	for clear_x in range(28, 38):
+		for clear_y in range(28, 38):
+			GameManager.resource_manager.remove_node(Vector2i(clear_x, clear_y))
 	GameManager.nav_grid.register_building(obs_building_coord, Vector2i(2, 2))
 	assert(GameManager.nav_grid.is_obstacle(Vector2i(30, 30)), "Building cell 30,30 must be solid obstacle")
 	assert(GameManager.nav_grid.is_obstacle(Vector2i(31, 31)), "Building cell 31,31 must be solid obstacle")
@@ -4824,7 +4867,7 @@ func _ready() -> void:
 	s_122.population.citizens.append(warrior_122)
 	
 	s_122.update_citizens(0.1)
-	assert(fisher_122.task_id == "" and fisher_122.state == CitizenNPC.State.IDLE, "Fisherman completes evening fishing")
+	assert(fisher_122.task_id == "" and (fisher_122.state == CitizenNPC.State.IDLE or (fisher_122.state == CitizenNPC.State.CARRYING and fisher_122.cargo_type == "food" and fisher_122.cargo_amount == 2.0)), "Fisherman completes evening fishing (catch is carried to the granary, not teleported)")
 	assert(warrior_122.task_id == "" and warrior_122.state == CitizenNPC.State.IDLE, "Warrior completes evening training")
 	
 	print("OK 122. Interactive player memorial actions, autonomous NPC grave visits/offerings/desecrations/cleansing, and diverse evening leisure verified.")
@@ -5015,6 +5058,125 @@ func _ready() -> void:
 	assert(BuildingTextureManager.get_texture("ox_cart") != null, "ox_cart texture")
 
 	print("OK 125. Foraging post, agriculture 6-stage cycles, grain milling, bakery and textures fully verified.")
+
+	# --------------------------------------------------------------------------
+	# TEST 126: ОХОТНИЧЬЯ ДОБЫЧА — ШКУРЫ, МЕХ И КОСТИ НЕСУТ НА СКЛАД ФИЗИЧЕСКИ
+	# --------------------------------------------------------------------------
+	var s126: SettlementData = s
+	GameManager.current_hour = 11.0
+	var h126 = CitizenNPC.new("h126", "Ловчий Ждан", "m", 27, "adult")
+	h126.settlement_id = s126.id
+	h126.job_id = "hunter"
+	h126.hunger = 100.0
+	h126.energy = 100.0
+	h126.pos = Vector2(s126.pos.x * 32.0 + 16.0, s126.pos.y * 32.0 + 16.0)
+	h126.home_pos = h126.pos
+	s126.population.citizens.append(h126)
+	var deer126 = WildAnimal.new("deer126", "deer_stag", h126.pos + Vector2(8.0, 0.0))
+	var car126 = GameManager.wildlife_manager.create_carcass_from_animal(deer126)
+	var leather_before_126 = s126.economy.get_resource("leather")
+	var bone_before_126 = s126.economy.get_resource("bone")
+	h126.target_id = car126["id"]
+	h126.target_pos = car126["pos"]
+	h126.path.clear()
+	h126.path_index = 0
+	h126.state = CitizenNPC.State.MOVING_TO_WORK
+	h126.decision_cooldown = 5.0
+	s126.update_citizens(0.1)
+	var carried_126: Dictionary = h126.custom_data.get("hunt_byproducts", {})
+	assert(float(carried_126.get("leather", 0.0)) == 2.0, "Hunter skins the stag: 2 hides carried (got %s)" % str(carried_126))
+	assert(float(carried_126.get("bone", 0.0)) == 2.0, "Hunter takes 2 bones from a 12-meat stag")
+	assert(s126.economy.get_resource("leather") == leather_before_126, "Hides are not teleported to the warehouse from the kill site")
+	assert(h126.cargo_type == "carcass", "Hunter carries the carcass to camp")
+	h126.state = CitizenNPC.State.BUTCHERING
+	h126.work_timer = 0.01
+	s126.update_citizens(0.1)
+	assert(h126.cargo_type == "food" and h126.state == CitizenNPC.State.CARRYING, "Butchered meat is carried to the granary")
+	h126.pos = _get_storage_pos_for_test(s126, h126)
+	h126.path.clear()
+	h126.path_index = 0
+	s126.update_citizens(0.1)
+	assert(s126.economy.get_resource("leather") >= leather_before_126 + 2.0, "Delivered hides are credited as leather")
+	assert(s126.economy.get_resource("bone") >= bone_before_126 + 2.0, "Delivered bones are credited to the warehouse")
+	assert(not h126.custom_data.has("hunt_byproducts"), "Byproducts are unloaded on delivery")
+	assert(BuildingSystem.UPGRADES.get("nursery_corner", {}).get("cost", {}).has("leather"), "Upgrade costs use the same 'leather' key hunters deliver")
+	print("OK 126. Hunters deliver meat + hides/fur/bones physically; costs use the same resource keys.")
+
+	# --------------------------------------------------------------------------
+	# TEST 127: ОТНОШЕНИЯ — ГОРЕ БЛИЗКИХ, ВДОВСТВО, РАЗВОД, РОМАНТИКА БЕЗ ТАЙМЕРА
+	# --------------------------------------------------------------------------
+	var wife127 = CitizenNPC.new("wife127", "Весняна", "f", 30, "adult")
+	var husb127 = CitizenNPC.new("husb127", "Твердята", "m", 32, "adult")
+	var strn127 = CitizenNPC.new("strn127", "Чужак Гостомысл", "m", 40, "adult")
+	for c127 in [wife127, husb127, strn127]:
+		c127.settlement_id = s126.id
+		c127.pos = h126.pos
+		c127.loyalty = 80.0
+		s126.population.citizens.append(c127)
+	strn127.traits["empathy"] = 40.0
+	assert(wife127.marry(husb127), "Test couple marries")
+	s126._process_citizen_death(husb127)
+	assert(wife127.spouse_id == "" and wife127.get_spouses().is_empty(), "Widow is no longer counted as married")
+	assert(wife127.has_memory("grief"), "Widow grieves her husband")
+	assert(not strn127.has_memory("grief"), "A stranger does not mourn as if he lost kin")
+	assert(strn127.loyalty >= 75.0, "A stranger only loses a little loyalty from someone else's death")
+
+	var a127 = CitizenNPC.new("a127", "Любим", "m", 25, "adult")
+	var b127 = CitizenNPC.new("b127", "Милана", "f", 24, "adult")
+	a127.marry(b127)
+	a127.modify_relationship(b127.citizen_id, -120.0)
+	b127.modify_relationship(a127.citizen_id, -120.0)
+	a127.traits["temper"] = 50.0
+	b127.traits["temper"] = 50.0
+	s126.population.citizens.append(a127)
+	s126.population.citizens.append(b127)
+	s126._start_social_dialog(a127, b127)
+	assert(a127.get_spouses().is_empty() and b127.get_spouses().is_empty(), "Divorce truly dissolves the marriage record")
+
+	var foe_m = CitizenNPC.new("foe_m127", "Вражко", "m", 28, "adult")
+	var foe_f = CitizenNPC.new("foe_f127", "Злата", "f", 27, "adult")
+	foe_m.modify_relationship(foe_f.citizen_id, -60.0)
+	foe_f.modify_relationship(foe_m.citizen_id, -60.0)
+	assert(s126._get_daily_romance_gain(foe_m, foe_f) == 0.0, "Enemies do not fall in love on a daily timer")
+	var str_m = CitizenNPC.new("str_m127", "Незнакомец", "m", 28, "adult")
+	var str_f = CitizenNPC.new("str_f127", "Незнакомка", "f", 27, "adult")
+	assert(s126._get_daily_romance_gain(str_m, str_f) == 0.0, "People who never met gain no romance")
+	foe_m.add_romance(foe_f.citizen_id, 10.0)
+	assert(foe_m.get_relationship_affinity(foe_f.citizen_id) == -60.0, "Romance growth does not wipe out enmity")
+	print("OK 127. Grief targets real kin, widowhood & divorce clear marriage, romance requires real affinity.")
+
+	# --------------------------------------------------------------------------
+	# TEST 128: ОПЫТ ОТ РЕАЛЬНОЙ РАБОТЫ, ВЕРА ПЛЕМЕНИ, ЕСТЕСТВЕННАЯ СМЕРТЬ С ПОХОРОНАМИ
+	# --------------------------------------------------------------------------
+	var wc128 = CitizenNPC.new("wc128", "Рубака", "m", 30, "adult")
+	wc128.job_id = "woodcutter"
+	var speed_novice = wc128.get_work_speed_multiplier()
+	wc128.add_work_xp("woodcutting", 2.0)
+	assert(wc128.get_profession_xp("woodcutter") == 6.0, "Chopping grants woodcutter experience")
+	wc128.experience["woodcutter"] = 5000.0
+	assert(wc128.get_profession_level("woodcutter") == 10, "5000 xp = mastery level 10")
+	assert(wc128.get_work_speed_multiplier() > speed_novice, "Mastery makes work faster")
+	var q128 = CitizenNPC.new("q128", "Камнелом", "m", 30, "adult")
+	q128.add_work_xp("stone_mining", 1.0)
+	assert(q128.skill_stonecutter > 0.0 and q128.get_profession_xp("quarryman") > 0.0, "Stone mining trains the quarryman profession")
+
+	var faith_before_128 = s126.economy.faith
+	s126.economy.add_resource("faith", 5.0)
+	assert(s126.economy.faith == minf(100.0, faith_before_128 + 5.0), "Prayers change tribe faith, not a phantom warehouse item")
+	assert(not s126.economy.resources.has("faith"), "Faith is not stored as a warehouse resource")
+
+	var old128 = CitizenNPC.new("old128", "Древний Велимир", "m", 95, "elder")
+	old128.settlement_id = s126.id
+	old128.pos = h126.pos
+	s126.population.citizens.append(old128)
+	var tries128 = 0
+	while old128.is_alive and tries128 < 300:
+		s126.sim_monthly_tick("Весна")
+		tries128 += 1
+	assert(not old128.is_alive, "A 95-year-old eventually dies of old age")
+	assert(old128.job_id == "idle" and old128.home_id == "", "Natural death frees home and workplace")
+	assert(old128.death_cause != "", "Natural death records its cause")
+	print("OK 128. Work XP & mastery speed, faith as social stat, natural deaths go through the full death pipeline.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

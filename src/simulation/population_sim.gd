@@ -249,7 +249,9 @@ func remove_citizen(c_id: String) -> CitizenNPC:
 			return c
 	return null
 
-func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) -> Dictionary:
+# remove_dead = false: умершие не вычёркиваются молча, а возвращаются в "dying",
+# чтобы поселение провело их через полный путь смерти (дом, работа, горе, похороны)
+func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String, remove_dead: bool = true) -> Dictionary:
 	sync_cohorts()
 	var total_pop = get_total_population()
 	var births = 0
@@ -264,7 +266,7 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	
 	# От старости
 	for c in citizens:
-		if c.is_ruler:
+		if c.is_ruler or not c.is_alive:
 			continue
 		if c.age >= 60 and randf() < 0.12:
 			if not to_kill.has(c.citizen_id):
@@ -282,7 +284,7 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 		for i in range(starve_deaths):
 			if citizens.size() > 2:
 				var victim = citizens[randi() % citizens.size()]
-				if not victim.is_ruler and not to_kill.has(victim.citizen_id):
+				if victim.is_alive and not victim.is_ruler and not to_kill.has(victim.citizen_id):
 					to_kill.append(victim.citizen_id)
 					death_reasons.append("голод (%s)" % victim.name)
 		health_index = clampf(health_index - 15.0, 10.0, 100.0)
@@ -293,19 +295,26 @@ func sim_monthly_tick(food_ratio: float, housing_capacity: int, season: String) 
 	if season == "Зима" and total_pop > housing_capacity:
 		if randf() < 0.35:
 			for c in citizens:
-				if not c.is_ruler and c.cohort == "child" and not to_kill.has(c.citizen_id):
+				if c.is_alive and not c.is_ruler and c.cohort == "child" and not to_kill.has(c.citizen_id):
 					to_kill.append(c.citizen_id)
 					death_reasons.append("зимняя стужа и нехватка крова (%s)" % c.name)
 					break
 					
-	for cid in to_kill:
-		var removed = remove_citizen(cid)
-		if removed != null:
+	var dying: Array[Dictionary] = []
+	for i in range(to_kill.size()):
+		var cid = to_kill[i]
+		if remove_dead:
+			var removed = remove_citizen(cid)
+			if removed != null:
+				deaths += 1
+		else:
+			dying.append({"id": cid, "reason": death_reasons[i] if i < death_reasons.size() else ""})
 			deaths += 1
 		
 	return {
 		"births": births,
 		"deaths": deaths,
+		"dying": dying,
 		"reasons": death_reasons,
 		"total": get_total_population()
 	}

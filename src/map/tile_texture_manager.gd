@@ -152,14 +152,40 @@ static func get_river_texture(river_name: String) -> Texture2D:
 # Возвращает структурированные данные о природном объекте для тайла с учетом биома, ресурса или авторской расстановки
 static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant = null, custom_nature_name: String = "") -> Dictionary:
 	load_all_textures()
+	var picked_name = get_nature_name(biome, coord, tile_resource, custom_nature_name)
+	if picked_name == "":
+		return {}
+	var tex = nature_sprites.get(picked_name, null)
+	if tex == null:
+		return {}
+		
+	var meta = nature_meta.get(picked_name, {})
+	var scale_h = meta.get("scale_h", 20.0)
+	var cat = meta.get("category", "detail")
+	var can_harvest = meta.get("harvest_resource", null) != null
+	var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
 	
+	return {
+		"name": picked_name,
+		"tex": tex,
+		"category": cat,
+		"scale_h": scale_h,
+		"can_harvest": can_harvest,
+		"harvest_res": meta.get("harvest_resource", null),
+		"variant_seed": abs(seed_val)
+	}
+
+# Чистая логика выбора природного объекта тайла (без текстур).
+# Симуляция ресурсов опирается только на неё, поэтому деревья и камни существуют
+# в мире даже при запуске без графических ассетов (headless-тесты, сервер).
+static func get_nature_name(biome: int, coord: Vector2i, tile_resource: Variant = null, custom_nature_name: String = "") -> String:
 	var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
 	var variant_seed = abs(seed_val)
 
 	var picked_name = ""
 	if custom_nature_name != "":
 		if custom_nature_name == "none":
-			return {}
+			return ""
 		picked_name = custom_nature_name
 	else:
 		var rand_idx = variant_seed
@@ -257,10 +283,10 @@ static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant 
 					picked_name = rocks[rand_idx % rocks.size()]
 					
 			_:
-				return {}
+				return ""
 				
 		if picked_name == "":
-			return {}
+			return ""
 		
 	# Обработка срубленных/добытых ресурсов (если ресурс исчерпан)
 	var main_loop = Engine.get_main_loop()
@@ -272,7 +298,7 @@ static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant 
 		if r_node.get("depleted", false):
 			var dep_sprite = r_node.get("depleted_sprite", "")
 			if dep_sprite == "none" or dep_sprite == "":
-				return {}
+				return ""
 			picked_name = dep_sprite
 	elif tile_resource != null and tile_resource is Dictionary:
 		var amount = tile_resource.get("amount", 100)
@@ -283,23 +309,6 @@ static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant 
 			elif res_type == "stone":
 				picked_name = "rock_small_pebbles"
 			elif res_type == "food":
-				return {}
+				return ""
 				
-	var tex = nature_sprites.get(picked_name, null)
-	if tex == null:
-		return {}
-		
-	var meta = nature_meta.get(picked_name, {})
-	var scale_h = meta.get("scale_h", 20.0)
-	var cat = meta.get("category", "detail")
-	var can_harvest = meta.get("harvest_resource", null) != null
-	
-	return {
-		"name": picked_name,
-		"tex": tex,
-		"category": cat,
-		"scale_h": scale_h,
-		"can_harvest": can_harvest,
-		"harvest_res": meta.get("harvest_resource", null),
-		"variant_seed": variant_seed
-	}
+	return picked_name

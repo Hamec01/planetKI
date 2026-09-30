@@ -25,19 +25,32 @@ const RESOURCE_NATURE_CONFIG = {
 	"tree_autumn_red": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Красное дерево"},
 	"tree_birch_yellow": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Золотая берёза"},
 	"tree_spruce_blue": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Голубая ель"},
+	"tree_spruce_snow": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Заснеженная ель"},
+	"tree_pine_snow": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Заснеженная сосна"},
+	"tree_bare": {"type": "wood", "category": "wood", "amount": 12.0, "depleted_sprite": "none", "name": "Облетевшее дерево"},
+	"tree_dead": {"type": "wood", "category": "wood", "amount": 10.0, "depleted_sprite": "none", "name": "Сухостой"},
 	"tree_spruce_young": {"type": "wood", "category": "wood", "amount": 8.0, "depleted_sprite": "none", "name": "Молодая ёлочка"},
 	"tree_young": {"type": "wood", "category": "wood", "amount": 8.0, "depleted_sprite": "none", "name": "Молодое деревце"},
+	# Валежник: лежит на земле, не перекрывает проход, разбирается на дрова
+	"log_fallen": {"type": "wood", "category": "wood", "amount": 6.0, "depleted_sprite": "none", "name": "Поваленное бревно", "blocks": false},
 
-	# КАМЕНЬ (Валуны и скалы) -> при выработке превращаются в мелкие камни (rock_small_pebbles)
+	# КАМЕНЬ (Валуны и скалы). Камень не отрастает: выработанная порода распадается на
+	# следующую стадию (скала -> плиты -> россыпь -> ничего) и в итоге исчезает с карты.
 	"rock_round_boulder": {"type": "stone", "category": "stone", "amount": 25.0, "depleted_sprite": "rock_small_pebbles", "name": "Округлый валун"},
 	"rock_flat_slabs": {"type": "stone", "category": "stone", "amount": 20.0, "depleted_sprite": "rock_small_pebbles", "name": "Каменные плиты"},
 	"rock_mossy": {"type": "stone", "category": "stone", "amount": 22.0, "depleted_sprite": "rock_small_pebbles", "name": "Мшистый валун"},
 	"rock_cliff_group": {"type": "stone", "category": "stone", "amount": 35.0, "depleted_sprite": "rock_flat_slabs", "name": "Скальная гряда"},
 	"rock_limestone": {"type": "stone", "category": "stone", "amount": 25.0, "depleted_sprite": "rock_small_pebbles", "name": "Известняк"},
+	"rock_snow_boulder": {"type": "stone", "category": "stone", "amount": 25.0, "depleted_sprite": "rock_small_pebbles", "name": "Заснеженный валун"},
+	# Россыпь камней: последняя стадия породы, проходима, собирается до конца
+	"rock_small_pebbles": {"type": "stone", "category": "stone", "amount": 4.0, "depleted_sprite": "none", "name": "Россыпь камней", "blocks": false},
 
-	# РУДА (Красный камень / железистые жилы)
+	# РУДА (Красный камень / железистые жилы). После выработки остаётся каменная россыпь.
 	"rock_red_stone": {"type": "metal", "category": "metal", "amount": 20.0, "depleted_sprite": "rock_small_pebbles", "name": "Рудная жила"}
 }
+# Категории, которые восстанавливаются сами (кусты, грибницы, рыба). Дерево отрастает
+# только из пня/саженца, а камень и руда — невозобновляемы.
+const RENEWABLE_CATEGORIES: Array[String] = ["food", "fish"]
 const FOOD_NATURE_TYPES = RESOURCE_NATURE_CONFIG
 
 const CHUNK_SIZE: int = 16
@@ -53,40 +66,52 @@ func initialize_from_tiles(tiles_data: Array, width: int, height: int) -> void:
 			var coord = Vector2i(x, y)
 			
 			var custom_nat = tile.get("nature_object", "")
-			var n_data = TileTextureManager.get_nature_data(tile["biome"], coord, tile.get("resource", null), custom_nat)
-			if n_data.is_empty():
-				continue
-				
-			var sprite_name = n_data.get("name", "")
+			var sprite_name = TileTextureManager.get_nature_name(tile["biome"], coord, tile.get("resource", null), custom_nat)
 			if RESOURCE_NATURE_CONFIG.has(sprite_name):
-				var cfg = RESOURCE_NATURE_CONFIG[sprite_name]
-				var node_id = "res_%d_%d" % [x, y]
-				nodes[coord] = {
-					"id": node_id,
-					"coord": coord,
-					"pos": Vector2(x * 32.0 + 16.0, y * 32.0 + 16.0),
-					"type": cfg["type"],
-					"category": cfg["category"],
-					"name": cfg["name"],
-					"amount": cfg["amount"],
-					"max_amount": cfg["amount"],
-					"reserved_by": "",
-					"depleted": false,
-					"original_sprite": sprite_name,
-					"depleted_sprite": cfg["depleted_sprite"],
-					"regrowth_timer": 0.0,
-					"regrowth_duration": randf_range(35.0, 55.0)
-				}
-				var chunk_k = Vector2i(x / CHUNK_SIZE, y / CHUNK_SIZE)
-				if not spatial_grid.has(chunk_k):
-					spatial_grid[chunk_k] = []
-				spatial_grid[chunk_k].append(coord)
-				
-				# Регистрация непроходимых природных объектов (деревья, валуны, руда) в навигационной сетке
-				if GameManager and GameManager.nav_grid and cfg["category"] in ["wood", "stone", "metal"]:
-					GameManager.nav_grid.register_resource(coord, cfg["category"])
+				_create_node(coord, sprite_name)
 	_add_fishing_spots(tiles_data, width, height)
 	is_initialized = true
+
+# Создаёт (или пересоздаёт) ресурсный узел по виду природного объекта
+func _create_node(coord: Vector2i, sprite_name: String) -> Dictionary:
+	var cfg = RESOURCE_NATURE_CONFIG[sprite_name]
+	var node = {
+		"id": "res_%d_%d" % [coord.x, coord.y],
+		"coord": coord,
+		"pos": Vector2(coord.x * 32.0 + 16.0, coord.y * 32.0 + 16.0),
+		"type": cfg["type"],
+		"category": cfg["category"],
+		"name": cfg["name"],
+		"amount": cfg["amount"],
+		"max_amount": cfg["amount"],
+		"reserved_by": "",
+		"depleted": false,
+		"original_sprite": sprite_name,
+		"depleted_sprite": cfg["depleted_sprite"],
+		"blocks": cfg.get("blocks", cfg["category"] in ["wood", "stone", "metal"]),
+		"regrowth_timer": 0.0,
+		"regrowth_duration": randf_range(35.0, 55.0)
+	}
+	nodes[coord] = node
+	var chunk_k = Vector2i(coord.x / CHUNK_SIZE, coord.y / CHUNK_SIZE)
+	if not spatial_grid.has(chunk_k):
+		spatial_grid[chunk_k] = []
+	if not spatial_grid[chunk_k].has(coord):
+		spatial_grid[chunk_k].append(coord)
+	# Непроходимые природные объекты (стволы, валуны, скалы) регистрируются в навигации
+	if GameManager and GameManager.nav_grid:
+		if node["blocks"]:
+			GameManager.nav_grid.register_resource(coord, cfg["category"])
+		elif GameManager.nav_grid.resource_tiles.has(coord):
+			GameManager.nav_grid.unregister_resource(coord)
+	return node
+
+func _set_tile_nature(coord: Vector2i, sprite_name: String) -> void:
+	if not GameManager or GameManager.planet_data.is_empty():
+		return
+	var tiles = GameManager.planet_data.get("tiles", [])
+	if coord.y < tiles.size() and coord.x < tiles[coord.y].size():
+		tiles[coord.y][coord.x]["nature_object"] = sprite_name
 
 func _add_fishing_spots(tiles_data: Array, width: int, height: int) -> void:
 	if not GameManager.nav_grid:
@@ -149,6 +174,9 @@ func find_available_node(center_coord: Vector2i, category: String, max_radius: i
 					continue
 				if node.get("reserved_by", "") != "" and node["reserved_by"] != citizen_id:
 					continue
+				# Саженец ещё растёт — рубить его рано
+				if growing_trees.has(coord):
+					continue
 					
 				var dist = float(abs(coord.x - center_coord.x) + abs(coord.y - center_coord.y))
 				if dist <= float(max_radius) and dist < best_dist:
@@ -199,29 +227,38 @@ func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 	node["amount"] -= gathered
 	
 	if node["amount"] <= 0.0:
-		node["depleted"] = true
-		node["reserved_by"] = ""
-		if GameManager and GameManager.nav_grid and node.get("category", "") in ["wood", "stone", "metal"]:
-			GameManager.nav_grid.unregister_resource(coord)
-		var dep_spr = node.get("depleted_sprite", "none")
-		if node["category"] == "wood":
-			if dep_spr == "stump_fresh":
-				node["regrowth_timer"] = node.get("regrowth_duration", 300.0)
-			else:
-				node["regrowth_timer"] = 9999999.0
-		else:
-			node["regrowth_timer"] = node.get("regrowth_duration", 60.0)
-			
-		# Обновляем визуальный спрайт на карте (куст пустеет / дерево срублено под корень -> "none" или "stump_fresh")
-		var tiles = GameManager.planet_data.get("tiles", [])
-		if node.get("updates_tile", true) and coord.y < tiles.size() and coord.x < tiles[0].size():
-			tiles[coord.y][coord.x]["nature_object"] = dep_spr
-			
-		# Если спрайт "none", удаляем узел физически из менеджера и пространственной сетки
-		if node["category"] == "wood" and dep_spr == "none":
-			remove_node(coord)
+		_on_node_depleted(coord, node)
 			
 	return gathered
+
+# Исчерпание узла: дерево падает, камень распадается на следующую стадию, куст пустеет
+func _on_node_depleted(coord: Vector2i, node: Dictionary) -> void:
+	var dep_spr: String = node.get("depleted_sprite", "none")
+	var category: String = node.get("category", "")
+	growing_trees.erase(coord)
+	
+	# Порода распадается на следующую стадию (скала -> плиты -> россыпь), которую можно добывать дальше
+	if category in ["stone", "metal"] and RESOURCE_NATURE_CONFIG.has(dep_spr):
+		_create_node(coord, dep_spr)
+		_set_tile_nature(coord, dep_spr)
+		return
+	
+	node["depleted"] = true
+	node["reserved_by"] = ""
+	if GameManager and GameManager.nav_grid and category in ["wood", "stone", "metal"]:
+		GameManager.nav_grid.unregister_resource(coord)
+	if category == "wood":
+		node["regrowth_timer"] = node.get("regrowth_duration", 300.0) if dep_spr == "stump_fresh" else 9999999.0
+	else:
+		node["regrowth_timer"] = node.get("regrowth_duration", 60.0)
+		
+	# Обновляем спрайт на карте (куст пустеет / дерево срублено под корень / камень выбран)
+	if node.get("updates_tile", true):
+		_set_tile_nature(coord, dep_spr)
+		
+	# Дерево без пня и выбранный до конца камень физически исчезают с карты
+	if dep_spr == "none" and category in ["wood", "stone", "metal"]:
+		remove_node(coord)
 
 func find_plantable_tile(center_coord: Vector2i, max_radius: int) -> Vector2i:
 	var tiles = GameManager.planet_data.get("tiles", [])
@@ -266,12 +303,13 @@ func plant_tree(coord: Vector2i, young_species: String = "tree_young", mature_sp
 		"type": "wood",
 		"category": "wood",
 		"name": "Молодой саженец",
-		"amount": 30.0,
-		"max_amount": 30.0,
+		"amount": 3.0,
+		"max_amount": 3.0,
 		"reserved_by": "",
 		"depleted": false,
 		"original_sprite": young_species,
 		"depleted_sprite": "none",
+		"blocks": false,
 		"regrowth_timer": 9999999.0,
 		"regrowth_duration": 9999999.0
 	}
@@ -309,17 +347,19 @@ func update_regrowth(delta: float) -> void:
 		if nodes.has(coord):
 			var n = nodes[coord]
 			n["original_sprite"] = mature_sp
-			n["name"] = RESOURCE_NATURE_CONFIG.get(mature_sp, {}).get("name", "Зрелое дерево")
-			n["amount"] = 100.0
-			n["max_amount"] = 100.0
+			var mature_cfg = RESOURCE_NATURE_CONFIG.get(mature_sp, {})
+			n["name"] = mature_cfg.get("name", "Зрелое дерево")
+			n["amount"] = float(mature_cfg.get("amount", 18.0))
+			n["max_amount"] = n["amount"]
 			n["depleted"] = false
+			n["blocks"] = true
 		if GameManager and GameManager.nav_grid:
 			GameManager.nav_grid.register_resource(coord, "wood")
 			
-	# 2. Восстановление природных кустов ягод и грибов
+	# 2. Восстановление природных кустов ягод, грибов и рыбных мест (камень и руда не отрастают)
 	for coord in nodes:
 		var node = nodes[coord]
-		if node["category"] != "wood" and node["depleted"]:
+		if node["category"] in RENEWABLE_CATEGORIES and node["depleted"]:
 			node["regrowth_timer"] -= delta
 			if node["regrowth_timer"] <= 0.0:
 				node["depleted"] = false
@@ -363,7 +403,8 @@ func serialize() -> Array[Dictionary]:
 			"amount": n.get("amount", 0.0),
 			"depleted": n.get("depleted", false),
 			"regrowth_timer": n.get("regrowth_timer", 0.0),
-			"reserved_by": n.get("reserved_by", "")
+			"reserved_by": n.get("reserved_by", ""),
+			"sprite": n.get("original_sprite", "")
 		}
 		if growing_trees.has(coord):
 			item["growing_tree"] = growing_trees[coord].duplicate()
@@ -375,6 +416,11 @@ func deserialize(data_list: Array) -> void:
 	for item in data_list:
 		var c_arr = item.get("coord", [0, 0])
 		var coord = Vector2i(c_arr[0], c_arr[1])
+		# Порода, перешедшая в следующую стадию выработки (скала -> плиты -> россыпь)
+		var saved_sprite: String = item.get("sprite", "")
+		if saved_sprite != "" and RESOURCE_NATURE_CONFIG.has(saved_sprite) and RESOURCE_NATURE_CONFIG[saved_sprite]["category"] in ["stone", "metal"]:
+			if not nodes.has(coord) or nodes[coord].get("original_sprite", "") != saved_sprite:
+				_create_node(coord, saved_sprite)
 		if nodes.has(coord):
 			var n = nodes[coord]
 			n["amount"] = item.get("amount", n["max_amount"])

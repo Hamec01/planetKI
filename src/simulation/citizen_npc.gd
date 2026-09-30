@@ -129,36 +129,40 @@ var weapon_skills: Dictionary = {
 
 var profession_levels: Dictionary = {}
 
+# Навыки читаются из накопленного опыта (experience растёт от реальной работы в add_work_xp)
 var skill_builder: float:
-	get: return float(skills.get("builder", experience.get("builder", 0.0)))
-	set(val):
-		skills["builder"] = val
-		experience["builder"] = val
+	get: return get_profession_xp("builder")
+	set(val): experience["builder"] = val
 var skill_woodcutter: float:
-	get: return float(skills.get("woodcutter", experience.get("woodcutter", 0.0)))
-	set(val):
-		skills["woodcutter"] = val
-		experience["woodcutter"] = val
+	get: return get_profession_xp("woodcutter")
+	set(val): experience["woodcutter"] = val
 var skill_stonecutter: float:
-	get: return float(skills.get("stonecutter", experience.get("stonecutter", 0.0)))
-	set(val):
-		skills["stonecutter"] = val
-		experience["stonecutter"] = val
+	get: return get_profession_xp("quarryman")
+	set(val): experience["quarryman"] = val
 var skill_miner: float:
-	get: return float(skills.get("miner", experience.get("miner", 0.0)))
-	set(val):
-		skills["miner"] = val
-		experience["miner"] = val
+	get: return get_profession_xp("miner")
+	set(val): experience["miner"] = val
 var skill_gatherer: float:
-	get: return float(skills.get("gatherer", experience.get("gatherer", 0.0)))
-	set(val):
-		skills["gatherer"] = val
-		experience["gatherer"] = val
+	get: return get_profession_xp("forager")
+	set(val): experience["forager"] = val
 var skill_hunter: float:
-	get: return float(skills.get("hunter", experience.get("hunter", 0.0)))
-	set(val):
-		skills["hunter"] = val
-		experience["hunter"] = val
+	get: return get_profession_xp("hunter")
+	set(val): experience["hunter"] = val
+
+# Старые ключи опыта из ранних сохранений -> ключ профессии (job_id)
+const LEGACY_PROFESSION_KEYS: Dictionary = {"quarryman": "stonecutter", "forager": "gatherer"}
+
+func get_profession_xp(prof_key: String) -> float:
+	var xp = float(experience.get(prof_key, 0.0))
+	xp = maxf(xp, float(skills.get(prof_key, 0.0)))
+	var legacy = LEGACY_PROFESSION_KEYS.get(prof_key, "")
+	if legacy != "":
+		xp = maxf(xp, maxf(float(experience.get(legacy, 0.0)), float(skills.get(legacy, 0.0))))
+	return xp
+
+# Уровень мастерства в профессии (порог L: 50 * L^2, как в add_work_xp)
+func get_profession_level(prof_key: String) -> int:
+	return mini(20, int(floor(sqrt(get_profession_xp(prof_key) / 50.0))))
 
 # 3. Опыт опасных столкновений (EGP: 0..20) и антифарм история (20 последних)
 var encounter_growth_points: float = 0.0
@@ -289,7 +293,7 @@ func add_work_xp(activity: String, hours: float) -> void:
 		"woodcutting":
 			s_rate = 2.0; e_rate = 1.5; a_rate = 0.5; prof_key = "woodcutter"; prof_rate = 3.0
 		"stone_mining":
-			s_rate = 2.2; e_rate = 1.5; a_rate = 0.2; prof_key = "stonecutter"; prof_rate = 3.0
+			s_rate = 2.2; e_rate = 1.5; a_rate = 0.2; prof_key = "quarryman"; prof_rate = 3.0
 		"ore_mining":
 			s_rate = 2.0; e_rate = 1.5; a_rate = 0.2; prof_key = "miner"; prof_rate = 3.0
 		"building":
@@ -297,7 +301,7 @@ func add_work_xp(activity: String, hours: float) -> void:
 		"carrying":
 			s_rate = 1.0; e_rate = 2.0; a_rate = 0.4
 		"gathering", "farming":
-			s_rate = 0.4; e_rate = 1.2; a_rate = 1.2; prof_key = "gatherer"; prof_rate = 3.0
+			s_rate = 0.4; e_rate = 1.2; a_rate = 1.2; prof_key = "forager"; prof_rate = 3.0
 		"hunting_tracking":
 			s_rate = 0.2; e_rate = 1.8; a_rate = 2.0; prof_key = "hunter"; prof_rate = 2.0
 		"combat_training":
@@ -957,6 +961,7 @@ func serialize() -> Dictionary:
 		"cargo_type": cargo_type,
 		"cargo_amount": cargo_amount,
 		"cargo_batch": cargo_batch.duplicate(),
+		"hunt_byproducts": custom_data.get("hunt_byproducts", {}).duplicate(),
 		"health": health,
 		"hunger": hunger,
 		"energy": energy,
@@ -1050,6 +1055,9 @@ func deserialize(data: Dictionary) -> void:
 	cargo_type = data.get("cargo_type", "")
 	cargo_amount = data.get("cargo_amount", 0.0)
 	cargo_batch = data.get("cargo_batch", {}).duplicate()
+	var saved_byproducts: Dictionary = data.get("hunt_byproducts", {})
+	if not saved_byproducts.is_empty():
+		custom_data["hunt_byproducts"] = saved_byproducts.duplicate()
 	health = data.get("health", 100.0)
 	hunger = data.get("hunger", 100.0)
 	energy = data.get("energy", 100.0)
@@ -1249,6 +1257,14 @@ func modify_relationship(other_id: String, delta_affinity: float, delta_respect:
 	rel["affinity"] = clampf(float(rel.get("affinity", 0.0)) + delta_affinity, -100.0, 100.0)
 	rel["closeness"] = clampf(float(rel.get("closeness", 50.0)) + delta_affinity * 0.5, 0.0, 100.0)
 	rel["respect"] = clampf(float(rel.get("respect", 0.0)) + delta_respect, -100.0, 100.0)
+
+# Наращивает романтику, не трогая симпатию, уважение и тип связи (в отличие от add_relationship)
+func add_romance(other_id: String, amount: float) -> float:
+	if not relationships.has(other_id):
+		modify_relationship(other_id, 0.0, 0.0)
+	var rel = relationships[other_id]
+	rel["romance"] = clampf(float(rel.get("romance", 0.0)) + amount, 0.0, 100.0)
+	return float(rel["romance"])
 
 func remove_relationship(other_id: String) -> void:
 	relationships.erase(other_id)
@@ -1752,9 +1768,17 @@ func receive_world_event(event_type: String, event_params: Dictionary) -> void:
 			if deceased_id == citizen_id:
 				return
 				
-			var rel = relationships.get(deceased_id, {})
-			var is_close = not rel.is_empty() or deceased_id == spouse_id or deceased_id == guardian_id or deceased_id == family_id
-			var is_rival = has_grudge_against(deceased_id)
+			# Без известного покойного нельзя угадывать близость: пустой id совпал бы с пустым
+			# spouse_id/guardian_id у каждого одинокого жителя, и в траур уходило бы всё племя
+			var rel = relationships.get(deceased_id, {}) if deceased_id != "" else {}
+			var kin_types = ["spouse", "late_spouse", "parent", "child", "sibling", "guardian", "ward"]
+			var is_close = deceased_id != "" and (
+				rel.get("type", "") in kin_types
+				or rel.get("is_parent", false)
+				or float(rel.get("affinity", 0.0)) >= 40.0
+				or deceased_id == guardian_id
+			)
+			var is_rival = deceased_id != "" and has_grudge_against(deceased_id)
 			
 			if is_close:
 				add_memory("grief", "death", deceased_id, 2.5, "Потерял близкого человека: %s" % deceased_name, true)
@@ -1998,7 +2022,10 @@ func get_work_speed_multiplier() -> float:
 		mult *= float(effects["work_speed_mult"])
 	var diligence = float(traits.get("diligence", 50.0))
 	mult *= 1.0 + (diligence - 50.0) / 200.0
-	return clampf(mult, 0.6, 1.6)
+	# Мастерство: каждый уровень профессии ускоряет работу на 3% (до +30%)
+	if job_id != "" and job_id != "idle":
+		mult *= 1.0 + float(mini(10, get_profession_level(job_id))) * 0.03
+	return clampf(mult, 0.6, 1.9)
 
 func _evaluate_autonomous_action(delta: float, settlement: RefCounted) -> void:
 	if not is_alive or settlement == null:

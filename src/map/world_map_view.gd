@@ -36,9 +36,14 @@ var arrows: Array[Dictionary] = [] # {from: Vector2, to: Vector2, t: float, spee
 var damage_floats: Array[Dictionary] = [] # {pos: Vector2, text: String, color: Color, life: float}
 var combat_sparks: Array[Dictionary] = [] # {pos: Vector2, life: float, color: Color}
 
-var tex_hare = preload("res://Assets/nature_clean/animal_hare.png")
-var tex_deer = preload("res://Assets/nature_clean/animal_deer.png")
-var tex_carcass = preload("res://Assets/nature_clean/carcass.png")
+# Загрузка без preload: ассеты не хранятся в репозитории, и отсутствие PNG
+# не должно ломать компиляцию карты (headless-тесты, чистый клон)
+var tex_hare: Texture2D = _load_optional_texture("res://Assets/nature_clean/animal_hare.png")
+var tex_deer: Texture2D = _load_optional_texture("res://Assets/nature_clean/animal_deer.png")
+var tex_carcass: Texture2D = _load_optional_texture("res://Assets/nature_clean/carcass.png")
+
+static func _load_optional_texture(path: String) -> Texture2D:
+	return load(path) if ResourceLoader.exists(path) else null
 
 var _map_font: Font = null
 
