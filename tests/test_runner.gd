@@ -5695,7 +5695,7 @@ func _ready() -> void:
 	assert(dw.visible and talk_npc.state == CitizenNPC.State.TALKING and talk_npc.talk_partner_id == ruler134.citizen_id, "NPC stops and talks to the ruler")
 	assert(dw.options_box.get_child_count() >= 2, "Dialogue shows topics and a farewell")
 	dw._choose("smalltalk", "how", "")
-	assert(dw.line_lbl.text.contains("—"), "NPC answers in the dialogue window")
+	assert(dw.npc_line_lbl.text.contains(talk_npc.name) and dw.npc_line_lbl.text.length() > talk_npc.name.length() + 30, "NPC answers in the dialogue window")
 	dw.close()
 	assert(not dw.visible and talk_npc.action_timer <= 0.3, "Closing lets the NPC return to work")
 	dw.queue_free()
@@ -6232,6 +6232,131 @@ func _ready() -> void:
 	var sd136 = s136.serialize()
 	assert(sd136.has("deeds_log") and sd136["deeds_log"].size() > 0, "The deeds log is saved")
 	print("OK 136. NPC psyche (despair/bitter/mad), theft & custody, good deeds, blood feud, guards, revenge on the King, coup plot & rebellion.")
+
+	# --------------------------------------------------------------------------
+	# TEST 137: СВОБОДНОЕ ДВИЖЕНИЕ КОРОЛЯ, ЛИСТ АНИМАЦИЙ, ДИАЛОГ КАК В «ВЕДЬМАКЕ»
+	# --------------------------------------------------------------------------
+	var s137: SettlementData = GameManager.get_player_settlement()
+	var ruler137 = PlayerHero.get_ruler(s137)
+	var nav137 = GameManager.nav_grid
+	# Открытая площадка 7×5 клеток
+	var base137 = nav137.world_to_tile(s137._get_hearth_pos())
+	var open137 = Vector2i(-1, -1)
+	for r137 in range(3, 40):
+		for dy137 in range(-r137, r137 + 1):
+			for dx137 in range(-r137, r137 + 1):
+				if open137 != Vector2i(-1, -1):
+					break
+				var t137 = base137 + Vector2i(dx137, dy137)
+				var ok137 = true
+				for oy in range(-2, 3):
+					for ox in range(-3, 4):
+						var q137 = t137 + Vector2i(ox, oy)
+						if not nav137.is_valid_coord(q137) or nav137.is_water_tile(q137) or nav137.building_tiles.has(q137) or GameManager.tile_buildings.has(q137):
+							ok137 = false
+				if ok137:
+					open137 = t137
+	assert(open137 != Vector2i(-1, -1), "Test setup: a dry field without buildings")
+	# Расчищаем поле от деревьев и камней
+	for oy in range(-2, 3):
+		for ox in range(-3, 4):
+			GameManager.resource_manager.remove_node(open137 + Vector2i(ox, oy))
+	for oy in range(-2, 3):
+		for ox in range(-3, 4):
+			assert(nav137.is_tile_walkable(open137 + Vector2i(ox, oy)), "Test setup: the cleared field is walkable")
+	var c137 = nav137.tile_to_world_center(open137)
+	# 1. По свободному полю — прямо в точку клика, без захода в центр клетки
+	var from137 = c137 + Vector2(-45.0, 7.0)
+	var to137 = c137 + Vector2(41.0, -9.0)
+	var p137 = HeroMotion.find_path(from137, to137)
+	assert(p137.size() == 1 and p137[0].distance_to(to137) < 0.01, "On open ground the King walks straight to the exact clicked point")
+	# 2. Дерево мешает только стволом: в клетку с деревом можно зайти, в ствол — нет
+	var tree137 = open137
+	GameManager.resource_manager._create_node(tree137, "tree_birch")
+	var trunk137: Vector2 = GameManager.resource_manager.nodes[tree137]["pos"]
+	assert(not nav137.is_tile_walkable(tree137), "The tree tile is solid for the grid")
+	assert(not HeroMotion.can_stand(trunk137), "The trunk itself is solid")
+	var corner137 = nav137.tile_to_world_center(tree137) + Vector2(14.0, 14.0)
+	if corner137.distance_to(trunk137) > 16.0:
+		assert(HeroMotion.can_stand(corner137), "The rest of the tree tile is walkable for the King")
+	# 3. Обход дерева: путь не проходит сквозь ствол и короче сеточного
+	var a137 = trunk137 + Vector2(-60.0, 0.0)
+	var b137 = trunk137 + Vector2(60.0, 0.0)
+	var around137 = HeroMotion.find_path(a137, b137)
+	assert(not around137.is_empty(), "A path around the tree exists")
+	var prev137 = a137
+	for wp137 in around137:
+		assert(HeroMotion.has_line(prev137, wp137), "Every leg of the smoothed path is free")
+		prev137 = wp137
+	var grid137 = nav137.find_path(a137, b137)
+	assert(around137.size() < grid137.size(), "The smoothed path has fewer turns than the grid path (%d < %d)" % [around137.size(), grid137.size()])
+	# 4. Клик в ствол — Король идёт в ближайшую доступную точку
+	var into137 = HeroMotion.find_path(a137, trunk137)
+	assert(not into137.is_empty() and HeroMotion.can_stand(into137[into137.size() - 1]) and into137[into137.size() - 1].distance_to(trunk137) < 30.0, "Clicking into the trunk leads next to it")
+	# 5. Ходьба приказом: Король доходит точно в точку, огибая ствол
+	var ctrl137 = HeroController.new()
+	add_child(ctrl137)
+	ctrl137.set_active(true)
+	ruler137.pos = a137
+	assert(ctrl137.order_move(b137), "Right-click order")
+	for i137 in range(600):
+		if not ctrl137.follow_path(ruler137, 0.03):
+			break
+		assert(HeroMotion.can_stand(ruler137.pos), "The King never walks into the trunk")
+	assert(ruler137.pos.distance_to(b137) < 1.0, "The King arrives exactly at the clicked point")
+	# 6. Рубка: подходит к стволу со своей стороны, дерево рубится
+	ruler137.pos = a137
+	ruler137.stamina_current = ruler137.stamina_max
+	ruler137.equipment["weapon"] = "work_axe"
+	s137.hero.bag.clear()
+	ctrl137.order_interact(trunk137, {"kind": "chop", "coord": tree137})
+	for i137 in range(800):
+		if ctrl137.action.is_empty():
+			break
+		ctrl137._tick_action(ruler137, 0.1)
+	assert(not GameManager.resource_manager.nodes.has(tree137) and float(s137.hero.bag.get("wood", 0.0)) > 0.0, "The King walks up to the trunk and fells the tree")
+	ruler137.equipment["weapon"] = "unarmed"
+	# 7. Лист анимаций Короля
+	assert(HeroAnimations.get_sheet() != null, "The King's sprite sheet loads")
+	HeroAnimations.play(ruler137, "chop")
+	var fr137 = HeroAnimations.resolve_frame(ruler137, 0.0)
+	assert(fr137["anim"] == "chop" and HeroAnimations.FRAMES["chop"].has(fr137["frame"]), "Chopping shows axe frames")
+	HeroAnimations.play(ruler137, "attack")
+	assert(HeroAnimations.resolve_frame(ruler137, 0.0)["anim"] == "punch", "Unarmed attack shows the punch")
+	ruler137.custom_data["anim_until"] = -1.0
+	ruler137.state = CitizenNPC.State.MOVING_TO_WORK
+	var w137 = HeroAnimations.resolve_frame(ruler137, 0.37)
+	assert(w137["anim"] == "walk" and HeroAnimations.FRAMES["walk"].has(w137["frame"]), "Walking loops the walk cycle")
+	ruler137.state = CitizenNPC.State.IDLE
+	assert(HeroAnimations.resolve_frame(ruler137, 1.0)["anim"] == "idle", "Standing loops the idle cycle")
+	# 8. Диалог как в «Ведьмаке»: тема -> ответ жителя -> выбор ответа вождя
+	var talker137 = CitizenNPC.new("talker137", "Голодный Мирон", "m", 30, "adult")
+	talker137.settlement_id = s137.id
+	talker137.loyalty = 70.0
+	talker137.hunger = 20.0
+	talker137.pos = ruler137.pos + Vector2(20.0, 0.0)
+	s137.population.citizens.append(talker137)
+	s137.deposit_resource("food", 5.0)
+	var dw137 = DialogueWindow.new()
+	add_child(dw137)
+	dw137.open_with(talker137)
+	var topics137 = NPCDialogue.get_topics(s137, talker137, ruler137)
+	assert(dw137._stage == "topics" and dw137._option_actions.size() == topics137.size() + 1, "First the King picks a topic (plus farewell)")
+	var hunger_topic137: Dictionary = {}
+	for t in topics137:
+		if t["id"] == "hunger":
+			hunger_topic137 = t
+	assert(not hunger_topic137.is_empty(), "A hungry citizen has a hunger topic")
+	dw137._pick_topic(hunger_topic137)
+	assert(dw137._stage == "answers" and dw137._option_actions.size() == hunger_topic137["options"].size() + 1, "Then the citizen answers and the King picks a reply")
+	assert(dw137.player_line_lbl.text.begins_with("Вы:") and dw137.npc_line_lbl.text.contains(hunger_topic137["npc_line"]), "Subtitles show both lines")
+	dw137._option_actions[0].call() # «Возьми еды из общих запасов»
+	assert(talker137.hunger == 100.0 and dw137._stage == "topics", "The reply changes the world and returns to the topic list")
+	dw137.close()
+	dw137.queue_free()
+	ctrl137.set_active(false)
+	ctrl137.queue_free()
+	print("OK 137. Free (gridless) King movement with smooth paths, King sprite animations, Witcher-style dialogue.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

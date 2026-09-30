@@ -325,7 +325,7 @@ func _process(delta: float) -> void:
 	# Обработка наведения мыши
 	_process_mouse_hover()
 	
-	if redraw_timer >= 0.033:
+	if redraw_timer >= 0.033 or GameManager.hero_control_active:
 		redraw_timer = 0.0
 		queue_redraw()
 
@@ -2164,7 +2164,10 @@ func _draw_single_citizen_body(c: CitizenNPC) -> void:
 	# Поза действия поверх обычного портрета — чтобы было видно, что житель реально рубит/несёт,
 	# а не просто покачивается. Не привязана к расе/полу, только к текущему занятию.
 	var action_tex = _get_citizen_action_texture(c)
-	if action_tex:
+	# Король рисуется своим листом анимаций (HeroAnimations: ходьба, рубка, кайло, рыбалка, бой...)
+	if c.is_ruler and HeroAnimations.draw_king(self, c, anim_time):
+		pass
+	elif action_tex:
 		var a_orig = action_tex.get_size()
 		var a_aspect = a_orig.x / maxf(1.0, a_orig.y)
 		var a_h = char_size.y

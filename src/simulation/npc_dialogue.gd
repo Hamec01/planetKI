@@ -17,6 +17,39 @@ const CALL_COOLDOWN: float = 90.0
 const DANGER_RADIUS_TILES: int = 25
 const HELP_XP: float = 3.0
 
+# Диалог как в «Ведьмаке»: сначала вождь выбирает, о чём заговорить (реплика вождя),
+# житель отвечает, затем вождь выбирает один из ответов (options темы).
+const TOPIC_PROMPTS: Dictionary = {
+	"hunger": "Ты выглядишь измождённым. Когда ты ел последний раз?",
+	"clothes": "Что у тебя с одеждой?",
+	"home": "Где ты теперь ночуешь?",
+	"grief": "Ты чем-то опечален?",
+	"grudge": "С кем ты не ладишь?",
+	"work": "Чем ты сейчас занят?",
+	"discontent": "Вижу, ты чем-то недоволен. Говори прямо.",
+	"danger": "Что-то неспокойно вокруг. Ты что-нибудь видел?",
+	"gift": "Как поживает твоя семья?",
+	"opinion": "Что думаешь о последнем решении?",
+	"gossip": "Что нынче говорят в племени?",
+	"smalltalk": "Как живёшь?",
+	"flowers": "(Подарить цветы)",
+	"deed": "(Напасть)",
+	"prisoner": "Ну что, узник, одумался?",
+	"vendetta": "Ты что-то имеешь против меня?",
+	"vendetta_other": "Ты точишь нож на кого-то. На кого?",
+	"despair": "Что с тобой творится? На тебе лица нет.",
+	"mad": "Эй... ты меня слышишь?",
+	"bitter": "Почему ты так зол на всех?",
+	"plot": "Мне донесли, что ты замышляешь против меня.",
+	"plot_rumor": "Ты хотел мне что-то сказать?"
+}
+# Важные темы подсвечиваются (как квестовые реплики)
+const URGENT_TOPICS: Array[String] = ["hunger", "danger", "vendetta", "plot", "plot_rumor", "home", "clothes", "despair", "mad", "prisoner"]
+const HOSTILE_TOPICS: Array[String] = ["deed"]
+
+static func get_prompt(topic: Dictionary) -> String:
+	return String(TOPIC_PROMPTS.get(String(topic.get("id", "")), "Поговорим."))
+
 # --- НАСТРОЙ ЖИТЕЛЯ ---
 
 static func get_attitude(npc: CitizenNPC, ruler: CitizenNPC) -> float:

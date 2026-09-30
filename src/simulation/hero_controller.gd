@@ -9,7 +9,7 @@ extends Node
 # рыбачить, по зверю бить, по туше разделывать, по очагу поесть из общего котла,
 # по складу сдать сумку, по своему дому отдохнуть, по стройке — помочь строить.
 # Каждое действие даёт опыт героя (уровни -> очки характеристик и навыков) и
-# вызывает HeroAnimations.play(...) — место для будущих анимаций.
+# вызывает HeroAnimations.play(...) — кадры из листа art/hero/king_sheet.png.
 # WASD — идти (перебивает приказ), E — заговорить с ближайшим.
 # Пока управляет игрок, ИИ поселения не распоряжается Королём, но голод, силы,
 # холод и выносливость действуют. Добытое идёт в личную сумку (PlayerHero.bag).
@@ -24,6 +24,7 @@ const CALL_RANGE: float = 110.0
 const CALL_SCAN_INTERVAL: float = 1.5
 const WAYPOINT_REACHED: float = 4.0
 const REPATH_INTERVAL: float = 0.5
+const TURN_SPEED: float = 14.0
 
 # Дальность и темп действий
 const ACTION_RANGE: Dictionary = {
@@ -58,6 +59,7 @@ var click_path: Array[Vector2] = []
 var click_path_index: int = 0
 var talk_target: CitizenNPC = null
 var _repath_timer: float = 0.0
+var _path_goal: Vector2 = Vector2.ZERO
 # Текущее действие: {"kind", цель, "timer"}
 var action: Dictionary = {}
 # Драка с соплеменниками: жертва, заступники, сбежавшие
@@ -120,20 +122,26 @@ func cancel_action() -> void:
 
 # --- МАРШРУТ ---
 
-func _set_path_to(ruler: CitizenNPC, dest: Vector2, solid_tile: Vector2i = Vector2i(-1, -1)) -> bool:
-	var p: Array[Vector2] = []
-	if GameManager.nav_grid == null:
-		p = [dest]
-	elif solid_tile != Vector2i(-1, -1):
-		p = GameManager.nav_grid.find_adjacent_path(ruler.pos, solid_tile)
-	else:
-		p = GameManager.nav_grid.find_path(ruler.pos, dest)
+# Путь без привязки к сетке (HeroMotion): прямо, если свободно, иначе сглаженный обход.
+# approach — к объекту (дерево, камень, очаг, склад...): подходим на расстояние действия со своей стороны.
+func _set_path_to(ruler: CitizenNPC, dest: Vector2, approach: bool = false) -> bool:
+	var goal = dest
+	if approach:
+		goal = HeroMotion.approach_point(ruler.pos, dest, float(ACTION_RANGE.get(String(action.get("kind", "chop")), 34.0)))
+	var p: Array[Vector2] = HeroMotion.find_path(ruler.pos, goal)
 	if p.is_empty():
 		return false
 	click_path = p
 	click_path_index = 0
 	_repath_timer = REPATH_INTERVAL
+	_path_goal = dest
 	return true
+
+# Движущаяся цель: путь пересчитывается, только если она заметно сместилась
+func _refresh_path_to_moving(ruler: CitizenNPC, target_pos: Vector2, delta: float) -> void:
+	_repath_timer -= delta
+	if click_path_index >= click_path.size() or (_repath_timer <= 0.0 and target_pos.distance_to(_path_goal) > 10.0):
+		_set_path_to(ruler, target_pos)
 
 # ПКМ по земле или жителю (разговор)
 func order_move(world_pos: Vector2, target_citizen: RefCounted = null) -> bool:
@@ -176,8 +184,7 @@ func order_interact(world_pos: Vector2, target: Dictionary) -> bool:
 		action = {}
 		return false
 	if ruler.pos.distance_to(pos) > float(ACTION_RANGE.get(kind, 30.0)):
-		var solid = action.get("coord", Vector2i(-1, -1)) if kind in ["chop", "mine"] else Vector2i(-1, -1)
-		if not _set_path_to(ruler, pos, solid):
+		if not _set_path_to(ruler, pos, true):
 			action = {}
 			EventBus.notification_toast.emit("🚫 Не подойти", "К цели нет пути.", "info")
 			return false
@@ -200,9 +207,7 @@ func follow_path(ruler: CitizenNPC, delta: float) -> bool:
 			ruler.state = CitizenNPC.State.IDLE
 			talk_requested.emit(npc)
 			return false
-		_repath_timer -= delta
-		if _repath_timer <= 0.0:
-			_set_path_to(ruler, talk_target.pos)
+		_refresh_path_to_moving(ruler, talk_target.pos, delta)
 	if click_path_index >= click_path.size():
 		if not click_path.is_empty():
 			click_path.clear()
@@ -212,14 +217,27 @@ func follow_path(ruler: CitizenNPC, delta: float) -> bool:
 	var to_wp = wp - ruler.pos
 	var step = ruler.get_speed() * SPEED_MULT * delta
 	HeroAnimations.play(ruler, "walk")
-	if to_wp.length() <= maxf(step, WAYPOINT_REACHED):
+	if to_wp.length() <= step:
 		ruler.pos = wp
 		click_path_index += 1
 	else:
-		ruler.pos += to_wp.normalized() * step
-		ruler.facing_dir = to_wp.normalized()
+		var dir = to_wp.normalized()
+		if not HeroMotion.step(ruler, dir * step):
+			# Упёрся (изменилась обстановка) — пересчитать путь к той же цели
+			if not _set_path_to(ruler, click_path[click_path.size() - 1]):
+				click_path.clear()
+				ruler.state = CitizenNPC.State.IDLE
+				return false
+		_turn_towards(ruler, dir, delta)
 	ruler.state = CitizenNPC.State.MOVING_TO_WORK
 	return true
+
+# Плавный поворот вместо мгновенного рывка
+func _turn_towards(ruler: CitizenNPC, dir: Vector2, delta: float) -> void:
+	if ruler.facing_dir == Vector2.ZERO:
+		ruler.facing_dir = dir
+		return
+	ruler.facing_dir = ruler.facing_dir.slerp(dir, clampf(TURN_SPEED * delta, 0.0, 1.0)).normalized()
 
 # --- ДЕЙСТВИЯ ---
 
@@ -279,12 +297,9 @@ func _tick_action(ruler: CitizenNPC, delta: float) -> void:
 				EventBus.notification_toast.emit("⚔ Драка окончена", "Король отступил.", "info")
 				cancel_action()
 				return
-			_repath_timer -= delta
-			if _repath_timer <= 0.0 or click_path_index >= click_path.size():
-				_set_path_to(ruler, target_pos)
+			_refresh_path_to_moving(ruler, target_pos, delta)
 		elif click_path_index >= click_path.size():
-			var solid = action.get("coord", Vector2i(-1, -1)) if kind in ["chop", "mine"] else Vector2i(-1, -1)
-			if not _set_path_to(ruler, target_pos, solid):
+			if not _set_path_to(ruler, target_pos, true):
 				cancel_action()
 				return
 		follow_path(ruler, delta)
@@ -605,17 +620,8 @@ func move_ruler(ruler: CitizenNPC, dir: Vector2, delta: float) -> bool:
 		if ruler.state == CitizenNPC.State.MOVING_TO_WORK:
 			ruler.state = CitizenNPC.State.IDLE
 		return false
-	var step = dir * ruler.get_speed() * SPEED_MULT * delta
-	var start_blocked = not _is_walkable_at(ruler.pos) # застрял на непроходимой клетке — даём выйти
-	var moved = false
-	for axis_step in [Vector2(step.x, 0.0), Vector2(0.0, step.y)]:
-		if axis_step == Vector2.ZERO:
-			continue
-		var target = ruler.pos + axis_step
-		if start_blocked or _is_walkable_at(target):
-			ruler.pos = target
-			moved = true
-	ruler.facing_dir = dir
+	var moved = HeroMotion.step(ruler, dir * ruler.get_speed() * SPEED_MULT * delta)
+	_turn_towards(ruler, dir, delta)
 	ruler.state = CitizenNPC.State.MOVING_TO_WORK if moved else CitizenNPC.State.IDLE
 	HeroAnimations.play(ruler, "walk" if moved else "idle")
 	return moved

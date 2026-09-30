@@ -192,7 +192,9 @@ func on_cargo_delivered(s: SettlementData, c: CitizenNPC) -> bool:
 	var speed_mult = camp_inst.get_butchering_speed_mult() if camp_inst else 1.0
 	c.work_timer = 2.5 / speed_mult
 	if camp_inst and camp_inst.is_upgrade_unlocked("hunt_campfire"):
-		c.needs["rest"] = minf(100.0, c.needs.get("rest", 80.0) + 15.0)
+		# Костёр у лагеря: охотник отогревается и переводит дух (бодрость, стресс, настрой)
+		c.energy = minf(100.0, c.energy + 15.0)
+		c.stress = maxf(0.0, c.stress - 3.0)
 		c.morale = minf(100.0, c.morale + 3.0)
 	c.last_status_reason = "Разделывает добычу на оборудованной площадке" if (camp_inst and camp_inst.is_upgrade_unlocked("hunt_butcher_table")) else "Разделывает добычу в лагере"
 	return true

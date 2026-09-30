@@ -38,6 +38,8 @@ addons/
 *.svg
 *.webp
 *.gif
+# Исключение: лист анимаций Короля (нарезан из присланного спрайта, фон убран — art/hero/cut_king_sheet.py)
+!art/hero/king_sheet.png
 *.wav
 *.ogg
 *.mp3

@@ -149,6 +149,10 @@ static func try_start(s: SettlementData, c: CitizenNPC) -> bool:
 	if c.cargo_amount > 0.0:
 		return false
 	var now = _now()
+	# Свои дела житель начинает обдумывать не в первый же миг (после рождения, прихода, загрузки)
+	if not c.custom_data.has("next_intent_eval"):
+		c.custom_data["next_intent_eval"] = now + randf_range(20.0, 60.0)
+		return false
 	if now < float(c.custom_data.get("next_intent_eval", -1.0)):
 		return false
 	c.custom_data["next_intent_eval"] = now + randf_range(12.0, 24.0)
