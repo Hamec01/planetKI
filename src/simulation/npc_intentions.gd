@@ -69,6 +69,7 @@ static func log_deed(s: SettlementData, kind: String, actor: CitizenNPC, victim_
 # ==============================================================================
 
 static func tick(s: SettlementData, c: CitizenNPC, delta: float) -> bool:
+	NPCPsyche.accumulate(c, delta)
 	if c.custom_data.has("jailed_until"):
 		if is_jailed(c):
 			_body_decay(c, delta)
@@ -188,7 +189,7 @@ static func _is_tempted_to_steal(s: SettlementData, c: CitizenNPC) -> bool:
 	var honesty = float(c.traits.get("honesty", 50.0))
 	var home = s.get_citizen_home_instance(c)
 	var desperate = c.hunger < 25.0 and (home == null or home.food_stockpile < SettlementData.MEAL_FOOD)
-	var inclined = honesty < 35.0 or (c.mental_state == "bitter" and honesty < 55.0) or (desperate and honesty < 60.0)
+	var inclined = honesty < 40.0 or (c.mental_state == "bitter" and honesty < 55.0) or (desperate and honesty < 60.0)
 	if not inclined:
 		return false
 	var chance = 0.04

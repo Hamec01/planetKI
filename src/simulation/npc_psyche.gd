@@ -104,12 +104,13 @@ static func _now() -> float:
 static func daily_update(s: SettlementData, c: CitizenNPC) -> void:
 	if not c.is_alive or c.is_ruler or c.custom_data.get("player_controlled", false):
 		return
-	# 1. Тяготы дня
+	# 1. Тяготы дня: сколько времени за сутки житель реально голодал и мёрз
+	var day = float(GameManager.base_tick_interval) if GameManager else 600.0
 	var d = 0.0
-	if c.hunger < 30.0:
-		d += 6.0
-	if c.is_freezing:
-		d += 5.0
+	d += 10.0 * clampf(float(c.psyche_counters.get("hungry_sec", 0.0)) / day, 0.0, 1.0)
+	d += 8.0 * clampf(float(c.psyche_counters.get("cold_sec", 0.0)) / day, 0.0, 1.0)
+	c.psyche_counters["hungry_sec"] = 0.0
+	c.psyche_counters["cold_sec"] = 0.0
 	if c.health < 50.0:
 		d += 4.0
 	if c.home_id == "" and c.cohort != "child":
@@ -187,6 +188,13 @@ static func daily_update(s: SettlementData, c: CitizenNPC) -> void:
 		if t == null or not t.is_alive:
 			c.revenge_target_id = ""
 			c.revenge_reason = ""
+
+# Покадровый учёт тягот (вызывается из NPCIntentions.tick для каждого жителя)
+static func accumulate(c: CitizenNPC, delta: float) -> void:
+	if c.hunger < 35.0:
+		c.psyche_counters["hungry_sec"] = float(c.psyche_counters.get("hungry_sec", 0.0)) + delta
+	if c.is_freezing:
+		c.psyche_counters["cold_sec"] = float(c.psyche_counters.get("cold_sec", 0.0)) + delta
 
 static func set_state(s: SettlementData, c: CitizenNPC, new_state: String, reason: String) -> void:
 	if c.mental_state == new_state:

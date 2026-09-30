@@ -5940,6 +5940,16 @@ func _ready() -> void:
 	mem136.add_memory("comforted", "", "x", 1.0, "Утешили")
 	assert(is_equal_approx(mem136.stress, 23.0), "Comfort relieves stress (%.1f)" % mem136.stress)
 
+	# 1b. Прожитые в голоде часы копят стресс к концу суток
+	var hungry136 = mk136.call("hungry136", "Голодный Нечай")
+	hungry136.loyalty = 50.0
+	hungry136.stress = 20.0
+	hungry136.hunger = 20.0
+	NPCPsyche.accumulate(hungry136, GameManager.base_tick_interval)
+	NPCPsyche.daily_update(s136, hungry136)
+	assert(is_equal_approx(hungry136.stress, 28.0) and float(hungry136.psyche_counters["hungry_sec"]) == 0.0, "A day of hunger adds stress (%.1f)" % hungry136.stress)
+	hungry136.hunger = 100.0
+
 	# 2. Уныние: вся родня мертва
 	var orphan136 = mk136.call("orphan136", "Одинокий Любим")
 	orphan136.add_relationship("dead_sibling136", "sibling", 80.0)
