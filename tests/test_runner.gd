@@ -5563,8 +5563,13 @@ func _ready() -> void:
 	ctrl.move_ruler(ruler134, Vector2.ZERO, 0.1)
 	assert(ruler134.state == CitizenNPC.State.IDLE, "Ruler stops when keys are released")
 	# Управление мышью (как в MOBA): ПКМ по земле — идти по найденному пути
-	var goal_tile = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 3)
-	var goal_pos = GameManager.nav_grid.tile_to_world_center(goal_tile)
+	var goal_pos = ruler134.pos
+	for try_goal in range(30):
+		var goal_tile = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 3)
+		var cand_goal = GameManager.nav_grid.tile_to_world_center(goal_tile)
+		if cand_goal.distance_to(ruler134.pos) > 8.0 and not GameManager.nav_grid.find_path(ruler134.pos, cand_goal).is_empty():
+			goal_pos = cand_goal
+			break
 	if goal_pos.distance_to(ruler134.pos) > 8.0:
 		assert(ctrl.order_move(goal_pos), "Right-click order builds a path")
 		for i134 in range(400):

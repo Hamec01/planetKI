@@ -4384,8 +4384,10 @@ func update_citizens(delta: float) -> void:
 					if _try_reconcile_quarrel(c):
 						continue
 
-				# 11b. Свидание и прогулка для влюбленных пар / супругов
-				if (c.spouse_id != "" or c.cohort in ["youth", "adult"]) and randf() < 0.22:
+				# 11b. Свидание и прогулка для влюбленных пар / супругов.
+				# У кого есть ремесло — только вечером: в рабочие часы он ждёт работы, а не гуляет
+				var date_hour_ok = c.job_id in ["idle", ""] or (indiv_hour >= 17.5 and indiv_hour < 22.0)
+				if date_hour_ok and (c.spouse_id != "" or c.cohort in ["youth", "adult"]) and randf() < 0.22:
 					if _try_start_dating_walk(c):
 						continue
 
