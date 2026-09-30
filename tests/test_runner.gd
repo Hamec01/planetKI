@@ -4439,15 +4439,22 @@ func _ready() -> void:
 	far_walker.settlement_id = s_118.id
 	far_walker.job_id = "idle"
 	var hearth_world = s_118._get_hearth_pos()
-	var far_tile = base_tile
-	for offset_d in [Vector2i(3, 0), Vector2i(-3, 0), Vector2i(0, 3), Vector2i(0, -3), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(4, 0), Vector2i(0, 4)]:
-		var cand_t = base_tile + offset_d
-		if GameManager.nav_grid.is_tile_walkable(cand_t):
-			var cand_world = GameManager.nav_grid.tile_to_world_center(cand_t)
-			var test_p = GameManager.nav_grid.find_path(cand_world, hearth_world)
-			if not test_p.is_empty():
-				far_tile = cand_t
-				break
+	# Ищем проходимую клетку с путём к очагу заметно дальше радиуса «поесть у очага» (22px)
+	var far_tile = Vector2i(-1, -1)
+	for ring_r in range(2, 8):
+		for ring_dy in range(-ring_r, ring_r + 1):
+			for ring_dx in range(-ring_r, ring_r + 1):
+				if far_tile != Vector2i(-1, -1) or (abs(ring_dx) != ring_r and abs(ring_dy) != ring_r):
+					continue
+				var cand_t = base_tile + Vector2i(ring_dx, ring_dy)
+				if not GameManager.nav_grid.is_tile_walkable(cand_t):
+					continue
+				var cand_world = GameManager.nav_grid.tile_to_world_center(cand_t)
+				if cand_world.distance_to(hearth_world) < 60.0:
+					continue
+				if not GameManager.nav_grid.find_path(cand_world, hearth_world).is_empty():
+					far_tile = cand_t
+	assert(far_tile != Vector2i(-1, -1), "Test setup: a reachable tile away from the hearth exists")
 	far_walker.pos = GameManager.nav_grid.tile_to_world_center(far_tile)
 	far_walker.hunger = 35.0
 	# Исключаем честный подарок еды от соседа в разговоре: проверяем именно «еду у очага издалека»
