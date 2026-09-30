@@ -93,6 +93,11 @@ var relationship_graph: NPCRelationshipGraph = null
 var council: ElderCouncil = null
 # Развитие правителя как героя игрока (уровень, характеристики, навыки, снаряжение)
 var hero: PlayerHero = PlayerHero.new()
+# Журнал поступков жителей (кражи, драки, убийства, аресты, добрые дела) — NPCIntentions
+var deeds_log: Array[Dictionary] = []
+# Тайный заговор против вождя (CoupPlot) и день, раньше которого новый не зреет
+var coup_plot: Dictionary = {}
+var coup_cooldown_day: int = -1
 var citizens: Array:
 	get: return population.citizens if population else []
 
@@ -1611,6 +1616,10 @@ func sim_daily_tick(season: String) -> void:
 	_update_social_fabric()
 	if council:
 		council.daily_check(self)
+	# Душа жителей: стресс, уныние, озлобленность, помешательство, клятвы мести
+	for pc in population.citizens:
+		NPCPsyche.daily_update(self, pc)
+	CoupPlot.daily_tick(self)
 	
 	if faction_id == GameManager.player_faction_id:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -2317,6 +2326,9 @@ func update_citizens(delta: float) -> void:
 			continue
 		# Житель в драке с Королём (жертва или заступник) — его ведёт бой, а не распорядок дня
 		if c.custom_data.get("fighting_ruler", false):
+			continue
+		# Свои дела по собственной воле (кража, месть, помощь, уныние), схватки и арест
+		if NPCIntentions.tick(self, c, delta):
 			continue
 
 		# 2b. Таймер устойчивости текущего выбора (Hysteresis / Commitment) (S08)
@@ -3920,6 +3932,9 @@ func update_citizens(delta: float) -> void:
 		if c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
 			c.decision_cooldown -= delta
 			if c.decision_cooldown > 0.0:
+				continue
+			# Характер и душа важнее распорядка: житель может пойти воровать, мстить или помогать
+			if NPCIntentions.try_start(self, c):
 				continue
 				
 			# 0000. Восстановление после ран: раненый житель пропускает работу и отлёживается дома
@@ -5528,6 +5543,9 @@ func serialize() -> Dictionary:
 		"construction_queue": queue_serialized,
 		"council": council.serialize() if council else {},
 		"hero": hero.serialize(),
+		"deeds_log": deeds_log.duplicate(true),
+		"coup_plot": coup_plot.duplicate(true),
+		"coup_cooldown_day": coup_cooldown_day,
 		"population": population.serialize() if population else {}
 	}
 
@@ -5552,6 +5570,12 @@ func deserialize(data: Dictionary) -> void:
 		council = ElderCouncil.new(id)
 	council.settlement_id = id
 	council.deserialize(data.get("council", {}))
+	deeds_log.clear()
+	for d in data.get("deeds_log", []):
+		if d is Dictionary:
+			deeds_log.append(d)
+	coup_plot = data.get("coup_plot", {}).duplicate(true)
+	coup_cooldown_day = int(data.get("coup_cooldown_day", -1))
 	reserved_zones.clear()
 	for zone in data.get("reserved_zones", []):
 		if zone is Dictionary:

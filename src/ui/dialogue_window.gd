@@ -98,8 +98,17 @@ func open_with(p_npc: CitizenNPC) -> void:
 
 func _mood_text(s: SettlementData, ruler: CitizenNPC) -> String:
 	var aff = int(npc.get_relationship_affinity(ruler.citizen_id))
-	return "%d лет • %s • преданность вождю %d • отношение к вам %+d • сытость %d • здоровье %d/%d" % [
-		npc.age, s._get_job_display_name(npc.job_id), int(npc.loyalty), aff, int(npc.hunger), int(npc.health), int(npc.max_health)]
+	return "%d лет • %s • преданность вождю %d • отношение к вам %+d • сытость %d • здоровье %d/%d\n%s" % [
+		npc.age, s._get_job_display_name(npc.job_id), int(npc.loyalty), aff, int(npc.hunger), int(npc.health), int(npc.max_health), NPCPsyche.describe(npc)]
+
+# Сведения о собеседнике живые: голод, здоровье, душа меняются прямо во время разговора
+func _process(_delta: float) -> void:
+	if not visible or npc == null:
+		return
+	var s = _get_settlement()
+	var ruler = PlayerHero.get_ruler(s)
+	if s and ruler:
+		info_lbl.text = _mood_text(s, ruler)
 
 func _rebuild(s: SettlementData, ruler: CitizenNPC) -> void:
 	name_lbl.text = "💬 %s" % npc.name

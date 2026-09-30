@@ -31,6 +31,7 @@ var dmg_breakdown_lbl: Label
 
 var personality_vbox: VBoxContainer
 var loyalty_lbl: Label
+var psyche_lbl: Label
 var traits_lbl: Label
 var memories_lbl: Label
 
@@ -317,6 +318,12 @@ func _build_ui() -> void:
 	loyalty_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
 	personality_vbox.add_child(loyalty_lbl)
 	
+	psyche_lbl = Label.new()
+	psyche_lbl.add_theme_font_size_override("font_size", 10)
+	psyche_lbl.add_theme_color_override("font_color", Color(0.95, 0.75, 0.8))
+	psyche_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	personality_vbox.add_child(psyche_lbl)
+	
 	traits_lbl = Label.new()
 	traits_lbl.text = "Черты: Общительный, Гордый"
 	traits_lbl.add_theme_font_size_override("font_size", 10)
@@ -491,6 +498,7 @@ func _update_ui_values() -> void:
 	
 	# Обновление верности, характера, архетипа и причуд (Система живых NPC)
 	loyalty_lbl.text = "👑 Верность правителю: %d%%" % int(current_citizen.loyalty)
+	psyche_lbl.text = _psyche_text(current_citizen)
 	
 	var arch_ru = "Мастеровой"
 	match current_citizen.get_personality_archetype():
@@ -535,3 +543,25 @@ func _update_ui_values() -> void:
 	debug_lbl.text = "ID: %s | State: %d | Pos: (%.0f, %.0f) | P: %.2f R: %.2f" % [
 		current_citizen.citizen_id, current_citizen.state, current_citizen.pos.x, current_citizen.pos.y, stats["P"], stats["R"]
 	]
+
+# Душевное состояние, месть и поступки жителя (NPCPsyche / NPCIntentions)
+func _psyche_text(c: CitizenNPC) -> String:
+	var lines: Array[String] = ["💭 Душа: %s" % NPCPsyche.describe(c)]
+	if c.mental_state != "stable" and String(c.custom_data.get("mental_reason", "")) != "":
+		lines.append("   %s" % c.custom_data["mental_reason"])
+	var s = GameManager.get_player_settlement() if GameManager else null
+	if s is SettlementData:
+		if c.revenge_target_id != "":
+			var foe = s.get_citizen_by_id(c.revenge_target_id)
+			lines.append("🗡 Жаждет мести: %s — %s" % [foe.name if foe else "?", c.revenge_reason])
+		var good = 0
+		var bad = 0
+		for d in s.deeds_log:
+			if d.get("actor_id", "") == c.citizen_id and d.get("discovered", true):
+				if d.get("kind", "") == "good_deed":
+					good += 1
+				elif d.get("kind", "") in ["theft", "assault", "murder"]:
+					bad += 1
+		if good + bad > 0:
+			lines.append("📜 Слава: добрых дел %d, известных проступков %d" % [good, bad])
+	return "\n".join(lines)

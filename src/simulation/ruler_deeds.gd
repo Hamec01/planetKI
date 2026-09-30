@@ -58,7 +58,16 @@ static func on_tree_felled(s: SettlementData, ruler: CitizenNPC, coord: Vector2i
 # Первый удар по соплеменнику. Возвращает реакцию жертвы и заступников:
 # {"victim_fights": bool, "defenders": Array[CitizenNPC]}
 static func on_citizen_assaulted(s: SettlementData, ruler: CitizenNPC, victim: CitizenNPC) -> Dictionary:
+	# Самооборона: житель сам кинулся на вождя (месть, помешательство) — ответ вождя законен
+	if is_self_defense(ruler, victim):
+		victim.shout("Не возьмёшь, вождь!", 3.0)
+		for w in witnesses(s, victim.pos, [victim]):
+			w.add_memory("witnessed_crime", victim.citizen_id, ruler.citizen_id, 0.6, "%s напал на вождя, и вождь защищался" % victim.name)
+		EventBus.notification_toast.emit("🛡 Самооборона", "%s напал на вас — вы защищаетесь, соплеменники на вашей стороне." % victim.name, "warning")
+		var nobody: Array[CitizenNPC] = []
+		return {"victim_fights": true, "defenders": nobody}
 	victim.add_memory("grudge", "offense", ruler.citizen_id, 3.0, "Вождь поднял на меня руку", true)
+	victim.add_memory("assaulted", ruler.citizen_id, victim.citizen_id, 1.0, "Вождь избил меня")
 	victim.modify_relationship(ruler.citizen_id, -40.0, -20.0)
 	victim.loyalty = maxf(0.0, victim.loyalty - 25.0)
 	victim.show_emote("fear", 4.0, 5, true)
@@ -70,6 +79,8 @@ static func on_citizen_assaulted(s: SettlementData, ruler: CitizenNPC, victim: C
 			w.add_memory("grudge", "offense", ruler.citizen_id, 3.0, "Вождь напал на моего родича %s" % victim.name, true)
 			w.modify_relationship(ruler.citizen_id, -30.0, -15.0)
 	var fights = float(victim.traits.get("bravery", 50.0)) >= 60.0 or float(victim.traits.get("temper", 20.0)) >= 60.0
+	# Воинственный не забудет побоев
+	NPCPsyche.consider_revenge(s, victim, ruler, "Вождь поднял на меня руку")
 	victim.shout("Ты что творишь, вождь?!" if fights else "Помогите! Вождь обезумел!", 3.5)
 	# Стражники, не доверяющие Королю, вступаются за соплеменника
 	var defenders: Array[CitizenNPC] = []
@@ -84,7 +95,20 @@ static func on_citizen_assaulted(s: SettlementData, ruler: CitizenNPC, victim: C
 	return {"victim_fights": fights, "defenders": defenders}
 
 # Король убил соплеменника: удар по всему роду
+static func is_self_defense(ruler: CitizenNPC, victim: CitizenNPC) -> bool:
+	var duel: Dictionary = victim.custom_data.get("duel", {})
+	return not duel.is_empty() and String(duel.get("role", "")) == "attacker" and String(duel.get("target_id", "")) == ruler.citizen_id
+
 static func on_citizen_killed(s: SettlementData, ruler: CitizenNPC, victim: CitizenNPC) -> void:
+	if is_self_defense(ruler, victim):
+		victim.death_cause = "Погиб, напав на вождя %s" % ruler.name
+		victim.custom_data.erase("duel")
+		GameManager.add_history_entry(GameManager.current_year, "Вождь отбился", "%s напал на вождя %s и погиб" % [victim.name, ruler.name], "Власть и закон")
+		for c in s.population.citizens:
+			if c.is_alive and not c.is_ruler and c != victim and is_kin(c, victim):
+				c.add_memory("sorrow", "ruler", victim.citizen_id, 1.0, "%s погиб, напав на вождя" % victim.name)
+		EventBus.notification_toast.emit("🛡 Вождь отбился", "%s погиб, напав на вас. Род признаёт: вы защищались." % victim.name, "warning")
+		return
 	if victim.death_cause == "" or victim.death_cause.begins_with("Погиб от"):
 		victim.death_cause = "Убит вождём %s" % ruler.name
 	var council_ids: Array[String] = []
@@ -100,6 +124,7 @@ static func on_citizen_killed(s: SettlementData, ruler: CitizenNPC, victim: Citi
 			c.add_memory("kin_murdered_by_ruler", "ruler", victim.citizen_id, 5.0, "Вождь убил моего родича %s" % victim.name, true)
 			c.add_memory("grudge", "offense", ruler.citizen_id, 4.0, "Кровь %s на руках вождя" % victim.name, true)
 			c.modify_relationship(ruler.citizen_id, -50.0, -30.0)
+			NPCPsyche.consider_revenge(s, c, ruler, "Кровь %s на руках вождя" % victim.name)
 		elif council_ids.has(c.citizen_id):
 			loss = 15.0
 			c.add_memory("ruler_murder", "ruler", victim.citizen_id, 3.0, "Вождь пролил кровь соплеменника %s" % victim.name, true)

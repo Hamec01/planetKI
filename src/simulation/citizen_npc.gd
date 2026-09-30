@@ -102,6 +102,16 @@ var subphase: String = ""
 var hunger: float = 100.0 # 100 = сыт, 0 = умирает от голода
 var energy: float = 100.0 # 100 = бодр, 0 = валится с ног
 var loyalty: float = 85.0
+# Психика (NPCPsyche): стресс копится от плохой памяти и тягот, снимается хорошим.
+# mental_state: "stable" | "despair" (уныние) | "bitter" (озлоблен) | "mad" (помешался)
+var stress: float = 10.0
+var mental_state: String = "stable"
+var psyche_counters: Dictionary = {} # счётчики дней для переходов состояний
+var bitterness_applied: bool = false # характер уже ожесточился (необратимая перемена черт)
+# Жажда мести: кого житель хочет наказать и за что
+var revenge_target_id: String = ""
+var revenge_reason: String = ""
+
 # Тёплая одежда (прочность 0..100): изнашивается, зимой без неё на улице житель мёрзнет
 var warm_clothes: float = 60.0
 var is_freezing: bool = false
@@ -721,6 +731,8 @@ func add_memory(p_type: String, p_actor_id: String, p_target_id: String, p_impor
 	})
 	if memories.size() > 30:
 		_prune_memories()
+	# Каждое пережитое событие отзывается в душе: плохое копит стресс, хорошее снимает
+	stress = clampf(stress + NPCPsyche.memory_stress(p_type, p_importance), 0.0, 100.0)
 
 func has_memory_of(p_actor_id: String, p_type: String = "") -> bool:
 	for m in memories:
@@ -988,6 +1000,14 @@ func serialize() -> Dictionary:
 		"hunger": hunger,
 		"energy": energy,
 		"warm_clothes": warm_clothes,
+		"stress": stress,
+		"mental_state": mental_state,
+		"psyche_counters": psyche_counters.duplicate(),
+		"bitterness_applied": bitterness_applied,
+		"revenge_target_id": revenge_target_id,
+		"revenge_reason": revenge_reason,
+		"jailed_until": float(custom_data.get("jailed_until", 0.0)),
+		"stash": custom_data.get("stash", {}).duplicate(),
 		"loyalty": loyalty,
 		"experience": experience.duplicate(),
 		"skills": skills.duplicate(),
@@ -1085,6 +1105,16 @@ func deserialize(data: Dictionary) -> void:
 	hunger = data.get("hunger", 100.0)
 	energy = data.get("energy", 100.0)
 	warm_clothes = float(data.get("warm_clothes", 60.0))
+	stress = float(data.get("stress", 10.0))
+	mental_state = String(data.get("mental_state", "stable"))
+	psyche_counters = data.get("psyche_counters", {}).duplicate()
+	bitterness_applied = bool(data.get("bitterness_applied", false))
+	revenge_target_id = String(data.get("revenge_target_id", ""))
+	revenge_reason = String(data.get("revenge_reason", ""))
+	if float(data.get("jailed_until", 0.0)) > 0.0:
+		custom_data["jailed_until"] = float(data["jailed_until"])
+	if not data.get("stash", {}).is_empty():
+		custom_data["stash"] = data["stash"].duplicate()
 	loyalty = data.get("loyalty", 85.0)
 	experience = data.get("experience", {}).duplicate()
 	skills = data.get("skills", experience).duplicate()
@@ -2059,6 +2089,8 @@ func get_work_speed_multiplier() -> float:
 	# Выбившийся из сил работает заметно медленнее
 	if is_exhausted():
 		mult *= 0.6
+	# Душевное состояние: унылый работает вполсилы, помешавшийся — рассеянно
+	mult *= NPCPsyche.work_mult(self)
 	# Мастерство: каждый уровень профессии ускоряет работу на 3% (до +30%)
 	if job_id != "" and job_id != "idle":
 		mult *= 1.0 + float(mini(10, get_profession_level(job_id))) * 0.03

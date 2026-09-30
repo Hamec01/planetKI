@@ -5893,6 +5893,335 @@ func _ready() -> void:
 	assert(not guard135.custom_data.has("fighting_ruler"), "Fight flags are cleared when the King leaves")
 	ctrl135.queue_free()
 	print("OK 135. King mode: chop/mine/gather/flowers into the bag, eat, unload to stores, hunt & butcher, gifts, assault and murder with world reaction.")
+
+	# --------------------------------------------------------------------------
+	# TEST 136: ПСИХИКА, ПРЕСТУПЛЕНИЯ, ДОБРЫЕ ДЕЛА, МЕСТЬ, СТРАЖА И ПЕРЕВОРОТ
+	# --------------------------------------------------------------------------
+	var s136: SettlementData = GameManager.get_player_settlement()
+	var ruler136 = PlayerHero.get_ruler(s136)
+	ruler136.health = ruler136.max_health
+	var mk136 = func(cid: String, cname: String, age: int = 30) -> CitizenNPC:
+		var c = CitizenNPC.new(cid, cname, "m", age, "adult")
+		c.settlement_id = s136.id
+		c.social_cooldown = 999.0
+		c.custom_data["next_intent_eval"] = 1e12
+		c.traits["unpredictable"] = false
+		c.pos = s136._get_hearth_pos()
+		s136.population.citizens.append(c)
+		return c
+	# Уединённое место далеко от лагеря (вне досягаемости стражи и свидетелей)
+	var hearth136 = GameManager.nav_grid.world_to_tile(s136._get_hearth_pos())
+	var lonely136 = Vector2i(-1, -1)
+	for r136 in range(16, 60):
+		for dx136 in range(-r136, r136 + 1):
+			for t136 in [hearth136 + Vector2i(dx136, r136), hearth136 + Vector2i(dx136, -r136)]:
+				if lonely136 != Vector2i(-1, -1):
+					break
+				var free136 = true
+				for oy in range(-2, 3):
+					for ox in range(-2, 3):
+						if not GameManager.nav_grid.is_tile_walkable(t136 + Vector2i(ox, oy)):
+							free136 = false
+				if free136 and GameManager.nav_grid.tile_to_world_center(t136).distance_to(s136._get_hearth_pos()) > 520.0:
+					lonely136 = t136
+	assert(lonely136 != Vector2i(-1, -1), "Test setup: an open spot away from the camp")
+	var lonely_pos136 = GameManager.nav_grid.tile_to_world_center(lonely136)
+	# Посторонние уходят к очагу: у уединённого места нет ни свидетелей, ни стражи
+	for oc in s136.population.citizens:
+		if oc.is_alive and not oc.is_ruler and oc.pos.distance_to(lonely_pos136) < 480.0:
+			oc.pos = s136._get_hearth_pos()
+			oc.path.clear()
+
+	# 1. Стресс от памяти: горе копит, утешение снимает
+	var mem136 = mk136.call("mem136", "Горюн")
+	mem136.stress = 10.0
+	mem136.add_memory("grief", "", "x", 1.0, "Горе")
+	assert(is_equal_approx(mem136.stress, 35.0), "Grief adds stress (%.1f)" % mem136.stress)
+	mem136.add_memory("comforted", "", "x", 1.0, "Утешили")
+	assert(is_equal_approx(mem136.stress, 23.0), "Comfort relieves stress (%.1f)" % mem136.stress)
+
+	# 2. Уныние: вся родня мертва
+	var orphan136 = mk136.call("orphan136", "Одинокий Любим")
+	orphan136.add_relationship("dead_sibling136", "sibling", 80.0)
+	orphan136.stress = 40.0
+	NPCPsyche.daily_update(s136, orphan136)
+	assert(orphan136.mental_state == "despair", "Losing all kin brings despair (state %s)" % orphan136.mental_state)
+	assert(NPCPsyche.work_mult(orphan136) == 0.5, "Despair halves the work pace")
+	# Утешение вождя в разговоре
+	var dt136: Array[String] = []
+	for t in NPCDialogue.get_topics(s136, orphan136, ruler136):
+		dt136.append(t["id"])
+	assert(dt136.has("despair"), "The despairing NPC talks about his grief")
+	var st_before136 = orphan136.stress
+	NPCDialogue.respond(s136, orphan136, ruler136, "despair", "comfort")
+	assert(orphan136.stress < st_before136 - 20.0 and orphan136.has_memory("comforted_by_ruler"), "The King's comfort lifts the despair")
+	orphan136.stress = 5.0
+	NPCPsyche.daily_update(s136, orphan136)
+	assert(orphan136.mental_state == "stable", "With low stress the NPC recovers from despair")
+
+	# 3. Озлобленность: много зла — характер ожесточается навсегда
+	var bitter136 = mk136.call("bitter136", "Злобный Ждан")
+	bitter136.traits["temper"] = 30.0
+	bitter136.traits["honesty"] = 50.0
+	bitter136.traits["empathy"] = 40.0
+	for i136 in range(5):
+		bitter136.memories.append({"type": "grudge", "actor_id": "offense", "target_id": "foe%d" % i136, "importance": 1.0, "strength": 100.0, "is_permanent": true, "description": "обида"})
+	bitter136.stress = 60.0
+	NPCPsyche.daily_update(s136, bitter136)
+	assert(bitter136.mental_state == "bitter", "Many bad memories make the NPC bitter (state %s)" % bitter136.mental_state)
+	assert(bitter136.bitterness_applied and float(bitter136.traits["temper"]) == 45.0 and float(bitter136.traits["honesty"]) == 40.0, "Bitterness permanently hardens the character")
+
+	# 4. Помешательство: стресс за пределом сил три дня
+	var mad136 = mk136.call("mad136", "Блаженный Тишило")
+	mad136.traits["empathy"] = 20.0
+	mad136.stress = 100.0
+	mad136.psyche_counters["overload_days"] = 2
+	mad136.spouse_id = ""
+	NPCPsyche.daily_update(s136, mad136)
+	assert(mad136.mental_state == "mad", "Unbearable stress for days drives the NPC mad (state %s)" % mad136.mental_state)
+	mad136.pos = lonely_pos136 + Vector2(60.0, 0.0)
+	assert(NPCIntentions.start_mad_episode(s136, mad136) and (mad136.custom_data.has("intent") or mad136.custom_data.has("duel")), "A mad NPC acts on his own")
+	mad136.custom_data.erase("intent")
+	mad136.custom_data.erase("duel")
+	mad136.pos = s136._get_hearth_pos()
+
+	# 5. Кража незамеченной: склад пустеет, вор сыт, пропажа в журнале
+	var thief136 = mk136.call("thief136", "Вороватый Хват")
+	thief136.traits["honesty"] = 10.0
+	thief136.pos = lonely_pos136
+	thief136.hunger = 30.0
+	s136.deposit_resource("food", 10.0)
+	var food136 = s136.economy.get_resource("food")
+	var it136 = {"kind": "steal", "from": "storage", "res": "food", "dest": thief136.pos, "stage": "go", "t0": GameManager.sim_time_total}
+	thief136.custom_data["intent"] = it136
+	var log136 = s136.deeds_log.size()
+	NPCIntentions.tick(s136, thief136, 0.1)
+	assert(s136.economy.get_resource("food") < food136 - 1.0, "The theft really takes food from the stores")
+	assert(s136.deeds_log.size() > log136 and s136.deeds_log[-1]["kind"] == "theft" and not s136.deeds_log[-1]["discovered"], "An unseen theft is logged as undiscovered")
+	for i136 in range(5):
+		NPCIntentions.tick(s136, thief136, 0.1)
+	assert(not thief136.custom_data.has("intent") and thief136.hunger > 60.0, "The homeless thief eats the stolen food")
+
+	# 6. Вор пойман стражником: добро вернули, тайник изъят, вор под стражей; узника кормят, потом отпускают
+	var thief2_136 = mk136.call("thief2_136", "Неудачливый Кроха")
+	var guard136 = mk136.call("guard136", "Стражник Держислав")
+	guard136.job_id = "guard"
+	guard136.loyalty = 90.0
+	thief2_136.custom_data["stash"] = {"leather": 2.0}
+	var leather136 = s136.economy.get_resource("leather")
+	var food2_136 = s136.economy.get_resource("food")
+	NPCIntentions._caught_thief(s136, thief2_136, guard136, {"from": "storage", "res": "food", "amount": 1.5}, "склад рода")
+	assert(is_equal_approx(s136.economy.get_resource("food"), food2_136 + 1.5), "Stolen food is returned to the stores")
+	assert(NPCIntentions.is_jailed(thief2_136) and s136.economy.get_resource("leather") >= leather136 + 2.0, "The guard jails the thief and confiscates his stash")
+	assert(thief2_136.has_memory("jailed") and guard136.has_memory("witnessed_crime"), "Both remember the arrest")
+	thief2_136.hunger = 20.0
+	NPCIntentions.tick(s136, thief2_136, 0.1)
+	assert(thief2_136.hunger == 100.0, "The prisoner is fed from the common stores")
+	s136.update_citizens(0.05)
+	assert(thief2_136.last_status_reason.begins_with("Под стражей"), "The settlement loop keeps the prisoner under guard")
+	var jt136: Array[String] = []
+	for t in NPCDialogue.get_topics(s136, thief2_136, ruler136):
+		jt136.append(t["id"])
+	assert(jt136.has("prisoner"), "The prisoner begs the King for mercy")
+	NPCDialogue.respond(s136, thief2_136, ruler136, "prisoner", "pardon")
+	NPCIntentions.tick(s136, thief2_136, 0.1)
+	assert(not NPCIntentions.is_jailed(thief2_136) and thief2_136.has_memory("gratitude"), "The King's pardon releases the prisoner")
+
+	# 7. Доброе дело: сострадательный утешает горюющего
+	var kind136 = mk136.call("kind136", "Добрая Млада")
+	kind136.traits["empathy"] = 90.0
+	kind136.pos = lonely_pos136 + Vector2(0.0, 32.0)
+	var sad136 = mk136.call("sad136", "Печальный Горазд")
+	sad136.mental_state = "despair"
+	sad136.stress = 70.0
+	sad136.pos = kind136.pos + Vector2(20.0, 0.0)
+	assert(NPCIntentions.start_good_deed(s136, kind136), "A compassionate NPC decides to help")
+	assert(kind136.custom_data["intent"]["target_id"] == sad136.citizen_id, "He helps the grieving neighbour")
+	for i136 in range(40):
+		if not kind136.custom_data.has("intent"):
+			break
+		NPCIntentions.tick(s136, kind136, 0.1)
+	assert(sad136.has_memory("comforted") and sad136.stress <= 58.0, "Comfort really lowers the neighbour's stress (%.1f)" % sad136.stress)
+	assert(s136.deeds_log[-1]["kind"] == "good_deed" and sad136.get_relationship_affinity(kind136.citizen_id) > 0.0, "The good deed is remembered and logged")
+
+	# 8. Кровная месть: убийство, родня клянётся мстить (кровная вражда)
+	var avenger136 = mk136.call("avenger136", "Мститель Ярополк")
+	avenger136.traits["bravery"] = 90.0
+	avenger136.pos = lonely_pos136 + Vector2(-32.0, -32.0)
+	var foe136 = mk136.call("foe136", "Обидчик Звяга")
+	foe136.traits["bravery"] = 10.0
+	foe136.traits["temper"] = 10.0
+	foe136.family_id = "fam_foe136"
+	foe136.health = 6.0
+	foe136.pos = avenger136.pos + Vector2(12.0, 0.0)
+	var foe_kin136 = mk136.call("foe_kin136", "Сын Обидчика Ратибор")
+	foe_kin136.family_id = "fam_foe136"
+	foe_kin136.traits["bravery"] = 85.0
+	foe_kin136.pos = lonely_pos136 + Vector2(1500.0, 0.0)
+	avenger136.add_memory("kin_murdered", foe136.citizen_id, "late_brother", 1.0, "Звяга убил брата", true)
+	assert(NPCPsyche.consider_revenge(s136, avenger136, foe136, "Кровь брата"), "A warlike NPC vows revenge")
+	assert(NPCIntentions.revenge_is_lethal(avenger136), "Revenge for a murdered kinsman is to the death")
+	NPCIntentions.start_duel(s136, avenger136, foe136, true, "Кровь брата")
+	for i136 in range(400):
+		if not foe136.is_alive:
+			break
+		foe136.pos = avenger136.pos + Vector2(12.0, 0.0)
+		NPCIntentions.tick(s136, avenger136, 0.25)
+	assert(not foe136.is_alive and foe136.death_cause.contains(avenger136.name), "The avenger kills the offender (%s)" % foe136.death_cause)
+	assert(avenger136.revenge_target_id == "" and avenger136.has_memory("vengeance_done"), "Revenge is fulfilled")
+	assert(foe_kin136.has_memory("kin_murdered") and foe_kin136.revenge_target_id == avenger136.citizen_id, "The victim's kin swear revenge in turn — a blood feud")
+	assert(s136.deeds_log[-1]["kind"] == "murder", "The murder is in the deeds log")
+
+	# 9. Драка при страже: верный стражник вмешивается и берёт зачинщика под стражу
+	var brawler136 = mk136.call("brawler136", "Задира Буян")
+	brawler136.pos = lonely_pos136 + Vector2(0.0, 64.0)
+	brawler136.health = 45.0
+	var target136 = mk136.call("target136", "Мирный Добрыня")
+	target136.traits["bravery"] = 10.0
+	target136.traits["temper"] = 10.0
+	target136.pos = brawler136.pos + Vector2(12.0, 0.0)
+	var g2_136 = mk136.call("g2_136", "Стражник Твердята")
+	g2_136.job_id = "guard"
+	g2_136.loyalty = 90.0
+	g2_136.pos = brawler136.pos + Vector2(0.0, 14.0)
+	NPCIntentions.start_duel(s136, brawler136, target136, false, "Драка")
+	assert(g2_136.custom_data.get("duel", {}).get("role", "") == "guard", "A loyal guard steps in for the law")
+	for i136 in range(600):
+		if NPCIntentions.is_jailed(brawler136):
+			break
+		target136.pos = brawler136.pos + Vector2(12.0, 0.0)
+		g2_136.pos = brawler136.pos + Vector2(0.0, 14.0)
+		NPCIntentions.tick(s136, brawler136, 0.25)
+		NPCIntentions.tick(s136, g2_136, 0.25)
+		NPCIntentions.tick(s136, target136, 0.25)
+	assert(NPCIntentions.is_jailed(brawler136) and brawler136.is_alive, "The guard subdues and jails the brawler alive")
+	assert(target136.is_alive and target136.has_memory("assaulted"), "The victim survives and remembers the assault")
+
+	# 10. Месть вождю и самооборона
+	var hater136 = mk136.call("hater136", "Мстительный Вышата")
+	hater136.traits["bravery"] = 85.0
+	hater136.loyalty = 60.0
+	assert(not NPCPsyche.consider_revenge(s136, hater136, ruler136, "тест"), "A loyal NPC does not raise a hand against the King")
+	hater136.loyalty = 20.0
+	assert(NPCPsyche.consider_revenge(s136, hater136, ruler136, "Вождь убил отца"), "A disloyal warlike NPC vows revenge on the King")
+	var vt136: Array[String] = []
+	for t in NPCDialogue.get_topics(s136, hater136, ruler136):
+		vt136.append(t["id"])
+	assert(vt136.has("vendetta"), "The avenger tells the King to his face")
+	hater136.custom_data["duel"] = {"target_id": ruler136.citizen_id, "role": "attacker", "lethal": true}
+	var hl136 = hater136.loyalty
+	var react136 = RulerDeeds.on_citizen_assaulted(s136, ruler136, hater136)
+	assert(react136["victim_fights"] and react136["defenders"].is_empty() and hater136.loyalty == hl136, "Striking back at an attacker is self-defense, not a crime")
+	hater136.custom_data.erase("duel")
+	s136.deposit_resource("food", 10.0)
+	var food3_136 = s136.economy.get_resource("food")
+	NPCDialogue.respond(s136, hater136, ruler136, "vendetta", "blood_food")
+	assert(hater136.revenge_target_id == "" and s136.economy.get_resource("food") < food3_136, "Blood price (vira) paid from the stores ends the vendetta")
+
+	# 11. Заговор: главарь вербует недовольных, слух раскрывает его, арест разваливает заговор
+	var econ_loyalty136 = s136.economy.loyalty
+	s136.economy.loyalty = 20.0
+	s136.coup_plot = {}
+	s136.coup_cooldown_day = -1
+	var saved_loyalty136 = {}
+	for c in s136.population.citizens:
+		saved_loyalty136[c.citizen_id] = c.loyalty
+		if c.is_alive and not c.is_ruler:
+			c.loyalty = 80.0
+	var plotter136 = mk136.call("plotter136", "Честолюбец Всеслав")
+	plotter136.traits["ambition"] = 95.0
+	plotter136.loyalty = 10.0
+	var malcontent136 = mk136.call("malcontent136", "Недовольный Рогволд")
+	malcontent136.loyalty = 15.0
+	malcontent136.modify_relationship(plotter136.citizen_id, 50.0)
+	var loyal136 = mk136.call("loyal136", "Верный Путята")
+	loyal136.loyalty = 90.0
+	loyal136.modify_relationship(malcontent136.citizen_id, 20.0)
+	for d136 in range(30):
+		CoupPlot.daily_tick(s136)
+		if s136.coup_plot.get("members", []).has(malcontent136.citizen_id):
+			break
+		if not s136.coup_plot.is_empty():
+			s136.coup_plot["days"] = 0 # вербовка случайна: держим заговор «молодым», пока не завербует
+	assert(CoupPlot.is_leader(s136, plotter136), "An ambitious malcontent forms a plot")
+	assert(CoupPlot.is_member(s136, malcontent136), "The plot recruits the discontented")
+	s136.coup_plot["revealed"] = false
+	s136.coup_plot["days"] = 2
+	var rt136: Array[String] = []
+	for t in NPCDialogue.get_topics(s136, loyal136, ruler136):
+		rt136.append(t["id"])
+	assert(rt136.has("plot_rumor"), "A loyal NPC whispers about the plot")
+	NPCDialogue.respond(s136, loyal136, ruler136, "plot_rumor", "listen")
+	assert(s136.coup_plot.get("revealed", false), "The rumor reveals the plot to the King")
+	var pt136: Array[String] = []
+	var plot_opts136: Array[String] = []
+	for t in NPCDialogue.get_topics(s136, plotter136, ruler136):
+		pt136.append(t["id"])
+		if t["id"] == "plot":
+			for o in t["options"]:
+				plot_opts136.append(o["id"])
+	assert(pt136.has("plot") and plot_opts136.has("arrest"), "The King can order the plotter's arrest when a loyal guard exists")
+	NPCDialogue.respond(s136, plotter136, ruler136, "plot", "arrest")
+	assert(NPCIntentions.is_jailed(plotter136), "The plot leader is taken into custody")
+	CoupPlot.daily_tick(s136)
+	assert(s136.coup_plot.is_empty(), "With the leader jailed the plot collapses")
+
+	# 12. Мятеж подавлен: главарь гибнет, заговорщики изранены, порядок подорван
+	var rebel_l136 = mk136.call("rebel_l136", "Мятежник Вадим")
+	rebel_l136.health = 10.0
+	var rebel_m136 = mk136.call("rebel_m136", "Мятежник Олег")
+	rebel_m136.health = 10.0
+	s136.coup_plot = {"leader_id": rebel_l136.citizen_id, "members": [rebel_l136.citizen_id, rebel_m136.citizen_id], "days": 5, "revealed": true, "informant_id": ""}
+	s136.economy.stability = 50.0
+	var stab136 = s136.economy.stability
+	CoupPlot.execute(s136, ruler136)
+	assert(not rebel_l136.is_alive and rebel_l136.death_cause.contains("мятеж"), "The failed coup's leader dies")
+	assert(rebel_m136.has_memory("coup_crushed") and s136.economy.stability < stab136 and s136.coup_plot.is_empty(), "The crushed rebellion scars the tribe")
+
+	# 13. Успешный переворот свергает вождя (конец партии)
+	var rebels136: Array = []
+	for i136 in range(6):
+		var r = mk136.call("rebel%d_136" % i136, "Бунтарь %d" % i136)
+		r.equipment["weapon"] = "work_axe"
+		rebels136.append(r.citizen_id)
+	for c in s136.population.citizens:
+		if c.is_alive and not c.is_ruler and not rebels136.has(c.citizen_id):
+			c.loyalty = 0.0
+	var regent136 = s136.council.regent_id if s136.council else ""
+	if s136.council:
+		s136.council.regent_id = ""
+	var ruler_hp136 = ruler136.health
+	ruler136.health = 1.0
+	s136.coup_plot = {"leader_id": rebels136[0], "members": rebels136, "days": 5, "revealed": true, "informant_id": ""}
+	CoupPlot.execute(s136, ruler136)
+	assert(GameManager.is_game_over and GameManager.game_over_reason.begins_with("Переворот"), "A strong plot overthrows the King")
+	GameManager.is_game_over = false
+	GameManager.is_paused = false
+	ruler136.health = ruler_hp136
+	for c in s136.population.citizens:
+		if saved_loyalty136.has(c.citizen_id):
+			c.loyalty = saved_loyalty136[c.citizen_id]
+	s136.economy.loyalty = econ_loyalty136
+	if s136.council:
+		s136.council.regent_id = regent136
+
+	# 14. Уныние в общем цикле поселения и сохранение души
+	var sitter136 = mk136.call("sitter136", "Тоскующий Будислав")
+	sitter136.pos = lonely_pos136 + Vector2(40.0, -40.0)
+	sitter136.custom_data["intent"] = {"kind": "despair", "stage": "go", "dest": sitter136.pos, "t0": GameManager.sim_time_total}
+	s136.update_citizens(0.05)
+	s136.update_citizens(0.05)
+	assert(sitter136.state == CitizenNPC.State.MOURNING, "The settlement loop runs the despair intention")
+	sitter136.mental_state = "bitter"
+	sitter136.stress = 77.0
+	sitter136.revenge_target_id = "someone"
+	sitter136.custom_data["jailed_until"] = GameManager.sim_time_total + 100.0
+	var copy136 = CitizenNPC.new()
+	copy136.deserialize(sitter136.serialize())
+	assert(copy136.mental_state == "bitter" and is_equal_approx(copy136.stress, 77.0) and copy136.revenge_target_id == "someone" and NPCIntentions.is_jailed(copy136), "Psyche, vendetta and custody survive save/load")
+	var sd136 = s136.serialize()
+	assert(sd136.has("deeds_log") and sd136["deeds_log"].size() > 0, "The deeds log is saved")
+	print("OK 136. NPC psyche (despair/bitter/mad), theft & custody, good deeds, blood feud, guards, revenge on the King, coup plot & rebellion.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")
