@@ -329,6 +329,12 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 			formatted_choices.append(ch)
 		instance["choices"] = formatted_choices
 
+	# Поручено ли это событие Правой руке вождя (решит сам, без ожидания)
+	var council_s = _get_council_settlement()
+	var delegated = council_s != null and council_s.council.is_delegated(council_s, instance)
+	if delegated:
+		instance["delegated_to"] = council_s.council.get_regent(council_s).name
+
 	active_event = instance.duplicate(true)
 	event_instances[instance_id] = instance
 	if not triggered_events.has(template_id):
@@ -345,7 +351,62 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 	event_triggered.emit(active_event)
 	if EventBus:
 		EventBus.civilization_event_triggered.emit(active_event)
+	if delegated:
+		resolve_by_council(instance_id)
 	return instance_id
+
+# --- СОВЕТ СТАРЕЙШИН: решения Правой руки ---
+
+# События решает вождь игрока, поэтому совет берётся из поселения игрока
+func _get_council_settlement() -> SettlementData:
+	var s = GameManager.get_player_settlement() if GameManager else null
+	if s == null:
+		s = settlement
+	if s is SettlementData and s.council != null:
+		return s
+	return null
+
+# Правая рука решает ожидающее событие сам. Возвращает true, если решение принято.
+func resolve_by_council(instance_id: String) -> bool:
+	var s = _get_council_settlement()
+	var ev: Dictionary = event_instances.get(instance_id, {})
+	if s == null or ev.is_empty() or ev.get("status", "") != "pending":
+		return false
+	var council: ElderCouncil = s.council
+	var regent = council.get_regent(s)
+	if regent == null or not council.is_delegated(s, ev):
+		return false
+	var d = council.decide(s, ev)
+	if d.is_empty() or d.get("choice_id", "") == "":
+		return false
+	ev["decided_by"] = regent.name
+	ev["decided_by_id"] = regent.citizen_id
+	ev["decision_reason"] = d["reason"]
+	event_instances[instance_id] = ev
+	apply_choice(instance_id, d["choice_id"])
+	var social = council.apply_social_effects(s, regent, d["choice"])
+	council.add_journal_entry({
+		"instance_id": instance_id,
+		"title": ev.get("title", "Событие"),
+		"sphere": ElderCouncil.get_event_sphere(ev),
+		"choice_title": d["choice_title"],
+		"reason": d["reason"],
+		"regent_name": regent.name,
+		"year": GameManager.current_year,
+		"day": GameManager.total_simulation_days,
+		"approve": social["approve"],
+		"oppose": social["oppose"]
+	})
+	regent.shout("Я решил: %s" % d["choice_title"], 3.5)
+	return true
+
+# Решить все уже ожидающие события в поручённых сферах (после выдачи полномочий)
+func resolve_pending_by_council() -> int:
+	var count = 0
+	for inst_id in event_instances.keys():
+		if event_instances[inst_id].get("status", "") == "pending" and resolve_by_council(inst_id):
+			count += 1
+	return count
 
 func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary = {}) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})
@@ -421,10 +482,14 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 		return
 
 	# 6. Запись в глобальную историю игры
-	GameManager.add_history_entry(cur_year, title, "Народ постановил: «%s»" % choice_title, category)
-	
-	# 7. Всплывающее уведомление
-	EventBus.notification_toast.emit("🏛 Выбор народа: %s" % title, "Принято решение: %s" % choice_title, "good")
+	var decided_by: String = ev.get("decided_by", "")
+	if decided_by != "":
+		GameManager.add_history_entry(cur_year, title, "Правая рука вождя %s постановил(а): «%s» (%s)" % [decided_by, choice_title, ev.get("decision_reason", "")], category)
+		EventBus.notification_toast.emit("🏛 Решил старейшина %s: %s" % [decided_by, title], "«%s» — %s" % [choice_title, ev.get("decision_reason", "")], "info")
+	else:
+		GameManager.add_history_entry(cur_year, title, "Народ постановил: «%s»" % choice_title, category)
+		# 7. Всплывающее уведомление
+		EventBus.notification_toast.emit("🏛 Выбор народа: %s" % title, "Принято решение: %s" % choice_title, "good")
 	
 	ev["status"] = "resolved"
 	ev["resolved_day"] = GameManager.total_simulation_days

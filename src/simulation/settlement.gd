@@ -89,6 +89,8 @@ var deceased_registry: Array[Dictionary] = []
 # Система живых NPC и социальных связей (ТЗ NPC_ALIVE_SYSTEM_TZ.md)
 var event_reactor: NPCEventReactor = null
 var relationship_graph: NPCRelationshipGraph = null
+# Совет старейшин и Правая рука вождя (поручение решений событий)
+var council: ElderCouncil = null
 var citizens: Array:
 	get: return population.citizens if population else []
 
@@ -284,6 +286,7 @@ func _init(p_id: String = "", p_name: String = "", p_faction: String = "", p_pos
 	
 	event_reactor = NPCEventReactor.new(self)
 	relationship_graph = NPCRelationshipGraph.new(id)
+	council = ElderCouncil.new(id)
 	
 	if not EventBus.order_harvest_resource.is_connected(_on_order_harvest_resource):
 		EventBus.order_harvest_resource.connect(_on_order_harvest_resource)
@@ -1603,6 +1606,8 @@ func sim_daily_tick(season: String) -> void:
 	var spoilage_factor = get_granary_spoilage_factor()
 	var _econ_result = economy.sim_daily_tick(population.get_total_population(), prod, spoilage_factor)
 	_update_social_fabric()
+	if council:
+		council.daily_check(self)
 	
 	if faction_id == GameManager.player_faction_id:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
@@ -5420,6 +5425,7 @@ func serialize() -> Dictionary:
 		"cemetery_plots": cemetery_plots.map(func(c): return [c.x, c.y]),
 		"deceased_registry": deceased_registry.duplicate(true),
 		"construction_queue": queue_serialized,
+		"council": council.serialize() if council else {},
 		"population": population.serialize() if population else {}
 	}
 
@@ -5440,6 +5446,10 @@ func deserialize(data: Dictionary) -> void:
 				food_batches.append(b)
 	_next_batch_id = data.get("next_batch_id", 1)
 	marriage_law = data.get("marriage_law", "monogamy")
+	if council == null:
+		council = ElderCouncil.new(id)
+	council.settlement_id = id
+	council.deserialize(data.get("council", {}))
 	reserved_zones.clear()
 	for zone in data.get("reserved_zones", []):
 		if zone is Dictionary:

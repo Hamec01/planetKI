@@ -4440,20 +4440,22 @@ func _ready() -> void:
 	far_walker.job_id = "idle"
 	var hearth_world = s_118._get_hearth_pos()
 	# Ищем проходимую клетку с путём к очагу заметно дальше радиуса «поесть у очага» (22px)
+	# (сначала — с путём до очага; если очаг недостижим из округи, достаточно просто дальней клетки)
 	var far_tile = Vector2i(-1, -1)
-	for ring_r in range(2, 8):
-		for ring_dy in range(-ring_r, ring_r + 1):
-			for ring_dx in range(-ring_r, ring_r + 1):
-				if far_tile != Vector2i(-1, -1) or (abs(ring_dx) != ring_r and abs(ring_dy) != ring_r):
-					continue
-				var cand_t = base_tile + Vector2i(ring_dx, ring_dy)
-				if not GameManager.nav_grid.is_tile_walkable(cand_t):
-					continue
-				var cand_world = GameManager.nav_grid.tile_to_world_center(cand_t)
-				if cand_world.distance_to(hearth_world) < 60.0:
-					continue
-				if not GameManager.nav_grid.find_path(cand_world, hearth_world).is_empty():
-					far_tile = cand_t
+	for need_path in [true, false]:
+		for ring_r in range(2, 8):
+			for ring_dy in range(-ring_r, ring_r + 1):
+				for ring_dx in range(-ring_r, ring_r + 1):
+					if far_tile != Vector2i(-1, -1) or (abs(ring_dx) != ring_r and abs(ring_dy) != ring_r):
+						continue
+					var cand_t = base_tile + Vector2i(ring_dx, ring_dy)
+					if not GameManager.nav_grid.is_tile_walkable(cand_t):
+						continue
+					var cand_world = GameManager.nav_grid.tile_to_world_center(cand_t)
+					if cand_world.distance_to(hearth_world) < 60.0:
+						continue
+					if not need_path or not GameManager.nav_grid.find_path(cand_world, hearth_world).is_empty():
+						far_tile = cand_t
 	assert(far_tile != Vector2i(-1, -1), "Test setup: a reachable tile away from the hearth exists")
 	far_walker.pos = GameManager.nav_grid.tile_to_world_center(far_tile)
 	far_walker.hunger = 35.0
@@ -5290,6 +5292,85 @@ func _ready() -> void:
 	s126.update_citizens(0.1)
 	assert(cold130.warm_clothes == 100.0 and s126.economy.get_resource("clothes") == 1.0, "New clothes are taken from the warehouse stock")
 	print("OK 130. Winter cold drains unclothed citizens outdoors; worn clothes are replaced from the warehouse.")
+
+	# --------------------------------------------------------------------------
+	# TEST 131: СОВЕТ СТАРЕЙШИН — ПРАВАЯ РУКА ВОЖДЯ РЕШАЕТ ПОРУЧЕННЫЕ СОБЫТИЯ
+	# --------------------------------------------------------------------------
+	var s131: SettlementData = GameManager.get_player_settlement()
+	assert(s131 != null and s131.council != null, "Player settlement has an elder council")
+	var council131: ElderCouncil = s131.council
+	assert(ElderCouncil.get_event_sphere({"category": "Забота о сиротах"}) == "family", "Orphan events belong to the family sphere")
+	assert(ElderCouncil.get_event_sphere({"category": "Лесозаготовка и земля"}) == "economy", "Logging events belong to the economy sphere")
+	assert(ElderCouncil.get_event_sphere({"category": "Опасные хищники"}) == "danger", "Predator events belong to the danger sphere")
+	var sage131 = CitizenNPC.new("sage131", "Добромир Мудрый", "m", 38, "adult")
+	sage131.settlement_id = s131.id
+	sage131.traits["empathy"] = 90.0
+	sage131.traits["tradition"] = 50.0
+	sage131.traits["ambition"] = 30.0
+	sage131.loyalty = 80.0
+	s131.population.citizens.append(sage131)
+	var sulky131 = CitizenNPC.new("sulky131", "Хмурый Ждан", "m", 40, "adult")
+	sulky131.settlement_id = s131.id
+	sulky131.loyalty = 15.0
+	s131.population.citizens.append(sulky131)
+	assert(not council131.is_member(s131, sage131.citizen_id), "An adult is not a council member until appointed")
+	assert(council131.appoint_regent(s131, sage131.citizen_id)["ok"] == false, "Only a council member can become the right hand")
+	assert(council131.appoint_member(s131, sage131.citizen_id)["ok"], "Ruler appoints a respected adult to the council")
+	assert(council131.is_member(s131, sage131.citizen_id), "Appointed adult is a council member")
+	assert(council131.appoint_member(s131, sulky131.citizen_id)["ok"], "Disloyal adult can still sit in the council")
+	assert(council131.appoint_regent(s131, sulky131.citizen_id)["ok"] == false, "Disloyal elder refuses to be the right hand")
+	assert(council131.appoint_regent(s131, sage131.citizen_id)["ok"], "Loyal council member becomes the right hand")
+	assert(council131.get_regent(s131) == sage131, "Right hand is recorded")
+
+	var orphan_ev = {
+		"id": "TEST-COUNCIL-131", "title": "Сирота у костра", "category": "Забота о сиротах",
+		"description": "Тестовое событие совета.", "once": false, "priority": 1, "conditions": {},
+		"choices": [
+			{"id": "A", "title": "Изгнать сироту из рода", "desc": "Выгнать силой, род не кормит чужих.", "effects_desc": ""},
+			{"id": "B", "title": "Накормить и защитить сироту", "desc": "Забота всего рода о слабых детях.", "effects_desc": ""}
+		]
+	}
+	var cem = GameManager.civilization_event_manager
+	cem.active_event.clear()
+	var pending_id = cem.trigger_event(orphan_ev)
+	assert(cem.event_instances[pending_id]["status"] == "pending", "Without delegation the event waits for the ruler")
+	cem.active_event.clear()
+	council131.set_sphere_delegated(s131, "family", true)
+	assert(cem.resolve_pending_by_council() >= 1, "Granting power lets the right hand settle waiting events")
+	assert(cem.event_instances[pending_id]["status"] == "resolved", "Waiting family event resolved by the right hand")
+	assert(cem.event_instances[pending_id]["chosen_choice_id"] == "B", "Merciful right hand protects the orphan")
+	assert(cem.event_instances[pending_id]["decided_by"] == sage131.name, "Decision is attributed to the right hand")
+	cem.active_event.clear()
+	var auto_id = cem.trigger_event(orphan_ev)
+	assert(cem.event_instances[auto_id]["status"] == "resolved", "New delegated event is decided immediately, no ruler prompt")
+	assert(council131.journal.size() >= 2 and council131.journal[0]["choice_title"] == "Накормить и защитить сироту", "Council journal records the decision")
+	var eco_ev = orphan_ev.duplicate(true)
+	eco_ev["category"] = "Лесозаготовка и земля"
+	cem.active_event.clear()
+	var eco_id = cem.trigger_event(eco_ev)
+	assert(cem.event_instances[eco_id]["status"] == "pending", "Non-delegated sphere still goes to the ruler")
+	cem.active_event.clear()
+
+	var council_save = council131.serialize()
+	var council_loaded = ElderCouncil.new(s131.id)
+	council_loaded.deserialize(council_save)
+	assert(council_loaded.regent_id == sage131.citizen_id and council_loaded.delegated_spheres.has("family") and council_loaded.appointed_ids.has(sage131.citizen_id), "Council survives save/load")
+	assert(council_loaded.journal.size() == council131.journal.size(), "Council journal survives save/load")
+
+	# Окно совета строится и показывает Правую руку, членов и журнал
+	var council_modal = ElderCouncilModal.new()
+	add_child(council_modal)
+	council_modal.open()
+	assert(council_modal.regent_lbl.text.contains(sage131.name), "Council window shows the right hand")
+	assert(council_modal.sphere_checks["family"].button_pressed, "Council window shows delegated spheres")
+	assert(council_modal.members_box.get_child_count() >= 2 and council_modal.journal_box.get_child_count() >= 2, "Council window lists members and journal")
+	council_modal.queue_free()
+
+	s131._process_citizen_death(sage131)
+	council131.daily_check(s131)
+	assert(council131.get_regent(s131) == null and council131.delegated_spheres.is_empty(), "Right hand's death returns all decisions to the ruler")
+	council131.dismiss_member(s131, sulky131.citizen_id)
+	print("OK 131. Elder council: appoint members, choose the right hand, delegate spheres, character-driven decisions, journal, save/load, revocation.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

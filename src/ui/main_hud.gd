@@ -118,6 +118,8 @@ var building_detail_panel: Control = null
 var civilization_event_modal: Control = null
 var event_registry_panel: Control = null
 var traditions_modal: Control = null
+var elder_council_modal: ElderCouncilModal = null
+var badge_council_btn: Button = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
 var game_over_modal: Control = null
@@ -158,6 +160,14 @@ func _setup_top_left_notification_badges() -> void:
 	notification_badges_container.add_child(badge_decisions_btn)
 	notification_badges_container.add_child(badge_incidents_btn)
 	notification_badges_container.add_child(badge_chronicle_btn)
+	badge_council_btn = _create_badge_button("🏛 Совет", "Совет старейшин: Правая рука вождя и поручение решений", func():
+		if elder_council_modal == null:
+			elder_council_modal = ElderCouncilModal.new()
+			elder_council_modal.name = "ElderCouncilModal"
+			add_child(elder_council_modal)
+		elder_council_modal.toggle()
+	)
+	notification_badges_container.add_child(badge_council_btn)
 
 func _create_badge_button(default_text: String, tip: String, on_click: Callable) -> Button:
 	var btn = Button.new()
@@ -742,9 +752,21 @@ func _update_event_badges() -> void:
 		badge_incidents_btn.modulate = Color(1.4, 0.4, 0.4) if pending_incidents > 0 else Color(0.8, 0.8, 0.8, 0.7)
 	if badge_chronicle_btn:
 		badge_chronicle_btn.text = "📖 Летопись (%d)" % total_chronicle
+	if badge_council_btn:
+		var pl_s = GameManager.get_player_settlement()
+		var regent = pl_s.council.get_regent(pl_s) if pl_s is SettlementData and pl_s.council else null
+		if regent:
+			var n_spheres = pl_s.council.delegated_spheres.size()
+			badge_council_btn.text = "🏛 Совет: %s%s" % [regent.name, (" ✓%d" % n_spheres) if n_spheres > 0 else ""]
+			badge_council_btn.tooltip_text = "Правая рука: %s. Поручено сфер: %d из %d" % [regent.name, n_spheres, ElderCouncil.SPHERES.size()]
+		else:
+			badge_council_btn.text = "🏛 Совет"
 
 func _on_civilization_event_arrived(ev: Dictionary) -> void:
 	_update_event_badges()
+	# Поручено Правой руке — он решит сам, вождя не тревожим
+	if ev.get("delegated_to", "") != "":
+		return
 	var is_incident = (ev.get("type", "") in ["incident", "threat"]) \
 		or (ev.get("category", "") in ["Происшествия", "Угрозы", "Опасности", "Опасные хищники", "Поиски и спасение", "Война", "Нападение"]) \
 		or ev.get("is_threat", false) \
