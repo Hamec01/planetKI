@@ -14,19 +14,19 @@ const RESOURCE_NATURE_CONFIG = {
 	"mushrooms_brown": {"type": "mushrooms", "category": "food", "amount": 10.0, "depleted_sprite": "none", "name": "Грибная поляна (боровики)"},
 	"mushrooms_flyagaric": {"type": "mushrooms", "category": "food", "amount": 6.0, "depleted_sprite": "none", "name": "Грибное место"},
 
-	# ДРЕВЕСИНА (Деревья) -> 1 дерево = 100 дров, при срубе исчезает с карты (nature_object = none)
-	"tree_oak": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Могучий дуб"},
-	"tree_birch": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Берёза"},
-	"tree_pine": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Сосна"},
-	"tree_spruce": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Ель"},
-	"tree_maple_green": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Клён"},
-	"tree_poplar": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Тополь"},
-	"tree_willow": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Ива"},
-	"tree_autumn_red": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Красное дерево"},
-	"tree_birch_yellow": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Золотая берёза"},
-	"tree_spruce_blue": {"type": "wood", "category": "wood", "amount": 100.0, "depleted_sprite": "none", "name": "Голубая ель"},
-	"tree_spruce_young": {"type": "wood", "category": "wood", "amount": 35.0, "depleted_sprite": "none", "name": "Молодая ёлочка"},
-	"tree_young": {"type": "wood", "category": "wood", "amount": 30.0, "depleted_sprite": "none", "name": "Молодое деревце"},
+	# ДРЕВЕСИНА (Деревья) -> 1 взрослое дерево = 18-20 дров, молодое = 8 дров. При срубе исчезает с карты (nature_object = none)
+	"tree_oak": {"type": "wood", "category": "wood", "amount": 20.0, "depleted_sprite": "none", "name": "Могучий дуб"},
+	"tree_birch": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Берёза"},
+	"tree_pine": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Сосна"},
+	"tree_spruce": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Ель"},
+	"tree_maple_green": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Клён"},
+	"tree_poplar": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Тополь"},
+	"tree_willow": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Ива"},
+	"tree_autumn_red": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Красное дерево"},
+	"tree_birch_yellow": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Золотая берёза"},
+	"tree_spruce_blue": {"type": "wood", "category": "wood", "amount": 18.0, "depleted_sprite": "none", "name": "Голубая ель"},
+	"tree_spruce_young": {"type": "wood", "category": "wood", "amount": 8.0, "depleted_sprite": "none", "name": "Молодая ёлочка"},
+	"tree_young": {"type": "wood", "category": "wood", "amount": 8.0, "depleted_sprite": "none", "name": "Молодое деревце"},
 
 	# КАМЕНЬ (Валуны и скалы) -> при выработке превращаются в мелкие камни (rock_small_pebbles)
 	"rock_round_boulder": {"type": "stone", "category": "stone", "amount": 25.0, "depleted_sprite": "rock_small_pebbles", "name": "Округлый валун"},
@@ -81,6 +81,10 @@ func initialize_from_tiles(tiles_data: Array, width: int, height: int) -> void:
 				if not spatial_grid.has(chunk_k):
 					spatial_grid[chunk_k] = []
 				spatial_grid[chunk_k].append(coord)
+				
+				# Регистрация непроходимых природных объектов (деревья, валуны, руда) в навигационной сетке
+				if GameManager and GameManager.nav_grid and cfg["category"] in ["wood", "stone", "metal"]:
+					GameManager.nav_grid.register_resource(coord, cfg["category"])
 	_add_fishing_spots(tiles_data, width, height)
 	is_initialized = true
 
@@ -148,15 +152,19 @@ func find_available_node(center_coord: Vector2i, category: String, max_radius: i
 					
 				var dist = float(abs(coord.x - center_coord.x) + abs(coord.y - center_coord.y))
 				if dist <= float(max_radius) and dist < best_dist:
-					if GameManager.nav_grid.is_tile_walkable(coord):
-						best_dist = dist
-						best_node = node
+					if GameManager and GameManager.nav_grid:
+						if not GameManager.nav_grid.is_valid_coord(coord) or GameManager.nav_grid.water_tiles.has(coord):
+							continue
+					best_dist = dist
+					best_node = node
 			for sc in stale_coords:
 				spatial_grid[chunk_k].erase(sc)
 				
 	return best_node
 
 func remove_node(coord: Vector2i) -> void:
+	if GameManager and GameManager.nav_grid:
+		GameManager.nav_grid.unregister_resource(coord)
 	if nodes.has(coord):
 		nodes.erase(coord)
 	var chunk_k = Vector2i(int(floor(float(coord.x) / float(CHUNK_SIZE))), int(floor(float(coord.y) / float(CHUNK_SIZE))))
@@ -193,6 +201,8 @@ func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 	if node["amount"] <= 0.0:
 		node["depleted"] = true
 		node["reserved_by"] = ""
+		if GameManager and GameManager.nav_grid and node.get("category", "") in ["wood", "stone", "metal"]:
+			GameManager.nav_grid.unregister_resource(coord)
 		var dep_spr = node.get("depleted_sprite", "none")
 		if node["category"] == "wood":
 			if dep_spr == "stump_fresh":
@@ -303,6 +313,8 @@ func update_regrowth(delta: float) -> void:
 			n["amount"] = 100.0
 			n["max_amount"] = 100.0
 			n["depleted"] = false
+		if GameManager and GameManager.nav_grid:
+			GameManager.nav_grid.register_resource(coord, "wood")
 			
 	# 2. Восстановление природных кустов ягод и грибов
 	for coord in nodes:
@@ -336,6 +348,8 @@ func update_regrowth(delta: float) -> void:
 				var orig_sp = node.get("original_sprite", "tree_pine")
 				if coord.y < tiles.size() and coord.x < tiles[0].size():
 					tiles[coord.y][coord.x]["nature_object"] = orig_sp
+				if GameManager and GameManager.nav_grid:
+					GameManager.nav_grid.register_resource(coord, "wood")
 	for sc in cleared_stumps:
 		remove_node(sc)
 

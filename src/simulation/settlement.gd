@@ -26,6 +26,9 @@ var assigned_jobs: Dictionary = {
 	"quarryman": 0,
 	"miner": 0,
 	"farmer": 0,
+	"seed_keeper": 0,
+	"miller": 0,
+	"baker": 0,
 	"craftsman": 0,
 	"sage": 0,
 	"priest": 0,
@@ -34,6 +37,40 @@ var assigned_jobs: Dictionary = {
 	"warrior": 0
 }
 
+# Скрытые направления аграрных знаний (ТЗ Foraging & Agriculture)
+var knowledge: Dictionary = {
+	"plant_knowledge": 5.0,
+	"rain_knowledge": 0.0,
+	"seed_knowledge": 0.0,
+	"soil_knowledge": 0.0,
+	"storage_knowledge": 0.0,
+	"grain_knowledge": 0.0,
+	"cultivation_knowledge": 0.0,
+	"food_processing_knowledge": 0.0,
+	"water_management_knowledge": 0.0
+}
+
+func add_knowledge(key: String, amount: float) -> void:
+	knowledge[key] = maxf(0.0, float(knowledge.get(key, 0.0)) + amount)
+	if economy:
+		economy.add_resource("knowledge", amount * 0.25)
+
+func get_knowledge_level(key: String) -> float:
+	return float(knowledge.get(key, 0.0))
+
+func get_knowledge_stage_name(key: String) -> String:
+	var val = get_knowledge_level(key)
+	if val < 10.0:
+		return "Неизвестно"
+	elif val < 30.0:
+		return "Наблюдается"
+	elif val < 65.0:
+		return "Изучается"
+	elif val < 120.0:
+		return "Практикуется"
+	else:
+		return "Освоено"
+
 var priority_harvest_coords: Array[Vector2i] = []
 var food_batches: Array[Dictionary] = []
 var _next_batch_id: int = 1
@@ -41,6 +78,21 @@ var marriage_law: String = "monogamy" # "monogamy", "polygamy", "free_union"
 var reserved_zones: Array[Dictionary] = []
 var active_relocations: Dictionary = {}
 var equipment_stockpile: Dictionary = {}
+
+
+# Родовой могильник / Кладбище предков (максимум 4 клетки)
+const MAX_CEMETERY_PLOTS: int = 4
+var cemetery_plots: Array[Vector2i] = []
+var deceased_registry: Array[Dictionary] = []
+
+# Система живых NPC и социальных связей (ТЗ NPC_ALIVE_SYSTEM_TZ.md)
+var event_reactor: NPCEventReactor = null
+var relationship_graph: NPCRelationshipGraph = null
+var citizens: Array:
+	get: return population.citizens if population else []
+
+func get_deceased_registry() -> Array[Dictionary]:
+	return deceased_registry
 
 func can_manage_reserved_zones() -> bool:
 	var faction = GameManager.factions.get(faction_id, null) if GameManager else null
@@ -198,8 +250,8 @@ func _dispatch_priority_worker(target_coord: Vector2i, category: String) -> void
 	for c in population.citizens:
 		if c.job_id == target_job and c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
 			var node = GameManager.resource_manager.nodes.get(target_coord, {}) if GameManager.resource_manager else {}
-			var t_pos = node.get("pos", GameManager.nav_grid.tile_to_world_center(target_coord)) if GameManager.nav_grid else Vector2.ZERO
-			var p = GameManager.nav_grid.find_path(c.pos, t_pos) if GameManager.nav_grid else []
+			var p = GameManager.nav_grid.find_adjacent_path(c.pos, target_coord) if (GameManager and GameManager.nav_grid) else []
+			var t_pos = p[-1] if not p.is_empty() else (node.get("pos", GameManager.nav_grid.tile_to_world_center(target_coord)) if (GameManager and GameManager.nav_grid) else Vector2.ZERO)
 			if GameManager.resource_manager:
 				GameManager.resource_manager.reserve_node(target_coord, c.citizen_id)
 			c.task_id = "chop_tree" if category == "wood" else "gather"
@@ -229,6 +281,9 @@ func _init(p_id: String = "", p_name: String = "", p_faction: String = "", p_pos
 	
 	# Ровно 1 стартовое здание
 	buildings = ["elders_house"]
+	
+	event_reactor = NPCEventReactor.new(self)
+	relationship_graph = NPCRelationshipGraph.new(id)
 	
 	if not EventBus.order_harvest_resource.is_connected(_on_order_harvest_resource):
 		EventBus.order_harvest_resource.connect(_on_order_harvest_resource)
@@ -268,6 +323,28 @@ func get_active_woodcutter_camp() -> BuildingInstance:
 	if GameManager and GameManager.building_instances:
 		for b in GameManager.building_instances.values():
 			if b and b.settlement_id == id and b.type == "woodcutter_camp":
+				return b
+	return null
+
+func get_citizen_home_instance(c: CitizenNPC) -> BuildingInstance:
+	if not c or not GameManager or not GameManager.building_instances:
+		return null
+	if c.home_coord != Vector2i(-1, -1) and GameManager.building_instances.has(c.home_coord):
+		return GameManager.building_instances[c.home_coord]
+	if c.home_id != "":
+		for b in GameManager.building_instances.values():
+			if b and (b.id == c.home_id or b.instance_id == c.home_id):
+				return b
+	return null
+
+func get_citizen_workplace_instance(c: CitizenNPC) -> BuildingInstance:
+	if not c or not GameManager or not GameManager.building_instances:
+		return null
+	if c.workplace_coord != Vector2i(-1, -1) and GameManager.building_instances.has(c.workplace_coord):
+		return GameManager.building_instances[c.workplace_coord]
+	if c.workplace_id != "":
+		for b in GameManager.building_instances.values():
+			if b and (b.id == c.workplace_id or b.instance_id == c.workplace_id):
 				return b
 	return null
 
@@ -311,37 +388,55 @@ func assign_worker(job_id: String, delta: int) -> bool:
 		
 	if delta > 0:
 		var remaining = delta
-		for c in get_idle_citizens():
-			c.set_job(job_id)
+		var idle_list = get_idle_citizens()
+		idle_list.sort_custom(func(a: CitizenNPC, b: CitizenNPC) -> bool:
+			var a_pref = (a.get_preferred_job() == job_id)
+			var b_pref = (b.get_preferred_job() == job_id)
+			if a_pref != b_pref:
+				return a_pref
+			return float(a.experience.get(job_id, 0.0)) > float(b.experience.get(job_id, 0.0))
+		)
+		for c in idle_list:
+			c.set_job_by_player(job_id)
 			remaining -= 1
 			if remaining <= 0:
 				break
 	elif delta < 0:
 		var remaining = -delta
+		var job_holders: Array[CitizenNPC] = []
 		for c in population.citizens:
 			if c.job_id == job_id:
-				if c.workplace_id != "" and GameManager and GameManager.building_instances:
-					for b_inst in GameManager.building_instances.values():
-						if b_inst and "id" in b_inst and b_inst.id == c.workplace_id:
-							b_inst.remove_worker(c.citizen_id)
-				c.set_job("idle")
-				c.workplace_id = ""
-				c.workplace_coord = Vector2i(-1, -1)
-				remaining -= 1
-				if remaining <= 0:
-					break
+				job_holders.append(c)
+		job_holders.sort_custom(func(a: CitizenNPC, b: CitizenNPC) -> bool:
+			var a_dislike = (a.get_preferred_job() != job_id)
+			var b_dislike = (b.get_preferred_job() != job_id)
+			if a_dislike != b_dislike:
+				return a_dislike
+			return float(a.experience.get(job_id, 0.0)) < float(b.experience.get(job_id, 0.0))
+		)
+		for c in job_holders:
+			if c.workplace_id != "" and GameManager and GameManager.building_instances:
+				for b_inst in GameManager.building_instances.values():
+					if b_inst and "id" in b_inst and b_inst.id == c.workplace_id:
+						b_inst.remove_worker(c.citizen_id)
+			c.set_job_by_player("idle")
+			c.workplace_id = ""
+			c.workplace_coord = Vector2i(-1, -1)
+			remaining -= 1
+			if remaining <= 0:
+				break
 	sync_assigned_jobs_from_citizens()
 	return true
 
 func init_citizens_on_map() -> void:
 	var starter_inst = GameManager.get_or_create_building_instance(pos, "elders_house", id)
-	var center_pixel = Vector2(pos.x * 32.0 + 16.0, pos.y * 32.0 + 16.0)
+	var center_pixel = Vector2(pos.x * 32.0 + 16.0, pos.y * 32.0 + 33.0)
 	for c in population.citizens:
 		c.settlement_id = id
 		c.home_id = starter_inst.instance_id
 		c.home_coord = pos
 		c.home_pos = center_pixel
-		c.pos = center_pixel + Vector2(randf_range(-14.0, 14.0), randf_range(-14.0, 14.0))
+		c.pos = center_pixel + Vector2(randf_range(-6.0, 6.0), randf_range(0.0, 4.0))
 		if c.job_id == "elder":
 			c.workplace_id = starter_inst.instance_id
 			c.workplace_coord = pos
@@ -475,6 +570,9 @@ func auto_assign_workplaces() -> void:
 			if not has_inst and GameManager:
 				var inst_id = b_type + "_" + id + "_" + str(pos.x) + "_" + str(pos.y)
 				var created_inst = BuildingInstance.new(inst_id, b_type, id, pos)
+				if GameManager.tile_buildings.has(pos):
+					var offset_arr = GameManager.tile_buildings[pos].get("visual_offset", [0.0, 0.0])
+					created_inst.visual_offset = Vector2(offset_arr[0], offset_arr[1])
 				GameManager.building_instances[inst_id] = created_inst
 				var b_def = BuildingDB.get_building(b_type)
 				var max_w = int(b_def.get("max_workers", 0))
@@ -632,7 +730,7 @@ func assign_citizen_to_home(c: CitizenNPC, b_inst: BuildingInstance, as_guest: b
 		success = b_inst.add_guest(c.citizen_id)
 		as_guest = true
 	if success:
-		var home_world_pos = GameManager.nav_grid.tile_to_world_center(b_inst.pos) if GameManager.nav_grid else Vector2(b_inst.pos.x * 32.0 + 16, b_inst.pos.y * 32.0 + 16)
+		var home_world_pos = Vector2(b_inst.pos.x * 32.0 + 16.0, b_inst.pos.y * 32.0 + 33.0)
 		c.set_home(b_inst.id, b_inst.pos, home_world_pos, as_guest, b_inst.id)
 		if lock_player:
 			b_inst.is_locked_by_player = true
@@ -907,10 +1005,14 @@ func demolish_building(coord: Vector2i) -> bool:
 		
 	if b_inst:
 		GameManager.building_instances.erase(coord)
+		if GameManager.nav_grid:
+			GameManager.nav_grid.unregister_building(coord, Vector2i(1, 1))
 	if not b_data.is_empty():
 		var b_type = b_data.get("id", "")
 		buildings.erase(b_type)
 		GameManager.tile_buildings.erase(coord)
+		if GameManager.nav_grid:
+			GameManager.nav_grid.unregister_building(coord, Vector2i(1, 1))
 		
 	auto_assign_housing()
 	return true
@@ -1030,6 +1132,8 @@ func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dicti
 		return {"success": false, "reason": "❌ Нельзя перенести на занятую клетку или воду"}
 		
 	var b_type = b_inst.type if b_inst else b_data.get("id", "")
+	var saved_offset_arr = b_data.get("visual_offset", [0.0, 0.0])
+	var saved_offset = Vector2(saved_offset_arr[0], saved_offset_arr[1])
 	var rel_id = "reloc_" + str(source_coord.x) + "_" + str(source_coord.y) + "_to_" + str(target_coord.x) + "_" + str(target_coord.y)
 	
 	var saved_residents: Array[String] = []
@@ -1048,6 +1152,7 @@ func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dicti
 	# Создаем новый экземпляр на целевой точке
 	var new_inst = GameManager.get_or_create_building_instance(target_coord, b_type, id)
 	new_inst.residents = saved_residents.duplicate()
+	new_inst.visual_offset = saved_offset
 	
 	# Обновляем привязки жителей
 	for c_id in saved_residents:
@@ -1055,13 +1160,14 @@ func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dicti
 		if c:
 			c.home_id = new_inst.instance_id
 			c.home_coord = target_coord
-			c.home_pos = Vector2(target_coord.x * 32.0 + 16.0, target_coord.y * 32.0 + 16.0)
+			c.home_pos = Vector2(target_coord.x * 32.0 + 16.0, target_coord.y * 32.0 + 33.0)
 			
 	GameManager.tile_buildings[target_coord] = {
 		"id": b_type,
 		"status": "active",
 		"settlement_id": id,
-		"instance_id": new_inst.instance_id
+		"instance_id": new_inst.instance_id,
+		"visual_offset": [saved_offset.x, saved_offset.y]
 	}
 	
 	active_relocations[rel_id] = {
@@ -1221,20 +1327,20 @@ func init_starter_buildings_on_map() -> void:
 		"settlement_id": id
 	}
 
-func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-1, -1)) -> bool:
+func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-1, -1), visual_offset: Vector2 = Vector2.ZERO) -> bool:
 	var b_info = BuildingDB.get_building(building_id)
 	if b_info.is_empty():
 		return false
-		
+
 	if target_coord == Vector2i(-1, -1):
 		target_coord = find_available_tile_for_building()
 	if target_coord == Vector2i(-1, -1):
 		return false
-		
+
 	var req_materials: Dictionary = {}
 	for res in b_info.get("cost", {}):
 		req_materials[res] = float(b_info["cost"][res])
-		
+
 	construction_queue.append({
 		"id": building_id,
 		"coord": target_coord,
@@ -1244,7 +1350,7 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		"materials_delivered": {},
 		"name": b_info["name"]
 	})
-	
+
 	GameManager.tile_buildings[target_coord] = {
 		"id": building_id,
 		"status": "constructing",
@@ -1252,7 +1358,8 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		"total_days": int(b_info["build_days"]),
 		"materials_required": req_materials,
 		"materials_delivered": {},
-		"settlement_id": id
+		"settlement_id": id,
+		"visual_offset": [visual_offset.x, visual_offset.y]
 	}
 	
 	# Расчистка природного объекта / пня на строительной клетке (P01.10)
@@ -1471,10 +1578,19 @@ func sim_daily_tick(season: String) -> void:
 				completed.append(i)
 				if not buildings.has(item["id"]):
 					buildings.append(item["id"])
+				if item["id"] == "cemetery":
+					if not cemetery_plots.has(coord):
+						cemetery_plots.append(coord)
+					_check_pending_burials()
 		elif item.get("days_left", 1.0) <= 0.0:
 			completed.append(i)
 			if not buildings.has(item["id"]):
 				buildings.append(item["id"])
+			if item["id"] == "cemetery":
+				var c_coord = item.get("coord", Vector2i(-1, -1))
+				if c_coord != Vector2i(-1, -1) and not cemetery_plots.has(c_coord):
+					cemetery_plots.append(c_coord)
+				_check_pending_burials()
 			
 	# Удаляем завершенные из очереди
 	for i in range(completed.size() - 1, -1, -1):
@@ -1497,6 +1613,54 @@ func sim_daily_tick(season: String) -> void:
 				if b.is_upgrade_unlocked("hut_garden"):
 					b.food_stockpile = minf(b.food_stockpile_max, b.food_stockpile + 0.5)
 	check_family_private_improvements()
+
+	# 3b. Симуляция сельского хозяйства, полей, огородов, стоянок собирателей, мельниц и пекарен
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id:
+				if b.is_agricultural():
+					b.advance_crop_cycle(1.0, self)
+				elif b.type == "foraging_post":
+					var forager_count = b.workers.size()
+					if forager_count > 0:
+						add_knowledge("plant_knowledge", 0.5 * forager_count)
+						if b.is_upgrade_unlocked("forage_seed_sorting"):
+							add_knowledge("seed_knowledge", 0.4 * forager_count)
+						if b.is_upgrade_unlocked("forage_test_plot"):
+							add_knowledge("cultivation_knowledge", 0.6 * forager_count)
+				elif b.type == "seed_store":
+					var keeper_count = b.workers.size()
+					if keeper_count > 0:
+						add_knowledge("seed_knowledge", 0.8 * keeper_count)
+						add_knowledge("storage_knowledge", 0.5 * keeper_count)
+				elif b.type == "quern_house":
+					var miller_count = b.workers.size()
+					if miller_count > 0 and economy.get_resource("grain") > 0.0:
+						var grind_rate = 2.0 * miller_count
+						if b.is_upgrade_unlocked("quern_granite_stones"):
+							grind_rate *= 1.4
+						var processed = minf(economy.get_resource("grain"), grind_rate)
+						economy.resources["grain"] = maxf(0.0, economy.resources["grain"] - processed)
+						economy.add_resource("flour", processed * 0.9)
+						add_knowledge("food_processing_knowledge", 0.5 * miller_count)
+				elif b.type == "bakery":
+					var baker_count = b.workers.size()
+					if baker_count > 0 and economy.get_resource("flour") > 0.0:
+						var bake_rate = 2.5 * baker_count
+						if b.is_upgrade_unlocked("bake_domed_oven"):
+							bake_rate *= 1.5
+						var flour_used = minf(economy.get_resource("flour"), bake_rate)
+						economy.resources["flour"] = maxf(0.0, economy.resources["flour"] - flour_used)
+						economy.add_resource("bread", flour_used * 1.5)
+						economy.add_resource("food", flour_used * 1.5)
+						add_knowledge("food_processing_knowledge", 0.8 * baker_count)
+				elif b.type == "threshing_floor":
+					var thresh_count = b.workers.size()
+					if thresh_count > 0:
+						add_knowledge("grain_knowledge", 0.4 * thresh_count)
+						# Провеивание и очистка дают немного семян
+						economy.add_resource("seeds", 0.2 * thresh_count)
+
 
 	# 4. Демография: отношения, семейные союзы и зарождение новой жизни (S07 / P01)
 	if population and population.citizens.size() > 1:
@@ -1552,12 +1716,439 @@ func sim_monthly_tick(season: String) -> void:
 # ==============================================================================
 # ЖИВАЯ СИМУЛЯЦИЯ ГРАЖДАН (1 ГРАЖДАНИН = 1 NPC)
 # ==============================================================================
+func _is_valid_grave_tile(cand: Vector2i) -> bool:
+	if not GameManager or not GameManager.planet_data or not GameManager.planet_data.has("tiles") or GameManager.planet_data["tiles"].is_empty():
+		if GameManager and GameManager.tile_buildings and GameManager.tile_buildings.has(cand):
+			return false
+		if GameManager and GameManager.building_instances and GameManager.building_instances.has(cand):
+			return false
+		return true
+	var tiles = GameManager.planet_data.get("tiles", [])
+	if cand.y < 0 or cand.y >= tiles.size() or cand.x < 0 or cand.x >= tiles[0].size():
+		return false
+	var tile = tiles[cand.y][cand.x]
+	if tile.get("is_water", false) or float(tile.get("elevation", 0.0)) >= 0.8:
+		return false
+	if GameManager.tile_buildings and GameManager.tile_buildings.has(cand):
+		return false
+	if GameManager.building_instances and GameManager.building_instances.has(cand):
+		return false
+	if GameManager.tile_decorations and GameManager.tile_decorations.has(cand):
+		return false
+	if GameManager.nav_grid and GameManager.nav_grid.is_ready and not GameManager.nav_grid.is_walkable(cand):
+		return false
+	return true
+
+func _find_cemetery_plot(allow_allocate: bool = false) -> Vector2i:
+	# 1. Проверяем все существующие здания кладбища или могильника
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.type in ["cemetery", "grave"]:
+				var buried_cnt = b.building_data.get("buried_citizens", []).size()
+				if buried_cnt < 4: # До 4 захоронений на одной клетке кладбища
+					if not cemetery_plots.has(b.pos):
+						cemetery_plots.append(b.pos)
+					return b.pos
+
+	# 2. Проверяем зафиксированные участки кладбища (выделенные игроком зоны)
+	for plot in cemetery_plots:
+		if GameManager and GameManager.building_instances and GameManager.building_instances.has(plot):
+			var b = GameManager.building_instances[plot]
+			if b.type in ["cemetery", "grave"]:
+				var buried_cnt = b.building_data.get("buried_citizens", []).size()
+				if buried_cnt < 4:
+					return plot
+		else:
+			return plot
+
+	# 3. Если разрешено выделить новый участок и их строго меньше лимита MAX_CEMETERY_PLOTS
+	if allow_allocate and cemetery_plots.size() < MAX_CEMETERY_PLOTS:
+		if not cemetery_plots.is_empty():
+			var last_p = cemetery_plots[cemetery_plots.size() - 1]
+			for r in range(1, 4):
+				for dy in range(-r, r + 1):
+					for dx in range(-r, r + 1):
+						if dx == 0 and dy == 0:
+							continue
+						var cand = last_p + Vector2i(dx, dy)
+						if not cemetery_plots.has(cand) and _is_valid_grave_tile(cand):
+							cemetery_plots.append(cand)
+							return cand
+		else:
+			# Первый начальный участок для родового могильника на окраине (1 клетка)
+			for dist in range(4, 10):
+				for step_x in range(-dist, dist + 1):
+					for step_y in [-dist, dist]:
+						var cand1 = pos + Vector2i(step_x, step_y)
+						if not cemetery_plots.has(cand1) and _is_valid_grave_tile(cand1):
+							cemetery_plots.append(cand1)
+							return cand1
+				for step_y in range(-dist + 1, dist):
+					for step_x in [-dist, dist]:
+						var cand2 = pos + Vector2i(step_x, step_y)
+						if not cemetery_plots.has(cand2) and _is_valid_grave_tile(cand2):
+							cemetery_plots.append(cand2)
+							return cand2
+
+	return Vector2i(-1, -1)
+
+func _get_hearth_pos() -> Vector2:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b is BuildingInstance and b.settlement_id == id and b.type in ["campfire", "elders_house", "great_lodge"]:
+				return Vector2(b.pos.x * 32.0 + 16.0, b.pos.y * 32.0 + 16.0)
+	return Vector2(pos.x * 32.0 + 16.0, pos.y * 32.0 + 16.0)
+
+func find_nearest_food_target(c: CitizenNPC) -> Dictionary:
+	var home_p = c.home_pos if c.home_pos != Vector2.ZERO else (Vector2(c.home_coord.x * 32 + 16, c.home_coord.y * 32 + 33) if c.home_coord != Vector2i(-1, -1) else Vector2.ZERO)
+	var has_home_food = false
+	if c.home_id != "" and home_p != Vector2.ZERO and GameManager and GameManager.building_instances:
+		for h_inst in GameManager.building_instances.values():
+			if h_inst.id == c.home_id and h_inst.food_stockpile >= 0.25:
+				has_home_food = true
+				break
+	if has_home_food:
+		return {"pos": home_p, "reason": "Идёт домой поесть"}
+	if economy.get_resource("food") >= 0.25:
+		return {"pos": _get_hearth_pos(), "reason": "Идёт к очагу поесть"}
+	return {}
+
+func _process_citizen_death(c: CitizenNPC) -> void:
+	c.is_alive = false
+	c.health = 0.0
+	c.state = CitizenNPC.State.WAITING
+	c.last_status_reason = "Погиб"
+	
+	# 1. Сохранение прижизненной профессии и освобождение рабочего места
+	var lifetime_job = c.job_id
+	if lifetime_job != "" and lifetime_job != "idle":
+		c.custom_data["lifetime_job"] = lifetime_job
+		
+	var w_inst = get_citizen_workplace_instance(c)
+	if w_inst:
+		w_inst.remove_worker(c.citizen_id)
+	c.workplace_id = ""
+	c.workplace_coord = Vector2i(-1, -1)
+	c.job_id = "idle"
+	
+	# 2. Освобождение жилья
+	var h_inst = get_citizen_home_instance(c)
+	if h_inst:
+		h_inst.remove_resident(c.citizen_id)
+	c.home_id = ""
+	c.home_coord = Vector2i(-1, -1)
+	c.home_pos = Vector2.ZERO
+	
+	# 3. Отмена текущих задач
+	if GameManager and GameManager.task_service and c.task_instance_id != "":
+		GameManager.task_service.cancel_task(c.task_instance_id, "Исполнитель погиб")
+		c.task_instance_id = ""
+	c.task_id = ""
+	
+	# 4. Если погиб правитель
+	if c.is_ruler:
+		EventBus.ruler_died.emit(c.name, c.last_status_reason)
+		if GameManager and GameManager.has_method("trigger_game_over"):
+			GameManager.trigger_game_over("Вождь племени %s погиб. Племя осталось без предводителя." % c.name)
+		return
+		
+	# 5. Проводы и погребение соплеменника
+	_conduct_funeral_rites(c)
+
+func _conduct_funeral_rites(c: CitizenNPC) -> void:
+	if c.is_buried or c.custom_data.get("funeral_in_progress", false):
+		return
+		
+	var culture = GameManager.culture_memory if GameManager else null
+	var is_pyre = false
+	if culture:
+		if culture.has_tradition("HC-18_C") or culture.has_tradition("pyre_spirit") or culture.has_tradition("pyre_cremation"):
+			is_pyre = true
+			
+	if is_pyre:
+		# Обряд погребального костра (очищающий огонь предков)
+		c.is_buried = true
+		c.custom_data["funeral_in_progress"] = false
+		c.custom_data["needs_burial"] = false
+		for cit in population.citizens:
+			if not cit.is_alive:
+				continue
+			var is_close = (cit.family_id != "" and cit.family_id == c.family_id) or cit.spouse_id == c.citizen_id or cit.guardian_id == c.citizen_id
+			if is_close:
+				cit.add_memory("sacred_flame", "pyre", c.citizen_id, 1.8, "Проводил дух (%s) через священный огонь к предкам" % c.name, false)
+				cit.show_emote("fire", 4.0, 3)
+			elif cit.pos.distance_to(pos) < 150.0:
+				cit.show_emote("respect", 3.0, 2)
+		EventBus.notification_toast.emit("🔥 Священный погребальный костёр", "Тело соплеменника %s предано священному огню предков" % c.name, "good")
+		if economy:
+			economy.add_resource("faith", 3.0)
+	else:
+		# Обряд погребения в землю: подготовка участка и назначение процессии
+		var grave_coord = _find_cemetery_plot(true)
+		if grave_coord == Vector2i(-1, -1):
+			c.is_buried = false
+			c.custom_data["needs_burial"] = true
+			c.custom_data["funeral_in_progress"] = false
+			c.last_status_reason = "Ожидает погребения (нет мест на кладбище)"
+			for cit in population.citizens:
+				if not cit.is_alive or cit == c:
+					continue
+				var is_close = (cit.family_id != "" and cit.family_id == c.family_id) or cit.spouse_id == c.citizen_id or cit.guardian_id == c.citizen_id
+				if is_close:
+					cit.add_memory("grief_unburied", "death", c.citizen_id, 2.5, "Тело соплеменника %s негде похоронить! В поселении нет кладбища" % c.name, false)
+					cit.show_emote("complaint", 5.0, 4, true)
+					cit.loyalty = maxf(5.0, cit.loyalty - 8.0)
+					cit.shout("Негде похоронить %s! Выделите священную землю под кладбище!" % c.name, 4.0)
+				elif cit.pos.distance_to(c.pos) < 140.0:
+					cit.show_emote("sadness", 3.0, 2)
+					cit.loyalty = maxf(10.0, cit.loyalty - 3.0)
+			EventBus.notification_toast.emit("🪦 Негде похоронить усопшего!", "Соплеменника %s негде предать земле. Выделите зону кладбища в меню строительства (B)." % c.name, "warning")
+			return
+
+		c.custom_data["needs_burial"] = true
+		c.custom_data["funeral_in_progress"] = true
+		var cur_yr = GameManager.current_year if GameManager else 1
+		var cur_season = GameManager.get_season() if GameManager else "Лето"
+		var cur_day = GameManager.current_day if GameManager else 1
+		var cause = c.death_cause if c.death_cause != "" else "Угас от преклонного возраста"
+		
+		# Формируем полные данные для родового реестра усопших
+		var spouse_name = ""
+		if c.spouse_id != "" and population:
+			var sp = population.find_citizen(c.spouse_id)
+			if sp: spouse_name = sp.name
+		var children_names: Array[String] = []
+		if population:
+			for cit in population.citizens:
+				if cit.relationships.has(c.citizen_id):
+					var rel_type = cit.relationships[c.citizen_id].get("type", "")
+					if rel_type == "parent": # cit является ребёнком c
+						children_names.append(cit.name)
+				elif cit.guardian_id == c.citizen_id:
+					children_names.append(cit.name)
+					
+		var final_job = c.custom_data.get("lifetime_job", c.job_id)
+		var final_job_title = c.get_job_title() if (c.has_method("get_job_title") and c.job_id != "idle") else final_job
+		
+		var lifetime_summary = "Трудился на благо рода в звании: %s. Прожил %d лет, оставил добрую память соплеменникам." % [final_job_title, c.age]
+		if cause.contains("бой") or cause.contains("пал") or cause.contains("ранен"):
+			lifetime_summary = "Храбро защищал родную землю и пал в бою как истинный воин. Его подвиг навечно вписан в предания рода."
+		elif final_job == "hunter":
+			lifetime_summary = "Опытный охотник племени, добывавший дичь в лесах и оберегавший соплеменников от хищников."
+		elif final_job == "woodcutter":
+			lifetime_summary = "Неутомимый лесоруб, чьими трудами строились хижины и пылал священный костер рода."
+			
+		var dec_entry: Dictionary = {
+			"citizen_id": c.citizen_id,
+			"name": c.name,
+			"age": c.age,
+			"gender": c.gender,
+			"cohort": c.cohort,
+			"job_id": final_job,
+			"job_title": final_job_title,
+			"family_id": c.family_id,
+			"spouse_id": c.spouse_id,
+			"spouse_name": spouse_name,
+			"children_names": children_names,
+			"death_year": cur_yr,
+			"death_season": cur_season,
+			"death_day": cur_day,
+			"death_cause": cause,
+			"birth_year": maxi(1, cur_yr - c.age),
+			"lifetime_summary": lifetime_summary,
+			"traits": c.traits.duplicate() if "traits" in c else [],
+			"sprite_path": c.custom_data.get("sprite_path", ""),
+			"burial_coord": [grave_coord.x, grave_coord.y]
+		}
+		
+		var already_in_registry = false
+		for r in deceased_registry:
+			if r.get("citizen_id", "") == c.citizen_id:
+				already_in_registry = true
+				break
+		if not already_in_registry:
+			deceased_registry.append(dec_entry)
+		
+		# Проверяем, существует ли уже здание могильника/кладбища на этом участке
+		var grave_inst: BuildingInstance = null
+		if GameManager and GameManager.building_instances.has(grave_coord):
+			grave_inst = GameManager.building_instances[grave_coord]
+		if grave_inst == null:
+			var grave_id = "cemetery_%s_%d_%d" % [id, grave_coord.x, grave_coord.y]
+			grave_inst = BuildingInstance.new(grave_id, "cemetery", id, grave_coord)
+			grave_inst.custom_name = "🪦 Родовой могильник"
+			if GameManager and GameManager.tile_buildings.has(grave_coord):
+				var offset_arr = GameManager.tile_buildings[grave_coord].get("visual_offset", [0.0, 0.0])
+				grave_inst.visual_offset = Vector2(offset_arr[0], offset_arr[1])
+			if GameManager:
+				GameManager.building_instances[grave_coord] = grave_inst
+				GameManager.tile_buildings[grave_coord] = {"id": "cemetery", "coord": grave_coord, "status": "active"}
+				if GameManager.nav_grid:
+					GameManager.nav_grid.register_building(grave_coord, Vector2i(1, 1), grave_id)
+		
+		if not grave_inst.building_data.has("buried_citizens"):
+			grave_inst.building_data["buried_citizens"] = []
+			
+		var already_buried_in_inst = false
+		for b_c in grave_inst.building_data["buried_citizens"]:
+			if b_c.get("citizen_id", "") == c.citizen_id:
+				already_buried_in_inst = true
+				break
+		if not already_buried_in_inst:
+			grave_inst.building_data["buried_citizens"].append(dec_entry)
+			
+		grave_inst.active_modifiers["deceased_name"] = c.name
+		grave_inst.active_modifiers["deceased_age"] = c.age
+		grave_inst.active_modifiers["deceased_job"] = c.job_id
+		grave_inst.active_modifiers["death_year"] = cur_yr
+		grave_inst.active_modifiers["death_season"] = cur_season
+		grave_inst.active_modifiers["death_day"] = cur_day
+		grave_inst.active_modifiers["death_cause"] = cause
+		grave_inst.building_data["deceased_name"] = c.name
+		grave_inst.building_data["deceased_age"] = c.age
+		grave_inst.building_data["deceased_job"] = c.job_id
+		grave_inst.building_data["death_year"] = cur_yr
+		grave_inst.building_data["death_season"] = cur_season
+		grave_inst.building_data["death_day"] = cur_day
+		grave_inst.building_data["death_cause"] = cause
+		grave_inst.building_data["family_id"] = c.family_id
+		grave_inst.add_history_entry(cur_yr, "Здесь упокоен соплеменник %s (%d лет, %s). Причина гибели: %s. Год %d (%s, день %d)." % [c.name, c.age, c.job_id, cause, cur_yr, cur_season, cur_day])
+		
+		if not buildings.has("cemetery"):
+			buildings.append("cemetery")
+		if not buildings.has("grave"):
+			buildings.append("grave")
+			
+		c.custom_data["pending_grave_inst"] = grave_inst
+		c.custom_data["pending_grave_coord"] = grave_coord
+		c.is_buried = false
+		
+		# Назначение могильщика для физической процессии погребения
+		var undertaker: CitizenNPC = null
+		for cit in population.citizens:
+			if cit.is_alive and cit != c and cit.cohort in ["adult", "elder"]:
+				if (cit.family_id != "" and cit.family_id == c.family_id) or cit.spouse_id == c.citizen_id or cit.guardian_id == c.citizen_id:
+					undertaker = cit
+					break
+		if undertaker == null:
+			for cit in population.citizens:
+				if cit.is_alive and cit != c and cit.cohort in ["adult", "youth", "elder"]:
+					if cit.job_id in ["idle", "guard", "elder"] or cit.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
+						undertaker = cit
+						break
+		if undertaker == null:
+			for cit in population.citizens:
+				if cit.is_alive and cit != c and cit.cohort in ["adult", "youth", "elder"]:
+					undertaker = cit
+					break
+					
+		if undertaker != null:
+			undertaker.task_id = "burial_procession"
+			undertaker.subphase = "fetch_body"
+			undertaker.target_pos = c.pos
+			undertaker.target_id = c.citizen_id
+			undertaker.target_coord = grave_coord
+			undertaker.custom_data["grave_inst"] = grave_inst
+			undertaker.state = CitizenNPC.State.MOVING_TO_WORK
+			var u_path = GameManager.nav_grid.find_adjacent_path(undertaker.pos, GameManager.nav_grid.world_to_tile(c.pos)) if GameManager and GameManager.nav_grid else []
+			if u_path.is_empty() and GameManager and GameManager.nav_grid:
+				u_path = GameManager.nav_grid.find_path(undertaker.pos, c.pos, true)
+			if u_path.is_empty() and undertaker.pos.distance_to(c.pos) <= 32.0:
+				u_path = [undertaker.pos]
+			undertaker.path = u_path
+			undertaker.path_index = 0
+			undertaker.last_status_reason = "Идёт за телом %s для предания земле" % c.name
+			DebugLogger.log_info("Burial", "Назначен могильщик %s для предания земле %s (могила %s)" % [undertaker.name, c.name, grave_coord])
+		else:
+			# Если в поселении абсолютно никого нет для выноса тела — сразу завершаем погребение
+			if GameManager and GameManager.tile_buildings.has(grave_coord):
+				GameManager.tile_buildings[grave_coord]["status"] = "active"
+			c.is_buried = true
+			c.custom_data["needs_burial"] = false
+			c.custom_data["funeral_in_progress"] = false
+			
+		# Проводы близкими соплеменниками (память, скорбь, шествие)
+		for cit in population.citizens:
+			if not cit.is_alive or cit == c:
+				continue
+			var is_close = (cit.family_id != "" and cit.family_id == c.family_id) or cit.spouse_id == c.citizen_id or cit.guardian_id == c.citizen_id
+			if is_close:
+				cit.add_memory("grief", "death", c.citizen_id, 2.0, "Похоронил близкого соплеменника (%s) на родовом кладбище" % c.name, false)
+				cit.show_emote("sadness", 5.0, 4, true)
+				cit.loyalty = maxf(10.0, cit.loyalty - 6.0)
+				if cit != undertaker:
+					cit.task_id = "funeral_march"
+					cit.target_id = c.citizen_id
+					cit.target_coord = grave_coord
+					cit.target_pos = c.pos
+					var f_path = GameManager.nav_grid.find_adjacent_path(cit.pos, GameManager.nav_grid.world_to_tile(c.pos)) if GameManager and GameManager.nav_grid else []
+					if f_path.is_empty() and GameManager and GameManager.nav_grid:
+						f_path = GameManager.nav_grid.find_path(cit.pos, c.pos, true)
+					cit.path = f_path
+					cit.path_index = 0
+					cit.state = CitizenNPC.State.MOVING_TO_WORK
+					cit.last_status_reason = "Участвует в погребальной процессии (%s)" % c.name
+			elif cit.pos.distance_to(c.pos) < 140.0:
+				cit.add_memory("sorrow", "death", c.citizen_id, 1.0, "Проводил соплеменника %s в последний путь" % c.name, false)
+				cit.show_emote("grief", 3.0, 2)
+				
+		EventBus.notification_toast.emit("🪦 Проводы в последний путь", "Соплеменник %s (%d лет) упокоился на родовом кладбище" % [c.name, c.age], "info")
+
+func _check_pending_burials() -> void:
+	if not population:
+		return
+	for c in population.citizens:
+		if not c.is_alive and not c.is_buried:
+			var being_processed = false
+			for cit in population.citizens:
+				if cit.is_alive and cit.task_id == "burial_procession" and (cit.target_id == c.citizen_id or cit.carrying_deceased_id == c.citizen_id):
+					being_processed = true
+					break
+			if not being_processed:
+				if c.custom_data.get("funeral_in_progress", false):
+					# Могильщик был прерван или погиб — переназначаем могильщика без дублирования обрядов и участков
+					var g_coord = c.custom_data.get("pending_grave_coord", Vector2i(-1, -1))
+					var g_inst = c.custom_data.get("pending_grave_inst", null)
+					var new_undertaker: CitizenNPC = null
+					for cit in population.citizens:
+						if cit.is_alive and cit.cohort in ["adult", "youth", "elder"]:
+							if cit.task_id == "" or cit.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
+								new_undertaker = cit
+								break
+					if new_undertaker != null and g_coord != Vector2i(-1, -1):
+						new_undertaker.task_id = "burial_procession"
+						new_undertaker.subphase = "fetch_body"
+						new_undertaker.target_pos = c.pos
+						new_undertaker.target_id = c.citizen_id
+						new_undertaker.target_coord = g_coord
+						new_undertaker.custom_data["grave_inst"] = g_inst
+						new_undertaker.state = CitizenNPC.State.MOVING_TO_WORK
+						var u_path = GameManager.nav_grid.find_adjacent_path(new_undertaker.pos, GameManager.nav_grid.world_to_tile(c.pos)) if GameManager and GameManager.nav_grid else []
+						if u_path.is_empty() and GameManager and GameManager.nav_grid:
+							u_path = GameManager.nav_grid.find_path(new_undertaker.pos, c.pos, true)
+						new_undertaker.path = u_path
+						new_undertaker.path_index = 0
+						new_undertaker.last_status_reason = "Идёт за телом %s для предания земле" % c.name
+					elif new_undertaker == null:
+						c.is_buried = true
+						c.custom_data["needs_burial"] = false
+						c.custom_data["funeral_in_progress"] = false
+				else:
+					var available_plot = _find_cemetery_plot(true)
+					if available_plot != Vector2i(-1, -1):
+						DebugLogger.log_info("Burial", "Обнаружено неупокоенное тело %s, инициируем погребение" % c.name)
+						_conduct_funeral_rites(c)
+
 func update_citizens(delta: float) -> void:
 	if not population or population.citizens.is_empty():
 		return
 		
+	_check_pending_burials()
 	update_food_spoilage(delta)
 	var cur_hour = GameManager.current_hour
+
+	if relationship_graph:
+		relationship_graph.update(delta, self)
 
 	# Обновление Больших домов рода (гармония, группы домохозяйств, опека и наставничество)
 	if GameManager and GameManager.building_instances:
@@ -1566,7 +2157,46 @@ func update_citizens(delta: float) -> void:
 				b_inst.recalculate_household_groups(population)
 				b_inst.update_household_harmony(delta / 600.0, self)
 	
+	# Предварительный сбор всех активных угроз в округе (армии и опасные хищники)
+	var active_threats: Array[Dictionary] = []
+	for f_id in GameManager.factions:
+		if f_id != faction_id:
+			var f = GameManager.factions[f_id]
+			for a in f.armies:
+				if a.get_total_soldiers() > 0:
+					active_threats.append({
+						"pos": a.world_pos,
+						"name": "Вражеский отряд",
+						"id": "army_" + str(a.get_instance_id()),
+						"is_army": true
+					})
+
+	if GameManager and GameManager.wildlife_manager and not GameManager.wildlife_manager.animals.is_empty():
+		var h_pos = _get_hearth_pos()
+		for a in GameManager.wildlife_manager.animals.values():
+			if a and a.is_alive() and not a.is_tamed:
+				var is_attacking = (a.target_citizen != null or a.state in [WildAnimal.State.DEFENDING, WildAnimal.State.HUNTING_PREY])
+				var is_predator = a.species in ["bear", "wolf", "boar", "lynx"]
+				var near_hearth = (a.pos.distance_to(h_pos) <= 120.0)
+				if is_attacking or (is_predator and near_hearth) or a.species == "bear":
+					var a_cfg = WildAnimal.SPECIES_CONFIG.get(a.type_id, {})
+					var spec_ru = "Медведь" if a.species == "bear" else ("Волк" if a.species == "wolf" else ("Кабан" if a.species == "boar" else ("Рысь" if a.species == "lynx" else "Хищник")))
+					var r = 120.0 if (is_attacking or near_hearth) else 65.0
+					active_threats.append({
+						"pos": a.pos,
+						"name": a_cfg.get("name", spec_ru),
+						"id": a.id,
+						"is_army": false,
+						"threat_radius": r
+					})
+
 	for c in population.citizens:
+		# 0. Проверка жизнеспособности (смерть при HP <= 0)
+		if not c.is_alive or c.health <= 0.0:
+			if c.is_alive:
+				_process_citizen_death(c)
+			continue
+			
 		# 1. Индивидуальное суточное время
 		var indiv_hour = cur_hour + c.schedule_offset_hours
 		if indiv_hour >= 24.0: indiv_hour -= 24.0
@@ -1589,40 +2219,95 @@ func update_citizens(delta: float) -> void:
 			if c.commitment_timer <= 0.0:
 				c.ongoing_task_kind = ""
 				
-		# 2c. Кулдаун на социальное общение (защита от застревания в разговорах)
+		# 2c. Кулдаун на социальное общение и оценка автономных действий
 		if c.social_cooldown > 0.0:
 			c.social_cooldown = maxf(0.0, c.social_cooldown - delta)
+		else:
+			c._evaluate_autonomous_action(delta, self)
 
-		# Реакция на непосредственную опасность (ТЗ п.5, 14, 21 Этап F)
+		# Реакция на непосредственную опасность (Хищники: медведи, волки, кабаны, рыси и вражеские отряды)
 		var threat_nearby = false
 		var nearest_threat_pos = Vector2.ZERO
-		for f_id in GameManager.factions:
-			if f_id != faction_id:
-				var f = GameManager.factions[f_id]
-				for a in f.armies:
-					if a.get_total_soldiers() > 0:
-						var d = c.pos.distance_to(a.world_pos)
-						if d < 180.0:
-							threat_nearby = true
-							nearest_threat_pos = a.world_pos
-							break
-			if threat_nearby:
-				break
-				
+		var threat_name = "Враги"
+		var threat_id = ""
+		var is_army = false
+		var min_threat_dist = 999999.0
+
+		for t in active_threats:
+			var d = c.pos.distance_to(t["pos"])
+			var max_r = float(t.get("threat_radius", 180.0))
+			if d <= max_r and d < min_threat_dist:
+				min_threat_dist = d
+				threat_nearby = true
+				nearest_threat_pos = t["pos"]
+				threat_name = t["name"]
+				threat_id = t["id"]
+				is_army = t["is_army"]
+
 		if threat_nearby:
-			if c.job_id in ["guard", "warrior"]:
-				c.facing_dir = (nearest_threat_pos - c.pos).normalized()
-				c.state = CitizenNPC.State.MOVING_TO_WORK
-				c.last_status_reason = "Защищает поселение от врагов!"
-				continue
+			# Оценка характера и готовности к защите племени:
+			# Против вражеской армии безоружные мирные жители бегут в укрытие, стражники и воины дают бой.
+			# Против диких зверей (медведь, волк, кабан) соплеменники с храбростью/топорами защищают племя.
+			var is_coward = (c.cohort == "child") \
+				or (c.pregnancy.get("stage", "") != "") \
+				or (c.health < 25.0)
+
+			if is_army:
+				if c.job_id not in ["guard", "warrior"]:
+					is_coward = true
 			else:
+				if c.job_id not in ["guard", "warrior", "hunter"] and float(c.traits.get("bravery", 50.0)) < 35.0 and float(c.traits.get("temper", 20.0)) < 50.0 and not c.has_tool("axe"):
+					is_coward = true
+
+			if is_coward:
+				# Трусливые соплеменники, дети и тяжелораненые бегут в укрытие
 				if c.state != CitizenNPC.State.FLEEING:
 					c.state = CitizenNPC.State.FLEEING
-					c.path = GameManager.nav_grid.find_path(c.pos, c.home_pos)
+					c.task_id = "fleeing_threat"
+					c.target_id = threat_id
+					if GameManager and GameManager.nav_grid and c.home_pos != Vector2.ZERO:
+						c.path = GameManager.nav_grid.find_path(c.pos, c.home_pos)
+					else:
+						c.path.clear()
 					c.path_index = 0
-					c.last_status_reason = "Спасается бегством в укрытие!"
-					c.shout("Тревога! Враги близко!", 3.0)
+					c.last_status_reason = "Спасается бегством от %s в укрытие!" % threat_name
+					c.shout("Спасайтесь! %s близко!" % threat_name, 3.0)
+					c.show_emote("fear", 3.0, 4)
+				continue
+			else:
+				# Храбрые защитники встают на защиту поселения и соплеменников
+				c.task_id = "defend_settlement"
+				c.target_id = threat_id
+				var d_to_threat = c.pos.distance_to(nearest_threat_pos)
+				if is_army and c.job_id in ["guard", "warrior"]:
+					c.facing_dir = (nearest_threat_pos - c.pos).normalized()
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.last_status_reason = "Защищает поселение от врагов!"
 					continue
+
+				if d_to_threat > 24.0:
+					c.target_pos = nearest_threat_pos
+					if GameManager and GameManager.nav_grid:
+						c.path = GameManager.nav_grid.find_path(c.pos, nearest_threat_pos)
+					else:
+						c.path.clear()
+					c.path_index = 0
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.facing_dir = (nearest_threat_pos - c.pos).normalized()
+					c.last_status_reason = "Бежит на защиту поселения от %s!" % threat_name
+					if c.speech_bubble == "":
+						c.shout("Защитим наш очаг! К оружию!", 3.0)
+					c.show_emote("fight", 3.0, 4)
+					continue
+				else:
+					c.state = CitizenNPC.State.ATTACKING
+					c.facing_dir = (nearest_threat_pos - c.pos).normalized()
+					c.last_status_reason = "Сражается с %s, защищая соплеменников!" % threat_name
+		elif c.task_id == "fleeing_threat":
+			c.task_id = ""
+			c.state = CitizenNPC.State.IDLE
+			c.last_status_reason = "Опасность миновала, возвращается к делам"
+			c.decision_cooldown = 1.0
 				
 		# 3. Ночной режим: Сон в хижине (стража не спит ночью — выходит в ночной дозор)
 		if is_night and c.job_id != "guard":
@@ -1638,6 +2323,11 @@ func update_citizens(delta: float) -> void:
 					var penalty = home_inst.get_crowding_penalty()
 					var sleep_rate = 12.0 * (1.0 - penalty)
 					c.energy = minf(100.0, c.energy + sleep_rate * delta)
+					if c.health < c.max_health:
+						var heal_rate = 8.0 * (1.0 + float(home_inst.comfort) / 50.0) * (1.0 - penalty)
+						if home_inst.food_stockpile > 0.0:
+							heal_rate *= 1.3
+						c.health = minf(c.max_health, c.health + heal_rate * delta)
 					if home_inst.is_crowded():
 						c.loyalty = maxf(0.0, c.loyalty - 0.05 * penalty * delta)
 						c.last_status_reason = "Спит в хижине в тесноте (штраф отдыха -%d%%)" % int(penalty * 100)
@@ -1646,6 +2336,8 @@ func update_citizens(delta: float) -> void:
 				else:
 					var sleep_rate = 6.0
 					c.energy = minf(100.0, c.energy + sleep_rate * delta)
+					if c.health < c.max_health:
+						c.health = minf(c.max_health, c.health + 4.0 * delta)
 					c.loyalty = maxf(0.0, c.loyalty - 0.2 * delta)
 					c.last_status_reason = "Бездомный, спит на земле (плохой отдых)"
 				continue
@@ -1727,9 +2419,9 @@ func update_citizens(delta: float) -> void:
 					c.last_status_reason = "Пробуждение"
 				c.decision_cooldown = randf_range(0.5, 2.0)
 			
-		# Снижение бодрости и сытости
-		c.energy = maxf(0.0, c.energy - 0.4 * delta)
-		c.hunger = maxf(0.0, c.hunger - 0.5 * delta)
+		# Снижение бодрости и сытости (реалистичный суточный баланс: 2 приема пищи в день)
+		c.energy = maxf(0.0, c.energy - 0.25 * delta)
+		c.hunger = maxf(0.0, c.hunger - 0.10 * delta)
 		
 		# Беременность и физическое развитие плода (S07)
 		if c.is_pregnant():
@@ -1740,24 +2432,67 @@ func update_citizens(delta: float) -> void:
 			elif p_res == "late":
 				c.last_status_reason = "Беременность (поздний срок)"
 		
-		# Питание при сильном голоде (S06: приоритет домашнего запаса еды)
+		# Питание при голоде (физически достоверное: ест дома или у очага, иначе идёт к еде)
 		if c.hunger < 45.0:
 			var ate = false
-			if c.home_id != "" and GameManager.building_instances:
+			var home_p = c.home_pos if c.home_pos != Vector2.ZERO else (Vector2(c.home_coord.x * 32 + 16, c.home_coord.y * 32 + 33) if c.home_coord != Vector2i(-1, -1) else Vector2.ZERO)
+			var is_at_home = (c.home_id != "" and home_p != Vector2.ZERO and c.pos.distance_to(home_p) <= 22.0)
+			var hearth_p = _get_hearth_pos()
+			var is_at_hearth = (c.pos.distance_to(hearth_p) <= 22.0)
+			
+			if is_at_home and c.home_id != "" and GameManager and GameManager.building_instances:
 				for h_inst in GameManager.building_instances.values():
-					if h_inst.id == c.home_id and h_inst.food_stockpile >= 0.5:
-						h_inst.consume_food(0.5)
+					if h_inst.id == c.home_id and h_inst.food_stockpile >= 0.25:
+						h_inst.consume_food(0.25)
 						c.hunger = 100.0
 						c.last_status_reason = "Поел из домашнего запаса"
+						c.show_emote("eat", 3.0, 3)
+						c.task_id = ""
+						c.state = CitizenNPC.State.IDLE
+						c.decision_cooldown = randf_range(1.0, 2.0)
 						ate = true
 						break
-			if not ate and economy.get_resource("food") >= 0.5:
-				consume_food(0.5)
+			if not ate and is_at_hearth and economy.get_resource("food") >= 0.25:
+				consume_food(0.25)
 				c.hunger = 100.0
 				c.last_status_reason = "Поел у очага"
+				c.show_emote("eat", 3.0, 3)
+				c.task_id = ""
+				c.state = CitizenNPC.State.IDLE
+				c.decision_cooldown = randf_range(1.0, 2.0)
 				ate = true
 			if not ate:
-				c.last_status_reason = "Голодает!"
+				if c.task_id == "go_eat":
+					# Житель физически следует к еде, статус не перезаписываем
+					pass
+				else:
+					if c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.RESTING] or c.hunger < 30.0:
+						var food_target = find_nearest_food_target(c)
+						if not food_target.is_empty():
+							# Критический голод прерывает активную работу — сохраняем задачу для восстановления после еды
+							if c.state in [CitizenNPC.State.WORKING, CitizenNPC.State.GATHERING] and c._can_interrupt_current_task():
+								c._save_task_snapshot()
+							c.task_id = "go_eat"
+							c.target_pos = food_target["pos"]
+							c.path = GameManager.nav_grid.find_path(c.pos, food_target["pos"]) if GameManager and GameManager.nav_grid else []
+							c.path_index = 0
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.last_status_reason = food_target["reason"]
+						else:
+							c.last_status_reason = "Голодает! В запасах нет еды"
+							c.show_emote("hunger", 3.0, 3)
+					else:
+						c.last_status_reason = "Голоден"
+						
+				if c.hunger <= 0.0:
+					c.health = maxf(0.0, c.health - 0.4 * delta)
+					if c.health <= 0.0:
+						c.death_cause = "От истощения и голода"
+						_process_citizen_death(c)
+						continue
+				elif c.hunger >= 50.0 and c.health < c.max_health and c.state != CitizenNPC.State.ATTACKING:
+					# Пассивная естественная регенерация сытого поселенца
+					c.health = minf(c.max_health, c.health + 0.8 * delta)
 			
 		# Общение двух свободных жителей
 		if c.state == CitizenNPC.State.TALKING:
@@ -1774,16 +2509,403 @@ func update_citizens(delta: float) -> void:
 				c.social_cooldown = randf_range(20.0, 40.0)
 			continue
 			
-		# Разумный отдых (RESTING) у костра или дома (S08)
+		# Разумный отдых (RESTING) у костра, дома, на кладбище или вечерний танец (S08)
 		if c.state == CitizenNPC.State.RESTING:
 			c.work_timer -= delta
 			c.energy = minf(100.0, c.energy + 12.0 * delta)
+			
+			# Восстановление здоровья при отдыхе дома / у очага
+			if c.health < c.max_health:
+				var my_home_inst: BuildingInstance = get_citizen_home_instance(c)
+				var comfort_val: float = float(my_home_inst.comfort) if my_home_inst else 0.0
+				var heal_spd: float = 8.0 * (1.0 + comfort_val / 50.0)
+				if my_home_inst and my_home_inst.food_stockpile > 0.0:
+					heal_spd *= 1.3
+				if c.hunger > 50.0:
+					heal_spd *= 1.2
+				c.health = minf(c.max_health, c.health + heal_spd * delta)
+
+			if c.task_id == "recover_at_home":
+				if c.health < 80.0:
+					c.last_status_reason = "Отлёживается дома после ран и битвы (%d/%d HP)" % [int(c.health), int(c.max_health)]
+					continue
+				else:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.ongoing_task_kind = ""
+					c.last_status_reason = "Оправился от ран и готов к труду"
+					c.show_emote("joy", 3.0, 2)
+					c.add_memory("recovered_from_wounds", "health", "", 1.0, "Оправился от ран в тепле родного очага", false)
+					c.decision_cooldown = randf_range(1.0, 2.0)
+					continue
+			elif c.task_id == "visit_grave":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 2.0)
+					if economy:
+						economy.add_resource("faith", 2.0)
+						economy.loyalty = minf(100.0, economy.loyalty + 2.0)
+					c.add_memory("ancestor_blessing", "grave", "", 1.5, "Почтил память предка у надгробия", true)
+					c.show_emote("praise", 3.5, 3)
+					c.last_status_reason = "Почтил память предка у надгробия (+2 Веры)"
+					c.decision_cooldown = randf_range(25.0, 45.0)
+				continue
+			elif c.task_id == "offer_gifts":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					if economy and economy.get_resource("food") >= 1.0:
+						economy.add_resource("food", -1.0)
+						economy.add_resource("faith", 4.0)
+						economy.loyalty = minf(100.0, economy.loyalty + 4.0)
+						c.loyalty = minf(100.0, c.loyalty + 4.0)
+						c.add_memory("offered_gifts", "grave", "", 1.8, "Возложил дары на могилу предка", true)
+						c.show_emote("flower", 4.0, 3)
+						c.last_status_reason = "Возложил дары на родовом могильнике (+4 Веры)"
+						EventBus.notification_toast.emit("🌸 Дары предкам", "%s возложил дары на родовом могильнике (+4 Веры, благословение)" % c.name, "good")
+					c.decision_cooldown = randf_range(30.0, 60.0)
+				continue
+			elif c.task_id == "desecrate_grave":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					var dec_name = c.custom_data.get("target_deceased_name", "недруга")
+					var dec_id = c.custom_data.get("target_deceased_id", "")
+					for rec in deceased_registry:
+						if (dec_id != "" and rec.get("citizen_id", "") == dec_id) or rec.get("name", "") == dec_name:
+							rec["is_defiled"] = true
+							rec["defiled_by"] = c.name
+							break
+					if economy:
+						economy.add_resource("faith", -3.0)
+						economy.loyalty = maxf(0.0, economy.loyalty - 2.0)
+					c.loyalty = maxf(0.0, c.loyalty - 5.0)
+					c.last_status_reason = "Осквернил могилу %s!" % dec_name
+					c.show_emote("anger", 4.0, 5, true)
+					c.shout("Ты и в земле не найдешь покоя, %s!" % dec_name, 3.5)
+					EventBus.notification_toast.emit("⚡ Осквернение могилы!", "%s осквернил могилу %s! Соплеменники в гневе!" % [c.name, dec_name], "warning")
+					
+					# Проверка свидетелей: родственники усопшего или стражники
+					for other in population.citizens:
+						if other.is_alive and other.citizen_id != c.citizen_id and other.pos.distance_to(c.pos) <= 160.0:
+							var is_kin = false
+							if dec_id != "":
+								var rel = other.get_relationship(dec_id)
+								if rel.get("type", "") in ["parent", "child", "spouse", "sibling"] or other.family_id == c.custom_data.get("target_family_id", "xyz"):
+									is_kin = true
+							if is_kin or other.job_id in ["guard", "warrior"]:
+								other.shout("Как ты смеешь осквернять святыню нашего рода?!" if is_kin else "Осквернитель! Прекратить святотатство!", 3.5)
+								other.show_emote("anger", 4.0, 5, true)
+								c.task_id = "brawling"
+								c.action_timer = 5.0
+								other.task_id = "brawling" if is_kin else "stop_brawl"
+								other.action_timer = 5.0
+								c.loyalty = maxf(0.0, c.loyalty - 10.0)
+								other.loyalty = maxf(0.0, other.loyalty - 5.0)
+								break
+					c.decision_cooldown = randf_range(40.0, 80.0)
+				continue
+			elif c.task_id == "cleanse_grave":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					for rec in deceased_registry:
+						rec["is_defiled"] = false
+						rec["defiled_by"] = ""
+					if economy:
+						economy.add_resource("faith", 3.0)
+						economy.loyalty = minf(100.0, economy.loyalty + 3.0)
+					c.loyalty = minf(100.0, c.loyalty + 3.0)
+					c.add_memory("cleansed_shrine", "grave", "", 1.8, "Очистил и освятил осквернённую могилу предка", true)
+					c.show_emote("praise", 4.0, 3)
+					c.last_status_reason = "Очистил и освятил осквернённую могилу (+3 Веры)"
+					EventBus.notification_toast.emit("🕊 Очищение святыни", "%s очистил и освятил осквернённую могилу (+3 Веры)" % c.name, "good")
+					c.decision_cooldown = randf_range(30.0, 60.0)
+				continue
+			elif c.task_id == "evening_fishing":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.morale = minf(100.0, c.morale + 4.0)
+					c.add_work_xp("gathering", 0.5)
+					if randf() < 0.50 and economy:
+						deposit_resource("food", 2.0, c.name)
+						c.show_emote("joy", 3.0, 2)
+						c.last_status_reason = "Удачно порыбачил вечерком (+2 рыбы)"
+					else:
+						c.show_emote("calm", 3.0, 1)
+						c.last_status_reason = "Спокойно отдохнул на вечерней рыбалке"
+					c.decision_cooldown = randf_range(20.0, 45.0)
+				continue
+			elif c.task_id == "evening_training":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.add_work_xp("combat_training", 0.6)
+					c.show_emote("strength", 3.0, 2)
+					c.last_status_reason = "Закончил вечернюю воинскую разминку"
+					c.decision_cooldown = randf_range(20.0, 45.0)
+				continue
+			elif c.task_id == "evening_walk":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.morale = minf(100.0, c.morale + 3.0)
+					c.show_emote("calm", 3.0, 1)
+					c.last_status_reason = "Прогулялся по поселению на закате"
+					c.decision_cooldown = randf_range(20.0, 40.0)
+				continue
+			elif c.task_id == "evening_porch_rest":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.energy = minf(100.0, c.energy + 8.0)
+					c.last_status_reason = "Отдохнул на крыльце хижины"
+					c.decision_cooldown = randf_range(20.0, 40.0)
+				continue
+			elif c.task_id == "funeral_vigil":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.last_status_reason = "Простился с соплеменником у могилы"
+					c.add_memory("honored_burial", "grave", c.target_id, 2.0, "Проводил соплеменника в последний путь с почестями", true)
+					c.loyalty = minf(100.0, c.loyalty + 4.0)
+					c.decision_cooldown = randf_range(5.0, 15.0)
+				continue
+			elif c.task_id == "campfire_dance":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 2.0)
+					c.last_status_reason = "Весело провёл вечер у костра"
+					c.decision_cooldown = randf_range(15.0, 30.0)
+				continue
+			elif c.task_id == "visiting_friend":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 2.5)
+					c.last_status_reason = "Приятно погостил у соплеменника"
+					c.decision_cooldown = randf_range(20.0, 45.0)
+				continue
+			elif c.task_id == "dating_walk":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 3.0)
+					c.last_status_reason = "Вернулся с романтической прогулки"
+					c.decision_cooldown = randf_range(25.0, 50.0)
+				continue
+			elif c.task_id == "reconcile_quarrel":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 3.0)
+					c.last_status_reason = "В добром согласии с соплеменниками"
+					c.decision_cooldown = randf_range(25.0, 50.0)
+				continue
+			elif c.task_id == "pet_animal":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 1.5)
+					c.last_status_reason = "Порадовался общению с питомцем"
+					c.decision_cooldown = randf_range(15.0, 35.0)
+				continue
+			elif c.task_id == "campfire_story":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 2.0)
+					c.last_status_reason = "Послушал увлекательные предания у костра"
+					c.decision_cooldown = randf_range(15.0, 35.0)
+				continue
+			elif c.task_id == "play_dice":
+				if c.work_timer <= 0.0:
+					c.state = CitizenNPC.State.IDLE
+					c.task_id = ""
+					c.loyalty = minf(100.0, c.loyalty + 2.0)
+					c.last_status_reason = "Сыграл партию в кости у очага"
+					c.decision_cooldown = randf_range(15.0, 35.0)
+				continue
 			if c.work_timer <= 0.0 or c.energy >= 85.0:
 				c.state = CitizenNPC.State.IDLE
 				c.ongoing_task_kind = ""
 				c.last_status_reason = "Отдохнул и полон сил"
 				c.decision_cooldown = randf_range(0.5, 1.5)
 			continue
+			
+		# Потасовка / драка между соплеменниками (BRAWLING)
+		if c.task_id == "brawling":
+			c.action_timer -= delta
+			if c.action_timer <= 0.0:
+				c.task_id = ""
+				c.state = CitizenNPC.State.IDLE
+				c.last_status_reason = "Отходит от потасовки (ушибы и ссадины)"
+				c.decision_cooldown = randf_range(4.0, 8.0)
+			continue
+			
+		# Вмешательство стражника / воина для прекращения потасовки
+		if c.task_id == "stop_brawl":
+			var broke_up = false
+			for brawler in population.citizens:
+				if brawler.is_alive and brawler.task_id == "brawling" and brawler.pos.distance_to(c.pos) <= 60.0:
+					brawler.task_id = ""
+					brawler.state = CitizenNPC.State.IDLE
+					brawler.last_status_reason = "Успокоен стражником после драки"
+					brawler.show_emote("fear", 3.0, 3)
+					broke_up = true
+			if broke_up or c.target_pos == Vector2.ZERO or c.pos.distance_to(c.target_pos) <= 45.0:
+				c.task_id = ""
+				c.state = CitizenNPC.State.IDLE
+				c.last_status_reason = "Восстановил порядок в поселении"
+				EventBus.notification_toast.emit("🛡 Порядок восстановлен", "%s разнял уличную потасовку" % c.name, "info")
+				continue
+			
+		# Автономные действия на кладбище и вечерний разнообразный досуг (S08)
+		if c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING] and c.decision_cooldown <= 0.0 and c.task_id == "":
+			var is_evening = (indiv_hour >= 17.5 and indiv_hour < 22.0)
+			
+			# 1. Проверка необходимости очистить осквернённую могилу
+			var has_defiled_grave = false
+			for rec in deceased_registry:
+				if rec.get("is_defiled", false) or rec.get("defiled_by", "") != "":
+					has_defiled_grave = true
+					break
+			if has_defiled_grave and not (c.job_id == "builder" and not construction_queue.is_empty()) and (float(c.traits.get("tradition", 50.0)) > 40.0 or c.job_id in ["priest", "sage", "elder"] or randf() < 0.25):
+				var g_target = _find_cemetery_target(c)
+				if not g_target.is_empty():
+					c.task_id = "cleanse_grave"
+					c.target_pos = g_target["pos"]
+					c.target_coord = g_target["coord"]
+					c.custom_data["target_deceased_id"] = g_target.get("deceased_id", "")
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.path = GameManager.nav_grid.find_path(c.pos, g_target["pos"]) if GameManager and GameManager.nav_grid else []
+					c.path_index = 0
+					c.last_status_reason = "Идёт очистить и освятить осквернённую могилу"
+					continue
+					
+			# 2. Осквернение могилы недруга NPC с высоким гневом / враждой к усопшему
+			if not deceased_registry.is_empty() and not (c.job_id == "builder" and not construction_queue.is_empty()) and (float(c.traits.get("temper", 20.0)) > 45.0 or c.traits.get("unpredictable", false)) and randf() < 0.12:
+				for d_rec in deceased_registry:
+					var dec_id = d_rec.get("citizen_id", "")
+					var aff = c.get_relationship_affinity(dec_id)
+					var has_feud = c.has_memory_of(dec_id, "feud") or c.has_memory_of(dec_id, "rival") or c.has_memory_of(dec_id, "betrayal")
+					if aff < -20.0 or has_feud or (c.traits.get("unpredictable", false) and randf() < 0.08):
+						var g_target = _find_cemetery_target(c)
+						if not g_target.is_empty():
+							c.task_id = "desecrate_grave"
+							c.target_pos = g_target["pos"]
+							c.target_coord = g_target["coord"]
+							c.custom_data["target_deceased_id"] = dec_id
+							c.custom_data["target_deceased_name"] = d_rec.get("name", "недруга")
+							c.custom_data["target_family_id"] = d_rec.get("family_id", "")
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.path = GameManager.nav_grid.find_path(c.pos, g_target["pos"]) if GameManager and GameManager.nav_grid else []
+							c.path_index = 0
+							c.last_status_reason = "Идёт с дурными намерениями к могиле %s!" % d_rec.get("name", "")
+							break
+				if c.task_id == "desecrate_grave":
+					continue
+
+			# 3. Почтить память / возложить дары на родовом кладбище
+			if not (c.job_id == "builder" and not construction_queue.is_empty()) and (c.job_id in ["idle", "priest", "sage"] or is_evening or c.has_memory("grief") or c.has_memory("sorrow")) and (c.has_memory("grief") or c.has_memory("sorrow") or c.has_memory("honored_burial") or float(c.traits.get("tradition", 50.0)) > 45.0 or c.job_id in ["priest", "sage"]) and randf() < (0.25 if is_evening else 0.10):
+				var g_target = _find_cemetery_target(c)
+				if not g_target.is_empty():
+					var can_offer = (economy and economy.get_resource("food") >= 1.0 and randf() < 0.40)
+					c.task_id = "offer_gifts" if can_offer else "visit_grave"
+					c.target_pos = g_target["pos"]
+					c.target_coord = g_target["coord"]
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.path = GameManager.nav_grid.find_path(c.pos, g_target["pos"]) if GameManager and GameManager.nav_grid else []
+					c.path_index = 0
+					var dec_name = g_target.get("deceased_name", "предков")
+					c.last_status_reason = ("Несёт дары на могилу %s" if can_offer else "Идёт на кладбище помянуть %s") % dec_name
+					continue
+
+			# 4. Вечернее разнообразие досуга и живая социальная жизнь (S08 / Living NPC Sim)
+			if is_evening and c.energy > 25.0 and not (c.job_id == "builder" and not construction_queue.is_empty()):
+				# 4a. Примирение со старыми обидчиками при остывшем гневе / высокой эмпатии
+				if (c.has_memory("grudge") or c.has_memory("offense")) and randf() < 0.30:
+					if _try_reconcile_quarrel(c):
+						continue
+
+				# 4b. Влюблённые / супруги идут на свидание и романтическую прогулку
+				if (c.spouse_id != "" or c.cohort in ["youth", "adult"]) and randf() < 0.28:
+					if _try_start_dating_walk(c):
+						continue
+
+				# 4c. Походы в гости к друзьям, родителям, старейшинам и соседям
+				if randf() < 0.32:
+					if _try_visit_friend(c):
+						continue
+
+				# 4d. Ласка и игра с прирученными животными (волчонок, питомцы)
+				if randf() < 0.22:
+					if _try_pet_animal(c):
+						continue
+
+				var roll = randf()
+				# 4e. Вечерняя рыбалка у берега реки/водоёма (20%)
+				if roll < 0.20 or c.job_id == "fisherman":
+					var shore_pos = _find_shore_pos(c)
+					if shore_pos != Vector2.ZERO:
+						c.task_id = "evening_fishing"
+						c.target_pos = shore_pos
+						c.state = CitizenNPC.State.MOVING_TO_WORK
+						c.path = GameManager.nav_grid.find_path(c.pos, shore_pos) if GameManager and GameManager.nav_grid else []
+						c.path_index = 0
+						c.last_status_reason = "Идёт к воде на вечернюю рыбалку"
+						continue
+				# 4f. Вечерняя воинская разминка и тренировка (20%)
+				elif roll < 0.40 and (c.job_id in ["guard", "warrior", "hunter"] or c.cohort == "youth" or float(c.traits.get("bravery", 50.0)) > 55.0):
+					var train_pos = _get_hearth_pos() + Vector2(randf_range(-60.0, 60.0), randf_range(-60.0, 60.0))
+					c.task_id = "evening_training"
+					c.target_pos = train_pos
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.path = GameManager.nav_grid.find_path(c.pos, train_pos) if GameManager and GameManager.nav_grid else []
+					c.path_index = 0
+					c.last_status_reason = "Идёт на площадку для вечерней тренировки"
+					continue
+				# 4g. Прогулка по тропинкам и окрестностям (15%)
+				elif roll < 0.55:
+					var walk_pos = _find_scenic_walk_pos(c)
+					if walk_pos != Vector2.ZERO:
+						c.task_id = "evening_walk"
+						c.target_pos = walk_pos
+						c.state = CitizenNPC.State.MOVING_TO_WORK
+						c.path = GameManager.nav_grid.find_path(c.pos, walk_pos) if GameManager and GameManager.nav_grid else []
+						c.path_index = 0
+						c.last_status_reason = "Гуляет по поселению на закате"
+						continue
+				# 4h. Отдых на крыльце хижины (15%)
+				elif roll < 0.70 and c.home_pos != Vector2.ZERO:
+					var porch_pos = c.home_pos + Vector2(randf_range(-10.0, 10.0), randf_range(1.0, 6.0))
+					c.task_id = "evening_porch_rest"
+					c.target_pos = porch_pos
+					c.state = CitizenNPC.State.MOVING_TO_WORK
+					c.path = GameManager.nav_grid.find_path(c.pos, porch_pos) if GameManager and GameManager.nav_grid else []
+					c.path_index = 0
+					c.last_status_reason = "Идёт отдохнуть на крыльце дома"
+					continue
+				# 4i. Личное благоустройство и украшение поселения / мусор
+				elif roll < 0.82:
+					_try_personal_decoration_action(c)
+					if c.task_id == "place_decoration" or c.task_id == "cleanup_trash":
+						continue
+				# 4j. Истории, игры в кости и танцы у костра
+				else:
+					if _try_hearth_game_or_story(c):
+						continue
+					var h_pos = _get_hearth_pos()
+					if c.pos.distance_to(h_pos) <= 120.0:
+						c.task_id = "campfire_dance"
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(6.0, 10.0)
+						c.show_emote("dance", 4.0, 3)
+						c.last_status_reason = "Танцует и поёт у вечернего костра"
+						continue
 			
 		# Движение к цели
 		if c.state in [CitizenNPC.State.MOVING_TO_WORK, CitizenNPC.State.CARRYING, CitizenNPC.State.GOING_HOME]:
@@ -1835,8 +2957,11 @@ func update_citizens(delta: float) -> void:
 					c.action_timer += delta
 					
 					# Проверка лимитов погони (ТЗ: не преследовать бесконечно через всю карту)
-					var dist_from_camp = c.pos.distance_to(_find_hunting_camp_pos(c))
-					if c.action_timer > 18.0 or dist_from_camp > 1000.0 or animal.state == WildAnimal.State.SWIMMING:
+					var camp_p = _find_hunting_camp_pos(c)
+					var dist_from_camp = c.pos.distance_to(camp_p)
+					var h_camp = _get_hunting_camp_instance(c)
+					var max_chase_dist = 1000.0 * (1.3 if (h_camp and h_camp.is_upgrade_unlocked("hunt_tracking")) else 1.0) * (h_camp.get_hunt_radius_mult() if h_camp else 1.0)
+					if c.action_timer > 18.0 or dist_from_camp > max_chase_dist or animal.state == WildAnimal.State.SWIMMING:
 						GameManager.wildlife_manager.release_animal(c.target_id, c.citizen_id)
 						c.target_id = ""
 						c.action_timer = 0.0
@@ -1858,22 +2983,393 @@ func update_citizens(delta: float) -> void:
 							c.target_pos = animal.pos
 							c.path = GameManager.nav_grid.find_path(c.pos, animal.pos)
 							c.path_index = 0
-						var hunt_arrived = c.update_movement(delta)
+						var hunter_spd = h_camp.get_hunter_speed_mult() if h_camp else 1.0
+						var hunt_arrived = c.update_movement(delta * hunter_spd)
 						if hunt_arrived and dist_to_animal > 70.0:
 							c.target_pos = animal.pos
 							c.path = GameManager.nav_grid.find_path(c.pos, animal.pos)
 							c.path_index = 0
-			if c.state == CitizenNPC.State.MOVING_TO_WORK and c.path.is_empty() and c.target_pos != Vector2.ZERO and c.pos.distance_to(c.target_pos) > 40.0:
+			var target_center = GameManager.nav_grid.tile_to_world_center(c.target_coord) if GameManager and GameManager.nav_grid and c.target_coord != Vector2i(-1, -1) else c.target_pos
+			var is_near_work = c.pos.distance_to(c.target_pos) <= 75.0 or c.pos.distance_to(target_center) <= 75.0
+			if c.state == CitizenNPC.State.MOVING_TO_WORK and c.path.is_empty() and c.target_pos != Vector2.ZERO and not is_near_work:
 				c.state = CitizenNPC.State.WAITING
 				c.last_status_reason = "Нет пути к цели"
 				if GameManager.task_service and c.task_instance_id != "":
 					GameManager.task_service.fail_task(c.task_instance_id, "Нет пути", true)
 				continue
 
+			if c.carrying_deceased_id != "":
+				var d_body = get_citizen_by_id(c.carrying_deceased_id)
+				if c.task_id != "burial_procession" or d_body == null or d_body.is_buried:
+					c.carrying_deceased_id = ""
+					if c.subphase == "carry_to_grave":
+						c.subphase = ""
+				elif d_body:
+					d_body.pos = c.pos + Vector2(0, -4)
+
 			var arrived = c.update_movement(delta)
+			if not arrived and c.speech_timer <= 0.0 and c.social_cooldown <= 0.0:
+				c.social_cooldown = randf_range(15.0, 30.0)
+				for other_passer in population.citizens:
+					if other_passer != c and other_passer.is_alive and other_passer.pos.distance_to(c.pos) <= 24.0:
+						var aff = c.get_relationship_affinity(other_passer.citizen_id)
+						if aff >= 15.0 or c.is_related_to(other_passer) or c.spouse_id == other_passer.citizen_id:
+							c.shout(_pick_phrase(c, [
+								"Привет, %s!" % other_passer.name,
+								"Доброго дня, %s!" % other_passer.name,
+								"Удачного дня, %s!" % other_passer.name,
+								"Рад видеть тебя, %s!" % other_passer.name
+							]), 2.2)
+							c.show_emote("sympathy" if randf() < 0.5 else "dialog", 2.2, 1)
+							break
 			if arrived:
 				if c.state == CitizenNPC.State.MOVING_TO_WORK:
-					if c.task_id == "fetch_home_food":
+					if c.task_id == "go_eat":
+						var my_h: BuildingInstance = null
+						if c.home_id != "" and GameManager and GameManager.building_instances:
+							for h in GameManager.building_instances.values():
+								if h.id == c.home_id:
+									my_h = h
+									break
+						if my_h and my_h.food_stockpile >= 0.25 and c.pos.distance_to(c.home_pos) <= 22.0:
+							my_h.consume_food(0.25)
+							c.hunger = 100.0
+							c.show_emote("eat", 3.0, 3)
+							c.last_status_reason = "Поел из домашнего запаса"
+							if not c._restore_task_snapshot():
+								c.state = CitizenNPC.State.IDLE
+								c.task_id = ""
+							c.decision_cooldown = randf_range(1.0, 2.0)
+						elif c.pos.distance_to(_get_hearth_pos()) <= 22.0 and economy.get_resource("food") >= 0.25:
+							consume_food(0.25)
+							c.hunger = 100.0
+							c.show_emote("eat", 3.0, 3)
+							c.last_status_reason = "Поел у очага"
+							if not c._restore_task_snapshot():
+								c.state = CitizenNPC.State.IDLE
+								c.task_id = ""
+							c.decision_cooldown = randf_range(1.0, 2.0)
+						else:
+							if not c._restore_task_snapshot():
+								c.state = CitizenNPC.State.IDLE
+								c.task_id = ""
+							c.last_status_reason = "Голодает! Нет еды у очага"
+						continue
+					elif c.task_id == "social_action_pending":
+						var pending_action = c.pending_social_action
+						c.pending_social_action = ""
+						c.task_id = ""
+						if pending_action == "complain":
+							c.state = CitizenNPC.State.COMPLAINING
+							c.social_timer = 8.0
+							c.last_status_reason = "Жалуется вождю на несправедливость"
+						elif pending_action == "help_neighbor":
+							c.state = CitizenNPC.State.HELPING
+							c.social_timer = 8.0
+							var target_c = get_citizen_by_id(c.target_id)
+							if target_c and target_c.is_alive and target_c.pos.distance_to(c.pos) <= 60.0:
+								c.facing_dir = (target_c.pos - c.pos).normalized()
+								target_c.facing_dir = (c.pos - target_c.pos).normalized()
+								if target_c.hunger < 35.0 and economy.get_resource("food") >= 0.5:
+									consume_food(0.5)
+									target_c.hunger = minf(100.0, target_c.hunger + 30.0)
+									target_c.show_emote("eat", 3.0, 2)
+								elif target_c.health < target_c.max_health:
+									target_c.health = minf(target_c.max_health, target_c.health + 15.0)
+								c.modify_relationship(target_c.citizen_id, 10.0, 5.0)
+								target_c.modify_relationship(c.citizen_id, 10.0, 5.0)
+								c.add_memory("helped_neighbor", "social", target_c.citizen_id, 1.3, "Помог соплеменнику %s в трудную минуту" % target_c.name)
+								target_c.add_memory("was_helped", "social", c.citizen_id, 1.3, "Получил помощь от %s" % c.name)
+							c.last_status_reason = "Помогает нуждающемуся соплеменнику"
+						else:
+							if not c._restore_task_snapshot():
+								c.state = CitizenNPC.State.IDLE
+						continue
+					elif c.task_id == "burial_procession":
+						var dead_c = get_citizen_by_id(c.target_id)
+						if c.subphase == "fetch_body":
+							c.subphase = "carry_to_grave"
+							c.carrying_deceased_id = c.target_id
+							var g_pos = GameManager.nav_grid.tile_to_world_center(c.target_coord) if GameManager and GameManager.nav_grid else Vector2(c.target_coord.x * 32 + 16, c.target_coord.y * 32 + 16)
+							c.target_pos = g_pos
+							c.path = GameManager.nav_grid.find_path(c.pos, g_pos) if GameManager and GameManager.nav_grid else []
+							c.path_index = 0
+							c.last_status_reason = "Несёт тело %s к месту погребения" % (dead_c.name if dead_c else "соплеменника")
+							c.show_emote("grief", 4.0, 3)
+							# Скорбящие следуют за могильщиком к кладбищу
+							for m in population.citizens:
+								if m.is_alive and m.task_id == "funeral_march":
+									m.target_pos = g_pos
+									m.path = GameManager.nav_grid.find_path(m.pos, g_pos) if GameManager and GameManager.nav_grid else []
+									m.path_index = 0
+									m.last_status_reason = "Идёт в погребальной процессии (%s)" % (dead_c.name if dead_c else "")
+							continue
+						elif c.subphase == "carry_to_grave":
+							c.subphase = "digging_grave"
+							c.state = CitizenNPC.State.WORKING
+							c.work_timer = 4.0
+							c.show_emote("shovel", 4.0, 3)
+							c.last_status_reason = "Предает земле и обустраивает могилу %s" % (dead_c.name if dead_c else "соплеменника")
+							
+							# Скорбящие родственники выстраиваются в круг прощания (Funeral Vigil) вокруг могилы
+							var g_pos = c.pos
+							var mourners: Array[CitizenNPC] = []
+							for m in population.citizens:
+								if m.is_alive and (m.task_id == "funeral_march" or m.task_id == "funeral_vigil"):
+									mourners.append(m)
+							var farewell_lines = [
+								"Покойся с миром, %s...",
+								"Мы сохраним память о тебе, %s...",
+								"Пусть предки примут тебя, %s...",
+								"Ты навсегда в наших сердцах, %s..."
+							]
+							var m_count = max(1, mourners.size())
+							for m_idx in range(mourners.size()):
+								var m = mourners[m_idx]
+								var ang = (float(m_idx) / float(m_count)) * TAU
+								var offset = Vector2(cos(ang), sin(ang)) * 20.0
+								var vigil_pos = g_pos + offset
+								m.pos = vigil_pos
+								m.target_pos = vigil_pos
+								m.facing_dir = (g_pos - vigil_pos).normalized()
+								m.task_id = "funeral_vigil"
+								m.state = CitizenNPC.State.RESTING
+								m.work_timer = 5.0
+								m.show_emote("candle", 5.0, 4, true)
+								m.shout(farewell_lines[m_idx % farewell_lines.size()] % (dead_c.name if dead_c else "соплеменник"), 4.0)
+								m.last_status_reason = "Стоит в кругу прощания у могилы %s" % (dead_c.name if dead_c else "")
+							continue
+					elif c.task_id in ["funeral_march", "funeral_vigil"]:
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = 5.0
+						c.show_emote("candle", 5.0, 4, true)
+						c.last_status_reason = "Стоит у места погребения, прощаясь"
+						continue
+					elif c.task_id == "visit_grave":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = 5.0
+						c.show_emote("candle", 5.0, 4, true)
+						c.facing_dir = (c.target_pos - c.pos).normalized()
+						c.last_status_reason = "Чтит память соплеменника у могилы"
+						continue
+					elif c.task_id == "offer_gifts":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = 5.0
+						c.show_emote("flower", 5.0, 4, true)
+						c.facing_dir = (c.target_pos - c.pos).normalized()
+						c.last_status_reason = "Возлагает дары на могилу предка"
+						continue
+					elif c.task_id == "desecrate_grave":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = 4.0
+						c.show_emote("anger", 4.0, 5, true)
+						c.facing_dir = (c.target_pos - c.pos).normalized()
+						c.last_status_reason = "Оскверняет могилу своего недруга!"
+						continue
+					elif c.task_id == "cleanse_grave":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = 5.0
+						c.show_emote("praise", 5.0, 4, true)
+						c.facing_dir = (c.target_pos - c.pos).normalized()
+						c.last_status_reason = "Очищает и освящает осквернённую могилу"
+						continue
+					elif c.task_id == "evening_fishing":
+						var c_coord = Vector2i(int(floor(c.pos.x / 32.0)), int(floor(c.pos.y / 32.0)))
+						var found_water = false
+						if GameManager and GameManager.nav_grid:
+							# Сначала проверяем сохранённую клетку воды
+							if c.target_coord != Vector2i(-1, -1) and GameManager.nav_grid.is_water_tile(c.target_coord):
+								var w_center = GameManager.nav_grid.tile_to_world_center(c.target_coord)
+								c.facing_dir = (w_center - c.pos).normalized()
+								found_water = true
+							else:
+								for n_off in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1), Vector2i(1,1), Vector2i(-1,1), Vector2i(1,-1), Vector2i(-1,-1)]:
+									var check_c = c_coord + n_off
+									if GameManager.nav_grid.is_water_tile(check_c):
+										var w_center = GameManager.nav_grid.tile_to_world_center(check_c)
+										c.facing_dir = (w_center - c.pos).normalized()
+										c.target_coord = check_c
+										found_water = true
+										break
+						if not found_water:
+							c.state = CitizenNPC.State.IDLE
+							c.task_id = ""
+							c.last_status_reason = "Не нашёл берега с водой"
+							continue
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(6.0, 10.0)
+						c.last_status_reason = "Рыбачит в лучах вечернего заката"
+						continue
+					elif c.task_id == "evening_training":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(5.0, 8.0)
+						c.show_emote("strength", 4.0, 2)
+						c.last_status_reason = "Тренируется в боевом искусстве"
+						continue
+					elif c.task_id == "evening_walk":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(4.0, 7.0)
+						c.show_emote("calm", 3.0, 1)
+						c.last_status_reason = "Любуется закатом и природой"
+						continue
+					elif c.task_id == "evening_porch_rest":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(5.0, 9.0)
+						c.show_emote("calm", 3.0, 1)
+						c.last_status_reason = "Отдыхает на крыльце у дома"
+						continue
+					elif c.task_id == "visit_friend_home":
+						c.state = CitizenNPC.State.RESTING
+						c.task_id = "visiting_friend"
+						c.work_timer = randf_range(7.0, 12.0)
+						c.show_emote("dialog", 3.5, 2)
+						var host_c = get_citizen_by_id(c.target_id)
+						if host_c and host_c.is_alive and host_c.pos.distance_to(c.pos) <= 60.0:
+							c.facing_dir = (host_c.pos - c.pos).normalized()
+							host_c.facing_dir = (c.pos - host_c.pos).normalized()
+							c.shout(_pick_phrase(c, [
+								"Мир твоему очагу, %s!" % host_c.name,
+								"Заглянул проведать тебя, %s." % host_c.name,
+								"Рад видеть тебя в добром здравии, %s!" % host_c.name
+							]), 3.5)
+							host_c.shout(_pick_phrase(host_c, [
+								"Заходи, %s, гостем будешь!" % c.name,
+								"Всегда рад тебе, %s! Присаживайся к теплу." % c.name,
+								"Добро пожаловать в мой дом, %s!" % c.name
+							]), 3.5)
+							host_c.show_emote("joy", 3.0, 2)
+							c.modify_relationship(host_c.citizen_id, 8.0, 4.0)
+							host_c.modify_relationship(c.citizen_id, 8.0, 4.0)
+							c.add_memory("visit", "social", host_c.citizen_id, 1.2, "Погостил у соплеменника %s" % host_c.name)
+							host_c.add_memory("guest", "social", c.citizen_id, 1.2, "Принял в гостях соплеменника %s" % c.name)
+							if c.target_coord != Vector2i(-1, -1) and GameManager.building_instances:
+								var b_inst = GameManager.building_instances.get(c.target_coord, null)
+								if b_inst and b_inst.food_stockpile >= 0.5:
+									b_inst.consume_food(0.2)
+									c.hunger = minf(100.0, c.hunger + 15.0)
+									host_c.hunger = minf(100.0, host_c.hunger + 10.0)
+									c.show_emote("eat", 3.0, 2)
+							c.last_status_reason = "Гостит у соплеменника %s" % host_c.name
+						else:
+							c.last_status_reason = "Отдыхает на крыльце хижины друга"
+						continue
+					elif c.task_id == "dating_walk":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(8.0, 14.0)
+						c.show_emote("love", 4.0, 3)
+						var partner_c = get_citizen_by_id(c.target_id)
+						if partner_c and partner_c.is_alive and partner_c.pos.distance_to(c.pos) <= 60.0:
+							c.facing_dir = (partner_c.pos - c.pos).normalized()
+							partner_c.facing_dir = (c.pos - partner_c.pos).normalized()
+							partner_c.state = CitizenNPC.State.RESTING
+							partner_c.task_id = "dating_walk"
+							partner_c.work_timer = c.work_timer
+							partner_c.show_emote("romance", 4.0, 3)
+							c.shout(_pick_phrase(c, [
+								"С тобой этот вечер по-настоящему особенный, %s...",
+								"Я собрал эти цветы для тебя, %s!",
+								"Моё сердце радуется рядом с тобой, %s..."
+							]), 4.0)
+							partner_c.shout(_pick_phrase(partner_c, [
+								"И я счастлива быть рядом с тобой, %s...",
+								"Ты самый надёжный человек во всём племени, %s.",
+								"Пусть этот вечер длится дольше..."
+							]), 4.0)
+							var cur_rel = c.get_relationship(partner_c.citizen_id)
+							var new_rom = float(cur_rel.get("romance", 0.0)) + 20.0
+							c.add_relationship(partner_c.citizen_id, "friend", 70.0, new_rom, cur_rel.get("married", false))
+							partner_c.add_relationship(c.citizen_id, "friend", 70.0, new_rom, cur_rel.get("married", false))
+							c.modify_relationship(partner_c.citizen_id, 10.0, 5.0)
+							partner_c.modify_relationship(c.citizen_id, 10.0, 5.0)
+							c.add_memory("romance_date", "love", partner_c.citizen_id, 1.8, "Провёл романтический вечер с %s" % partner_c.name)
+							partner_c.add_memory("romance_date", "love", c.citizen_id, 1.8, "Провела романтический вечер с %s" % partner_c.name)
+							if new_rom >= 50.0 and not cur_rel.get("married", false) and c.can_marry(partner_c, marriage_law).get("allowed", false):
+								c.marry(partner_c, marriage_law)
+								c.shout("Ты будешь моей спутницей жизни? — Да, я согласна!", 4.5)
+								partner_c.shout("Мы связали наши судьбы перед духами предков!", 4.5)
+								c.show_emote("marriage", 5.0, 4)
+								partner_c.show_emote("marriage", 5.0, 4)
+								EventBus.notification_toast.emit("💍 Новый союз", "%s и %s заключили священный союз" % [c.name, partner_c.name], "good")
+								auto_assign_housing()
+							c.last_status_reason = "На свидании с любимым человеком (%s)" % partner_c.name
+							partner_c.last_status_reason = "На свидании с любимым человеком (%s)" % c.name
+						else:
+							c.last_status_reason = "Гуляет и любуется вечерней природой"
+						continue
+					elif c.task_id == "reconcile_quarrel":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(5.0, 8.0)
+						c.show_emote("handshake", 4.0, 3)
+						var rival_c = get_citizen_by_id(c.target_id)
+						if rival_c and rival_c.is_alive and rival_c.pos.distance_to(c.pos) <= 60.0:
+							c.facing_dir = (rival_c.pos - c.pos).normalized()
+							rival_c.facing_dir = (c.pos - rival_c.pos).normalized()
+							c.shout("Забудем старую обиду, %s. Нам незачем враждовать в одном племени!" % rival_c.name, 4.0)
+							rival_c.shout("Ты прав, %s. Мир важнее старых ссор. Забудем былое!" % c.name, 4.0)
+							rival_c.show_emote("joy", 3.5, 3)
+							c.clear_grudge(rival_c.citizen_id)
+							rival_c.clear_grudge(c.citizen_id)
+							c.modify_relationship(rival_c.citizen_id, 25.0, 10.0)
+							rival_c.modify_relationship(c.citizen_id, 25.0, 10.0)
+							c.loyalty = minf(100.0, c.loyalty + 4.0)
+							rival_c.loyalty = minf(100.0, rival_c.loyalty + 4.0)
+							c.add_memory("reconciled", "peace", rival_c.citizen_id, 2.0, "Помирился с соплеменником %s и забыл старую обиду" % rival_c.name, true)
+							rival_c.add_memory("reconciled", "peace", c.citizen_id, 2.0, "Помирился с соплеменником %s" % c.name, true)
+							EventBus.notification_toast.emit("🤝 Примирение", "%s и %s помирились и забыли старую обиду" % [c.name, rival_c.name], "good")
+							c.last_status_reason = "Помирился с %s" % rival_c.name
+						else:
+							c.last_status_reason = "Ищет примирения с соплеменником"
+						continue
+					elif c.task_id == "pet_animal":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(4.0, 6.0)
+						c.show_emote("heart" if randf() < 0.5 else "praise", 3.5, 3)
+						if GameManager and GameManager.wildlife_manager and GameManager.wildlife_manager.animals.has(c.target_id):
+							var anim_pet = GameManager.wildlife_manager.animals[c.target_id]
+							c.facing_dir = (anim_pet.pos - c.pos).normalized()
+							anim_pet.facing_dir = (c.pos - anim_pet.pos).normalized()
+							c.shout(_pick_phrase(c, [
+								"Кто у нас тут самый славный друг?",
+								"Хороший волчонок, умница!",
+								"Держи лакомство, дружок!",
+								"Славный наш зверёк!"
+							]), 3.5)
+							c.loyalty = minf(100.0, c.loyalty + 2.5)
+							c.last_status_reason = "Гладит и играет с питомцем"
+						else:
+							c.last_status_reason = "Общается с прирученным животным"
+						continue
+					elif c.task_id == "place_decoration":
+						_finish_decoration_placement(c)
+						continue
+					elif c.task_id == "cleanup_trash":
+						_finish_trash_cleanup(c)
+						continue
+					elif c.task_id == "recover_at_home":
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(8.0, 16.0)
+						c.ongoing_task_kind = "resting"
+						c.commitment_timer = c.work_timer
+						c.last_status_reason = "Отлёживается дома после ран и битвы (%d/%d HP)" % [int(c.health), int(c.max_health)]
+						continue
+					elif c.task_id == "defend_settlement":
+						c.state = CitizenNPC.State.ATTACKING
+						c.work_timer = 0.0
+						c.last_status_reason = "Сражается с врагом, защищая соплеменников!"
+						continue
+					elif c.task_id == "stop_brawl":
+						for brawler in population.citizens:
+							if brawler.is_alive and brawler.task_id == "brawling" and brawler.pos.distance_to(c.pos) <= 45.0:
+								brawler.task_id = ""
+								brawler.state = CitizenNPC.State.IDLE
+								brawler.last_status_reason = "Успокоен стражником после драки"
+								brawler.show_emote("fear", 3.0, 3)
+						c.task_id = ""
+						c.state = CitizenNPC.State.IDLE
+						c.last_status_reason = "Восстановил порядок в поселении"
+						EventBus.notification_toast.emit("🛡 Порядок восстановлен", "%s разнял уличную потасовку" % c.name, "info")
+						continue
+					elif c.task_id == "fetch_home_food":
 						var my_home: BuildingInstance = null
 						if GameManager.building_instances:
 							for h in GameManager.building_instances.values():
@@ -1927,6 +3423,15 @@ func update_citizens(delta: float) -> void:
 							GameManager.task_service.start_task(c.task_instance_id)
 					elif c.job_id == "woodcutter":
 						c.state = CitizenNPC.State.WORKING
+						if c.target_coord != Vector2i(-1, -1) and GameManager and GameManager.nav_grid:
+							var tree_center = GameManager.nav_grid.tile_to_world_center(c.target_coord)
+							var diff = tree_center - c.pos
+							var dist_to_tree = diff.length()
+							if dist_to_tree > 0.001:
+								c.facing_dir = diff.normalized()
+							# Подводим жителя вплотную к стволу, если путь до него завершился с зазором
+							if c.task_id != "plant_tree" and dist_to_tree > 16.0:
+								c.pos = tree_center - c.facing_dir * 14.0
 						if GameManager.task_service and c.task_instance_id != "":
 							GameManager.task_service.set_arrived(c.task_instance_id)
 							GameManager.task_service.start_task(c.task_instance_id)
@@ -1934,7 +3439,7 @@ func update_citizens(delta: float) -> void:
 							c.work_timer = 2.5
 							c.last_status_reason = "Сажает саженец дерева"
 						else:
-							c.work_timer = 0.75
+							c.work_timer = randf_range(4.5, 6.0)
 							c.last_status_reason = "Рубит дерево топором"
 					elif c.job_id in ["quarryman", "miner"]:
 						c.state = CitizenNPC.State.WORKING
@@ -2110,8 +3615,13 @@ func update_citizens(delta: float) -> void:
 				elif c.state == CitizenNPC.State.CARRYING or c.state == CitizenNPC.State.GOING_HOME:
 					if c.cargo_type == "carcass":
 						c.state = CitizenNPC.State.BUTCHERING
-						c.work_timer = 2.5
-						c.last_status_reason = "Разделывает добычу в лагере"
+						var camp_inst = _get_hunting_camp_instance(c)
+						var speed_mult = camp_inst.get_butchering_speed_mult() if camp_inst else 1.0
+						c.work_timer = 2.5 / speed_mult
+						if camp_inst and camp_inst.is_upgrade_unlocked("hunt_campfire"):
+							c.needs["rest"] = minf(100.0, c.needs.get("rest", 80.0) + 15.0)
+							c.morale = minf(100.0, c.morale + 3.0)
+						c.last_status_reason = "Разделывает добычу на оборудованной площадке" if (camp_inst and camp_inst.is_upgrade_unlocked("hunt_butcher_table")) else "Разделывает добычу в лагере"
 						continue
 					elif c.task_id == "deposit_to_camp":
 						var camp = get_active_woodcutter_camp()
@@ -2211,7 +3721,7 @@ func update_citizens(delta: float) -> void:
 			
 		# Сбор ягод и растений (GATHERING)
 		if c.state == CitizenNPC.State.GATHERING:
-			c.work_timer -= delta
+			c.work_timer -= delta * c.get_work_speed_multiplier()
 			if c.work_timer <= 0.0:
 				var harvested = 0.0
 				if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
@@ -2237,61 +3747,139 @@ func update_citizens(delta: float) -> void:
 					GameManager.task_service.set_delivering(c.task_instance_id)
 			continue
 			
-		# Атака зверя охотником (ATTACKING)
+		# Атака зверя охотником или защитником поселения (ATTACKING)
 		if c.state == CitizenNPC.State.ATTACKING:
 			c.work_timer -= delta
 			if not GameManager.wildlife_manager.animals.has(c.target_id):
 				c.target_id = ""
+				c.task_id = ""
 				c.state = CitizenNPC.State.IDLE
 				c.decision_cooldown = 1.0
+				c.last_status_reason = "Угроза устранена"
 				continue
 			var animal = GameManager.wildlife_manager.animals[c.target_id]
 			c.facing_dir = (animal.pos - c.pos).normalized()
 			if c.work_timer <= 0.0:
-				var killed = animal.take_damage(20.0, c.citizen_id)
+				c.work_timer = 1.2
+				var base_dmg = 15.0
+				if c.job_id in ["guard", "warrior"]:
+					base_dmg = 26.0
+				elif c.job_id == "hunter":
+					var camp_inst = _get_hunting_camp_instance(c)
+					base_dmg = 20.0 * (camp_inst.get_hunter_damage_mult() if camp_inst else 1.0)
+				elif c.has_tool("axe"):
+					base_dmg = 22.0
+				elif c.has_tool("pickaxe"):
+					base_dmg = 18.0
+				else:
+					base_dmg = maxf(12.0, float(c.traits.get("bravery", 50.0)) * 0.2 + float(c.traits.get("temper", 20.0)) * 0.2)
+
+				var killed = animal.take_damage(base_dmg, c.citizen_id)
+				if not killed and animal.is_alive():
+					# Зверь даёт сдачи защитнику
+					var a_dmg = animal.attack_damage if animal.attack_damage > 0.0 else 10.0
+					c.take_damage(a_dmg * 0.4, animal.species)
+					if c.health <= 0.0:
+						continue
+
 				if killed:
 					var carcass = GameManager.wildlife_manager.create_carcass_from_animal(animal)
 					GameManager.wildlife_manager.animals.erase(c.target_id)
-					c.target_id = carcass["id"]
-					c.target_pos = carcass["pos"]
-					c.path = GameManager.nav_grid.find_path(c.pos, carcass["pos"])
-					c.path_index = 0
-					c.state = CitizenNPC.State.MOVING_TO_WORK
-					c.last_status_reason = "Добыл зверя, идёт к туше"
+					if c.job_id == "hunter":
+						c.target_id = carcass["id"]
+						c.target_pos = carcass["pos"]
+						c.path = GameManager.nav_grid.find_path(c.pos, carcass["pos"]) if GameManager.nav_grid else []
+						c.path_index = 0
+						c.state = CitizenNPC.State.MOVING_TO_WORK
+						c.last_status_reason = "Добыл зверя, идёт к туше"
+					else:
+						c.target_id = ""
+						c.task_id = ""
+						c.state = CitizenNPC.State.IDLE
+						c.last_status_reason = "Одолел опасного зверя и защитил племя!"
+						c.shout("Зверь повержен! Поселение в безопасности!", 3.5)
+						c.show_emote("praise", 3.5, 3)
+						c.loyalty = minf(100.0, c.loyalty + 6.0)
+						c.add_memory("defended_tribe", "hero", animal.id, 2.0, "Защитил соплеменников от опасного зверя", true)
+						EventBus.notification_toast.emit("🛡 Угроза устранена!", "%s защитил поселение и одолел зверя!" % c.name, "good")
 				else:
 					c.target_pos = animal.pos
-					c.path = GameManager.nav_grid.find_path(c.pos, animal.pos)
+					c.path = GameManager.nav_grid.find_path(c.pos, animal.pos) if GameManager.nav_grid else []
 					c.path_index = 0
 					c.state = CitizenNPC.State.MOVING_TO_WORK
-					c.last_status_reason = "Преследует раненого зверя"
+					c.last_status_reason = "Преследует зверя в бою"
 			continue
 
 		# Разделка добычи в охотничьем лагере (BUTCHERING)
 		if c.state == CitizenNPC.State.BUTCHERING:
-			c.work_timer -= delta
+			c.work_timer -= delta * c.get_work_speed_multiplier()
 			if c.work_timer <= 0.0:
+				var camp_inst = _get_hunting_camp_instance(c)
+				var meat_mult = camp_inst.get_meat_yield_mult() if camp_inst else 1.0
+				var fur_bonus = camp_inst.get_fur_bonus() if camp_inst else 0
+				var bone_bonus = camp_inst.get_bone_bonus() if camp_inst else 0
+				if fur_bonus > 0:
+					deposit_resource("leather", float(fur_bonus), c.name)
+				if bone_bonus > 0:
+					deposit_resource("bone", float(bone_bonus), c.name)
+				var final_meat = c.cargo_amount * meat_mult
 				c.cargo_type = "food"
+				var is_smoked = camp_inst.is_smokehouse_unlocked() if camp_inst else false
+				var freshness = 22500.0 if is_smoked else 4500.0
 				c.cargo_batch = {
-					"food_type": "meat",
-					"amount": c.cargo_amount,
+					"food_type": "smoked_meat" if is_smoked else "meat",
+					"amount": final_meat,
 					"created_sim_time": GameManager.sim_time_total,
-					"max_freshness_sec": 4500.0,
+					"max_freshness_sec": freshness,
 					"spoilage_progress": 0.0
 				}
 				c.state = CitizenNPC.State.CARRYING
 				var dest_p = _get_storage_pos(c)
 				c.path = GameManager.nav_grid.find_path(c.pos, dest_p)
 				c.path_index = 0
-				c.last_status_reason = "Несёт %d еды в амбар" % int(c.cargo_amount)
+				c.last_status_reason = "Несёт %d копчёного мяса в амбар" % int(final_meat) if is_smoked else "Несёт %d еды в амбар" % int(final_meat)
 				if GameManager.task_service and c.task_instance_id != "":
 					GameManager.task_service.set_delivering(c.task_instance_id)
 			continue
 
 		# Выполнение работы на месте
 		if c.state == CitizenNPC.State.WORKING:
-			c.work_timer -= delta
+			c.work_timer -= delta * c.get_work_speed_multiplier()
 			if c.work_timer <= 0.0:
-				if c.task_id == "care_for_child":
+				if c.task_id == "burial_procession" and c.subphase == "digging_grave":
+					var d_c = get_citizen_by_id(c.target_id)
+					if d_c:
+						d_c.is_buried = true
+					var g_coord = c.target_coord
+					var g_inst: BuildingInstance = c.custom_data.get("grave_inst", null)
+					if g_inst == null and d_c and d_c.custom_data.has("pending_grave_inst"):
+						g_inst = d_c.custom_data["pending_grave_inst"]
+					if g_inst != null and GameManager:
+						GameManager.building_instances[g_coord] = g_inst
+						GameManager.tile_buildings[g_coord] = {"id": "cemetery", "coord": g_coord, "status": "active"}
+						if GameManager.nav_grid:
+							GameManager.nav_grid.register_building(g_coord, Vector2i(1, 1), g_inst.id)
+						if not buildings.has("cemetery"):
+							buildings.append("cemetery")
+						if not buildings.has("grave"):
+							buildings.append("grave")
+					c.subphase = ""
+					c.carrying_deceased_id = ""
+					c.task_id = ""
+					c.state = CitizenNPC.State.IDLE
+					c.last_status_reason = "Завершил обряд погребения"
+					c.show_emote("respect", 4.0, 3)
+					EventBus.notification_toast.emit("⚰ Погребение завершено", "Соплеменник %s предан земле в родовом могильнике" % (d_c.name if d_c else ""), "good")
+					for mourner in population.citizens:
+						if mourner.is_alive and (mourner.task_id == "funeral_march" or mourner.task_id == "funeral_vigil"):
+							mourner.task_id = ""
+							mourner.state = CitizenNPC.State.IDLE
+							mourner.last_status_reason = "Простился с соплеменником у могилы"
+							mourner.add_memory("honored_burial", "grave", c.target_id, 2.0, "Проводил соплеменника в последний путь с почестями", true)
+							mourner.show_emote("respect", 4.0, 3)
+							mourner.loyalty = minf(100.0, mourner.loyalty + 4.0)
+					continue
+				elif c.task_id == "care_for_child":
 					c.state = CitizenNPC.State.IDLE
 					c.task_id = ""
 					c.decision_cooldown = randf_range(1.5, 3.0)
@@ -2317,9 +3905,9 @@ func update_citizens(delta: float) -> void:
 						c.last_status_reason = "Посадил молодой саженец"
 						EventBus.notification_toast.emit("Посадка леса", "Лесорубы посеяли молодое дерево", "good")
 					else:
-						# УДАР ТОПОРОМ: износ топора и прогрессивное снятие порции древесины (25 дров за удар с учетом сил)
+						# УДАР ТОПОРОМ: физический износ топора и постепенная рубка (2.0 древесины за удар с учетом сил)
 						if not c.equipped_tool.is_empty():
-							c.wear_tool(0.5)
+							c.wear_tool(0.06)
 							if not c.has_tool("axe"):
 								c.state = CitizenNPC.State.WAITING
 								c.last_status_reason = "Топор сломан во время рубки"
@@ -2329,9 +3917,14 @@ func update_citizens(delta: float) -> void:
 									GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 								continue
 
-						var strike_harvest = 25.0 * c.get_vitality_multiplier()
+						var strike_harvest = 12.5 * c.get_vitality_multiplier()
 						var h_amount = 0.0
 						if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
+							if GameManager.nav_grid:
+								var tree_center = GameManager.nav_grid.tile_to_world_center(c.target_coord)
+								var diff = tree_center - c.pos
+								if diff.length_squared() > 0.001:
+									c.facing_dir = diff.normalized()
 							h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, strike_harvest)
 						
 						if h_amount > 0.0:
@@ -2343,8 +3936,8 @@ func update_citizens(delta: float) -> void:
 						var rem_wood = float(node.get("amount", 0.0)) if not node.is_empty() else 0.0
 						var is_done = node.get("depleted", false) or rem_wood <= 0.0 or h_amount <= 0.0
 						
-						if is_done or c.cargo_amount >= 100.0:
-							# Дерево срублено полностью (или достигнут лимит 100 дров)
+						if is_done or c.cargo_amount >= minf(18.0, c.max_carry):
+							# Дерево срублено полностью (или достигнут переносимый объем древесины)
 							if GameManager.resource_manager:
 								GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 							if priority_harvest_coords.has(c.target_coord):
@@ -2376,9 +3969,8 @@ func update_citizens(delta: float) -> void:
 									GameManager.task_service.cancel_task(c.task_instance_id, "Дерево пустое")
 									c.task_instance_id = ""
 						else:
-							# Следующий удар топором через 0.75 сек
-							c.work_timer = 0.75
-							c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
+							# Следующий удар топором через 4.5-6.0 сек (размеренная физическая рубка)
+							c.work_timer = randf_range(4.5, 6.0)
 							c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
 				elif c.job_id in ["quarryman", "miner"]:
 					var res_cat = "stone" if c.job_id == "quarryman" else "metal"
@@ -2413,7 +4005,7 @@ func update_citizens(delta: float) -> void:
 									c.last_status_reason = "Улучшение остановлено: не все материалы на площадке"
 									c.decision_cooldown = 2.0
 								else:
-									up["work_left"] = maxf(0.0, float(up.get("work_left", 4.0)) - 0.5)
+									up["work_left"] = maxf(0.0, float(up.get("work_left", 4.0)) - 1.5)
 									if up["work_left"] <= 0.0:
 										var up_id = up["id"]
 										b_inst.unlock_upgrade(up_id)
@@ -2424,7 +4016,7 @@ func update_citizens(delta: float) -> void:
 										c.task_id = ""
 										c.decision_cooldown = 1.0
 									else:
-										c.work_timer = 1.5
+										c.work_timer = 0.65
 										c.last_status_reason = "Работает над улучшением здания"
 					else:
 						# Обычное строительство здания
@@ -2441,7 +4033,7 @@ func update_citizens(delta: float) -> void:
 									c.last_status_reason = "Стройка остановлена: нет материалов на площадке"
 									c.decision_cooldown = 2.0
 								else:
-									b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.25)
+									b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70)
 									if b["days_left"] <= 0.0:
 										b["status"] = "active"
 										var b_inst = GameManager.get_or_create_building_instance(c.target_coord, b["id"], id)
@@ -2459,7 +4051,7 @@ func update_citizens(delta: float) -> void:
 										c.task_id = ""
 										c.decision_cooldown = 1.0
 									else:
-										c.work_timer = 1.5
+										c.work_timer = 0.65
 										c.last_status_reason = "Строит здание (осталось %.1f дней)" % b["days_left"]
 						else:
 							c.state = CitizenNPC.State.IDLE
@@ -2507,9 +4099,42 @@ func update_citizens(delta: float) -> void:
 			if c.decision_cooldown > 0.0:
 				continue
 				
+			# 0000. Восстановление после ран: раненый житель пропускает работу и отлёживается дома
+			if c.health < 80.0 and c.cargo_amount == 0.0:
+				if c.home_id != "" and c.home_pos != Vector2.ZERO:
+					if c.pos.distance_to(c.home_pos) > 16.0:
+						var r_path: Array[Vector2] = GameManager.nav_grid.find_path(c.pos, c.home_pos) if (GameManager and GameManager.nav_grid) else []
+						if not r_path.is_empty():
+							c.task_id = "recover_at_home"
+							c.target_pos = c.home_pos
+							c.path = r_path
+							c.path_index = 0
+							c.state = CitizenNPC.State.MOVING_TO_WORK
+							c.ongoing_task_kind = "resting"
+							c.commitment_timer = 12.0
+							c.last_status_reason = "Ранен! Идёт домой отлежаться и восстановить силы (%d/%d HP)" % [int(c.health), int(c.max_health)]
+							c.decision_cooldown = 1.0
+							continue
+					else:
+						c.task_id = "recover_at_home"
+						c.state = CitizenNPC.State.RESTING
+						c.work_timer = randf_range(8.0, 16.0)
+						c.ongoing_task_kind = "resting"
+						c.commitment_timer = c.work_timer
+						c.last_status_reason = "Отлёживается дома после ран и битвы (%d/%d HP)" % [int(c.health), int(c.max_health)]
+						continue
+				else:
+					c.task_id = "recover_at_home"
+					c.state = CitizenNPC.State.RESTING
+					c.work_timer = randf_range(6.0, 12.0)
+					c.ongoing_task_kind = "resting"
+					c.commitment_timer = c.work_timer
+					c.last_status_reason = "Залечивает раны у костра (%d/%d HP)" % [int(c.health), int(c.max_health)]
+					continue
+
 			# 000. Вечерние посиделки у костра (18:00 - 21:45)
 			# Свободные жители и рабочие после смены собираются у костра племени, общаются и слушают предания
-			if indiv_hour >= 18.0 and indiv_hour < 21.8 and c.job_id != "guard" and c.cargo_amount == 0.0:
+			if indiv_hour >= 18.0 and indiv_hour < 21.8 and c.job_id != "guard" and c.cargo_amount == 0.0 and not (c.job_id == "builder" and not construction_queue.is_empty()):
 				var campfire_center = GameManager.nav_grid.tile_to_world_center(pos) if GameManager.nav_grid else Vector2(pos.x * 32.0 + 16, pos.y * 32.0 + 16)
 				var dist_to_fire = c.pos.distance_to(campfire_center)
 				if dist_to_fire > 42.0:
@@ -2662,8 +4287,9 @@ func update_citizens(delta: float) -> void:
 				c.commitment_timer = c.work_timer
 				c.last_status_reason = "Разрешает споры и укрепляет согласие рода"
 				if randf() < 0.3: c.show_emote("handshake", 3.0, 1)
-				if assigned_lodge != null:
-					assigned_lodge.household_harmony = minf(100.0, assigned_lodge.household_harmony + 0.15)
+				continue
+			# 00. Священный обряд погребения и прощания (не прерывается бытовыми делами)
+			if c.task_id in ["burial_procession", "funeral_march", "funeral_vigil"]:
 				continue
 
 			# 00. Уход за маленьким ребёнком (S07: физическая занятость опекуна)
@@ -2759,7 +4385,12 @@ func update_citizens(delta: float) -> void:
 				if f_node.is_empty() and GameManager.resource_manager:
 					f_node = GameManager.resource_manager.find_available_node(pos, "food", 36, c.citizen_id)
 				if not f_node.is_empty():
-					var f_path = GameManager.nav_grid.find_path(c.pos, f_node["pos"]) if GameManager.nav_grid else []
+					var f_path = GameManager.nav_grid.find_adjacent_path(c.pos, f_node["coord"]) if GameManager.nav_grid else []
+					if f_path.is_empty() and GameManager.nav_grid:
+						f_path = GameManager.nav_grid.find_path(c.pos, f_node["pos"], true)
+					if f_path.is_empty() and c.pos.distance_to(f_node["pos"]) <= 36.0:
+						f_path = [c.pos]
+						
 					if f_path.is_empty():
 						if GameManager.task_service:
 							var blocked_id = GameManager.task_service.create_task("forage_food", f_node.get("id", ""), f_node["coord"], f_node["pos"])
@@ -2771,7 +4402,7 @@ func update_citizens(delta: float) -> void:
 					GameManager.resource_manager.reserve_node(f_node["coord"], c.citizen_id)
 					c.task_id = "forage_food"
 					c.target_coord = f_node["coord"]
-					c.target_pos = f_node["pos"]
+					c.target_pos = f_path[-1] if not f_path.is_empty() else f_node["pos"]
 					c.target_id = f_node["id"]
 					c.path = f_path
 					c.path_index = 0
@@ -2863,9 +4494,17 @@ func update_citizens(delta: float) -> void:
 						GameManager.task_service.assign_actor(tid, c.citizen_id)
 						c.task_instance_id = tid
 				else:
-					c.state = CitizenNPC.State.WAITING
-					c.last_status_reason = "Нет доступной добычи"
-					c.decision_cooldown = randf_range(3.0, 5.0)
+					var h_camp = _get_hunting_camp_instance(c)
+					if h_camp and h_camp.is_target_unlocked():
+						c.state = CitizenNPC.State.WORKING
+						c.work_timer = randf_range(3.0, 5.0)
+						var xp_bonus = 0.5 * (1.35 if h_camp.is_mentor_unlocked() else 1.0)
+						c.skill_hunter = minf(100.0, c.skill_hunter + xp_bonus)
+						c.last_status_reason = "Тренируется на мишени у лагеря (Лук/Копьё XP +%.1f)" % xp_bonus
+					else:
+						c.state = CitizenNPC.State.WAITING
+						c.last_status_reason = "Нет доступной добычи"
+						c.decision_cooldown = randf_range(3.0, 5.0)
 				continue
 
 			# 2a. Рыбак: физический путь к береговому рыбному месту, ловля и доставка
@@ -2883,7 +4522,12 @@ func update_citizens(delta: float) -> void:
 					c.last_status_reason = "Нет доступных рыбных мест"
 					c.decision_cooldown = randf_range(3.0, 5.0)
 					continue
-				var fish_path = GameManager.nav_grid.find_path(c.pos, fish_node["pos"]) if GameManager.nav_grid else []
+				var fish_path = GameManager.nav_grid.find_adjacent_path(c.pos, fish_node["coord"]) if GameManager.nav_grid else []
+				if fish_path.is_empty() and GameManager.nav_grid:
+					fish_path = GameManager.nav_grid.find_path(c.pos, fish_node["pos"], true)
+				if fish_path.is_empty() and c.pos.distance_to(fish_node["pos"]) <= 48.0:
+					fish_path = [c.pos]
+					
 				if fish_path.is_empty():
 					c.state = CitizenNPC.State.WAITING
 					c.last_status_reason = "Нет пути к рыбному месту"
@@ -2892,7 +4536,7 @@ func update_citizens(delta: float) -> void:
 				GameManager.resource_manager.reserve_node(fish_node["coord"], c.citizen_id)
 				c.task_id = "fish"
 				c.target_coord = fish_node["coord"]
-				c.target_pos = fish_node["pos"]
+				c.target_pos = fish_path[-1] if not fish_path.is_empty() else fish_node["pos"]
 				c.target_id = fish_node["id"]
 				c.path = fish_path
 				c.path_index = 0
@@ -2925,28 +4569,34 @@ func update_citizens(delta: float) -> void:
 						GameManager.task_service.set_delivering(c.task_instance_id)
 					continue
 
-				# Проверяем наличие Лагеря лесорубов
-				var camp = get_active_woodcutter_camp()
+				# Без лагеря лесорубов рубка живого леса запрещена
 				if not has_active_woodcutter_camp():
 					c.state = CitizenNPC.State.WAITING
-					c.last_status_reason = "Нельзя рубить лес: требуется Лагерь лесорубов"
+					c.task_id = ""
+					c.last_status_reason = "Ожидание: требуется Лагерь лесорубов"
 					c.decision_cooldown = randf_range(2.0, 4.0)
 					continue
 
-				# Проверяем топор
+				# Проверяем топор (если лагерь еще не построен или инструменты пусты — лесоруб использует общинный рабочий топор)
+				var camp = get_active_woodcutter_camp()
 				if not c.has_tool("axe"):
 					if camp and camp.has_available_tool("axe"):
 						var tool = camp.take_tool("axe")
 						tool["assigned_to"] = c.citizen_id
 						c.equipped_tool = tool
 						c.last_status_reason = "Взял топор в лагере лесорубов"
-					elif not camp and buildings.has("woodcutter_camp"):
-						c.equipped_tool = {"id": "legacy_axe", "type": "axe", "durability": 100.0, "max_durability": 100.0}
-					else:
+					elif camp and not camp.has_available_tool("axe"):
 						c.state = CitizenNPC.State.WAITING
-						c.last_status_reason = "Нет доступного топора в лагере лесорубов"
+						c.task_id = ""
+						c.last_status_reason = "Ожидание: Нет доступного топора в лагере"
 						c.decision_cooldown = randf_range(2.0, 4.0)
 						continue
+					elif not has_active_woodcutter_camp():
+						c.state = CitizenNPC.State.WAITING
+						c.last_status_reason = "Ожидание: требуется Лагерь лесорубов"
+						continue
+					else:
+						c.equipped_tool = {"id": "primitive_axe", "type": "axe", "durability": 60.0, "max_durability": 60.0}
 
 				# Проверяем заполненность буфера лагеря: если буфер накоплен (>= 20.0), помогаем переносить на склад
 				if camp and camp.local_buffer_wood >= 20.0:
@@ -2962,13 +4612,6 @@ func update_citizens(delta: float) -> void:
 						c.last_status_reason = "Буфер накоплен: несёт %d дров из лагеря на склад" % int(take_amt)
 						continue
 
-				# Проверяем наличие разрешённой зоны вырубки (P01.9: WC-01)
-				if not has_active_logging_zone():
-					c.state = CitizenNPC.State.WAITING
-					c.last_status_reason = "Не знаю, где разрешено рубить лес"
-					c.decision_cooldown = randf_range(2.0, 4.0)
-					continue
-					
 				# Проверяем наличие Лагеря лесорубов и улучшения на посадку леса
 				var can_plant = false
 				var plant_mode = false
@@ -2995,7 +4638,15 @@ func update_citizens(delta: float) -> void:
 						c.decision_cooldown = 0.8
 						continue
 						
-				# 1. Проверяем первоочередные цели игрока
+				# 0. Проверяем наличие активной зоны вырубки или прямого приказа игрока
+				if not has_active_logging_zone():
+					c.state = CitizenNPC.State.WAITING
+					c.task_id = ""
+					c.last_status_reason = "Ожидание: Не знаю, где разрешено рубить лес (нет зоны вырубки)"
+					c.decision_cooldown = randf_range(2.0, 4.0)
+					continue
+
+				# 1. Проверяем первоочередные цели игрока (отмеченные кликом по дереву)
 				var chosen_tree: Dictionary = {}
 				for p_coord in priority_harvest_coords:
 					var p_node = GameManager.resource_manager.nodes.get(p_coord, {}) if GameManager.resource_manager else {}
@@ -3004,7 +4655,7 @@ func update_citizens(delta: float) -> void:
 							chosen_tree = p_node
 							break
 				
-				# 2. Обычная заготовка: поиск зрелого дерева ТОЛЬКО в разрешенной зоне вырубки
+				# 2. Обычная заготовка: поиск зрелого дерева (в выделенной зоне или в окрестностях поселения)
 				var tree = chosen_tree
 				if tree.is_empty() and GameManager.resource_manager:
 					if not logging_zones.is_empty():
@@ -3020,35 +4671,45 @@ func update_citizens(delta: float) -> void:
 										best_node = z_node
 						if not best_node.is_empty():
 							tree = best_node
-						elif priority_harvest_coords.is_empty():
+						else:
 							c.state = CitizenNPC.State.WAITING
-							c.last_status_reason = "Нет допустимых деревьев в зоне вырубки"
-							c.decision_cooldown = randf_range(3.0, 5.0)
+							c.task_id = ""
+							c.last_status_reason = "Ожидание: Нет допустимых деревьев в зоне вырубки"
+							c.decision_cooldown = randf_range(2.0, 4.0)
 							continue
 					else:
-						tree = GameManager.resource_manager.find_available_node(pos, "wood", 24, c.citizen_id)
+						# Если зона не размечена — рубим ближайший зрелый лес по приказам
+						tree = GameManager.resource_manager.find_available_node(pos, "wood", 28, c.citizen_id)
 						if tree.is_empty():
-							tree = GameManager.resource_manager.find_available_node(pos, "wood", 48, c.citizen_id)
+							tree = GameManager.resource_manager.find_available_node(pos, "wood", 56, c.citizen_id)
+
 				if not tree.is_empty():
-					var t_path = GameManager.nav_grid.find_path(c.pos, tree["pos"]) if GameManager.nav_grid else []
+					var t_path = GameManager.nav_grid.find_adjacent_path(c.pos, tree["coord"]) if GameManager.nav_grid else []
+					if t_path.is_empty() and GameManager.nav_grid:
+						t_path = GameManager.nav_grid.find_path(c.pos, tree["pos"], true)
+					if t_path.is_empty() and c.pos.distance_to(tree["pos"]) <= 36.0:
+						t_path = [c.pos]
+						
 					if t_path.is_empty():
 						if GameManager.task_service:
 							var blocked_id = GameManager.task_service.create_task("chop_tree", tree.get("id", ""), tree["coord"], tree["pos"])
 							GameManager.task_service.fail_task(blocked_id, "Нет пути к дереву", true)
 						c.state = CitizenNPC.State.WAITING
-						c.last_status_reason = "Нет пути к дереву"
+						c.last_status_reason = "Нет пути к дереву (%s)" % tree["name"]
 						c.decision_cooldown = randf_range(2.0, 4.0)
+						DebugLogger.log_warn("Woodcutter", "Лесоруб %s не нашел путь к дереву на %s" % [c.name, tree["coord"]])
 						continue
 					GameManager.resource_manager.reserve_node(tree["coord"], c.citizen_id)
 					c.task_id = "chop_tree"
 					c.target_coord = tree["coord"]
-					c.target_pos = tree["pos"]
+					c.target_pos = t_path[-1] if not t_path.is_empty() else tree["pos"]
 					c.target_id = tree["id"]
 					c.path = t_path
 					c.path_index = 0
 					c.state = CitizenNPC.State.MOVING_TO_WORK
 					c.last_status_reason = "Идёт рубить: %s" % tree["name"]
 					c.decision_cooldown = 0.8
+					DebugLogger.log_info("Woodcutter", "Лесоруб %s направлен рубить %s на %s" % [c.name, tree["name"], tree["coord"]])
 					if GameManager.task_service:
 						var tid = GameManager.task_service.create_task("chop_tree", tree["id"], tree["coord"], tree["pos"])
 						GameManager.task_service.assign_actor(tid, c.citizen_id)
@@ -3086,7 +4747,7 @@ func update_citizens(delta: float) -> void:
 				if rock.is_empty() and GameManager.resource_manager:
 					rock = GameManager.resource_manager.find_available_node(pos, "stone", 36, c.citizen_id)
 				if not rock.is_empty():
-					var r_path = GameManager.nav_grid.find_path(c.pos, rock["pos"]) if GameManager.nav_grid else []
+					var r_path = GameManager.nav_grid.find_adjacent_path(c.pos, rock["coord"]) if GameManager.nav_grid else []
 					if r_path.is_empty():
 						if GameManager.task_service:
 							var blocked_id = GameManager.task_service.create_task("mine_stone", rock.get("id", ""), rock["coord"], rock["pos"])
@@ -3098,7 +4759,7 @@ func update_citizens(delta: float) -> void:
 					GameManager.resource_manager.reserve_node(rock["coord"], c.citizen_id)
 					c.task_id = "mine_stone"
 					c.target_coord = rock["coord"]
-					c.target_pos = rock["pos"]
+					c.target_pos = r_path[-1] if not r_path.is_empty() else rock["pos"]
 					c.target_id = rock["id"]
 					c.path = r_path
 					c.path_index = 0
@@ -3130,7 +4791,7 @@ func update_citizens(delta: float) -> void:
 				if ore.is_empty() and GameManager.resource_manager:
 					ore = GameManager.resource_manager.find_available_node(pos, "metal", 40, c.citizen_id)
 				if not ore.is_empty():
-					var o_path = GameManager.nav_grid.find_path(c.pos, ore["pos"]) if GameManager.nav_grid else []
+					var o_path = GameManager.nav_grid.find_adjacent_path(c.pos, ore["coord"]) if GameManager.nav_grid else []
 					if o_path.is_empty():
 						if GameManager.task_service:
 							var blocked_id = GameManager.task_service.create_task("mine_ore", ore.get("id", ""), ore["coord"], ore["pos"])
@@ -3142,7 +4803,7 @@ func update_citizens(delta: float) -> void:
 					GameManager.resource_manager.reserve_node(ore["coord"], c.citizen_id)
 					c.task_id = "mine_ore"
 					c.target_coord = ore["coord"]
-					c.target_pos = ore["pos"]
+					c.target_pos = o_path[-1] if not o_path.is_empty() else ore["pos"]
 					c.target_id = ore["id"]
 					c.path = o_path
 					c.path_index = 0
@@ -3275,15 +4936,35 @@ func update_citizens(delta: float) -> void:
 						c.decision_cooldown = 0.0
 						continue
 
-				# 11. Свободные жители, дети и старики (Этап D)
-				# 10c. Личные украшения поселения: кусты, таблички, скамейки, идолы, мусор, уборка
+				# 11. Свободные жители, дети и старики (Этап D / Живая симуляция)
+				# 11a. Примирение со старыми обидчиками при остывшем гневе
+				if (c.has_memory("grudge") or c.has_memory("offense")) and randf() < 0.25:
+					if _try_reconcile_quarrel(c):
+						continue
+
+				# 11b. Свидание и прогулка для влюбленных пар / супругов
+				if (c.spouse_id != "" or c.cohort in ["youth", "adult"]) and randf() < 0.22:
+					if _try_start_dating_walk(c):
+						continue
+
+				# 11c. Поход в гости к соседям / друзьям / родителям / старейшинам
+				if randf() < 0.28:
+					if _try_visit_friend(c):
+						continue
+
+				# 11d. Ласка и игра с прирученными животными
+				if randf() < 0.20:
+					if _try_pet_animal(c):
+						continue
+
+				# 11e. Личные украшения поселения: кусты, таблички, скамейки, идолы, мусор, уборка
 				if c.cohort in ["adult", "youth", "elder"] and c.cargo_amount == 0.0 and c.energy > 30.0 and indiv_hour >= 9.0 and indiv_hour < 18.0:
 					_try_personal_decoration_action(c)
 					if c.state != CitizenNPC.State.IDLE and c.state != CitizenNPC.State.WAITING:
 						continue
 
 				var partner = _find_chat_partner(c)
-				if partner != null and randf() < 0.40:
+				if partner != null and randf() < 0.55:
 					_start_social_dialog(c, partner)
 					continue
 					
@@ -3397,8 +5078,13 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 						break
 				if all_delivered:
 					var site_p = GameManager.nav_grid.tile_to_world_center(q_c) if GameManager.nav_grid else Vector2.ZERO
-					var s_path = GameManager.nav_grid.find_path(c.pos, site_p) if GameManager.nav_grid else []
+					var s_path = GameManager.nav_grid.find_adjacent_path(c.pos, q_c) if GameManager.nav_grid else []
+					if s_path.is_empty() and GameManager.nav_grid:
+						s_path = GameManager.nav_grid.find_path(c.pos, site_p, true)
+					if s_path.is_empty() and c.pos.distance_to(site_p) <= 36.0:
+						s_path = [c.pos]
 					if s_path.is_empty():
+						DebugLogger.log_warn("Builder", "Строитель %s не нашел путь к стройплощадке %s на %s" % [c.name, b.get("id", ""), q_c])
 						continue
 					c.target_coord = q_c
 					c.target_pos = site_p
@@ -3408,6 +5094,7 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 					c.state = CitizenNPC.State.MOVING_TO_WORK
 					c.last_status_reason = "Идёт строить: %s" % b.get("id", "")
 					c.decision_cooldown = 0.8
+					DebugLogger.log_info("Builder", "Строитель %s назначен на стройку %s на %s" % [c.name, b.get("id", ""), q_c])
 					if GameManager.task_service:
 						var tid = GameManager.task_service.create_task("build", b.get("id", ""), q_c, site_p)
 						GameManager.task_service.assign_actor(tid, c.citizen_id)
@@ -3598,8 +5285,81 @@ func _start_social_dialog(c1: CitizenNPC, c2: CitizenNPC) -> void:
 	var emote1: String = "dialog"
 	var emote2: String = "dialog"
 
+	# Семейный кризис и развод при разрушенных отношениях супругов
+	if c1.spouse_id == c2.citizen_id and (aff < -15.0 or c1.has_memory("grudge")):
+		ph1 = "Мы больше не можем быть вместе, %s. Наш союз расторгнут!" % c2.name
+		ph2 = "И слава предкам! Забирай свои вещи и уходи."
+		emote1 = "broken_heart"
+		emote2 = "disgust"
+		c1.spouse_id = ""
+		c2.spouse_id = ""
+		c1.modify_relationship(c2.citizen_id, -25.0, -50.0)
+		c2.modify_relationship(c1.citizen_id, -25.0, -50.0)
+		c1.add_memory("divorce", "breakup", c2.citizen_id, 3.5, "Развёлся с %s после тяжёлой ссоры" % c2.name)
+		c2.add_memory("divorce", "breakup", c1.citizen_id, 3.5, "Развелась с %s после тяжёлой ссоры" % c1.name)
+		_relocate_divorced_spouse(c2)
+		EventBus.notification_toast.emit("💔 Расторжение союза", "%s и %s расторгли союз и разъехались" % [c1.name, c2.name], "info")
+
+	# Острый спор, обида и возможность потасовки
+	elif (float(c1.traits.get("temper", 50.0)) > 60.0 or float(c2.traits.get("temper", 50.0)) > 60.0 or float(c1.traits.get("pride", 50.0)) > 65.0) and aff < 15.0:
+		ph1 = _pick_phrase(c1, [
+			"Не смей указывать мне, %s!" % c2.name,
+			"Твоя гордыня переходит все границы!",
+			"Ты присвоил общую добычу и думаешь, никто не заметил?!",
+			"С меня довольно твоих упрёков!"
+		])
+		ph2 = _pick_phrase(c2, [
+			"А ты не зарывайся! Я знаю своё место, а ты — своё!",
+			"Посмотрим, что на это скажут старейшины!",
+			"Не бросайся словами, если не можешь ответить!",
+			"Ты сам во всём виноват!"
+		])
+		emote1 = "anger"
+		emote2 = "quarrel"
+		c1.modify_relationship(c2.citizen_id, -8.0, 0.0)
+		c2.modify_relationship(c1.citizen_id, -8.0, 0.0)
+		c1.add_memory("grudge", "offense", c2.citizen_id, 2.5, "Обиделся на %s после перепалки" % c2.name)
+		c2.add_memory("grudge", "offense", c1.citizen_id, 2.5, "Затаил обиду на %s" % c1.name)
+		
+		# Эскалация в кулачный бой при горячем нраве обоих
+		if float(c1.traits.get("temper", 50.0)) > 65.0 and float(c2.traits.get("temper", 50.0)) > 65.0 and (float(c1.traits.get("temper", 50.0)) >= 75.0 or randf() < 0.40):
+			c1.task_id = "brawling"
+			c2.task_id = "brawling"
+			c1.action_timer = 4.5
+			c2.action_timer = 4.5
+			c1.state = CitizenNPC.State.ATTACKING
+			c2.state = CitizenNPC.State.ATTACKING
+			c1.take_damage(6.0, "Потасовка с %s" % c2.name)
+			c2.take_damage(6.0, "Потасовка с %s" % c1.name)
+			c1.show_emote("fight", 4.0, 4)
+			c2.show_emote("fight", 4.0, 4)
+			c1.last_status_reason = "Сцепился в потасовке с %s!" % c2.name
+			c2.last_status_reason = "Сцепился в потасовке с %s!" % c1.name
+			EventBus.notification_toast.emit("⚔ Потасовка!", "%s и %s сцепились в драке на улице!" % [c1.name, c2.name], "warning")
+			for g in population.citizens:
+				if g.is_alive and g.job_id in ["guard", "warrior"] and g.pos.distance_to(c1.pos) <= 180.0:
+					g.task_id = "stop_brawl"
+					g.target_pos = c1.pos
+					g.path = GameManager.nav_grid.find_path(g.pos, c1.pos) if GameManager and GameManager.nav_grid else []
+					g.path_index = 0
+					g.state = CitizenNPC.State.MOVING_TO_WORK
+					g.last_status_reason = "Спешит разнять драку между соплеменниками"
+					g.shout("Прекратить драку! Оружие к ноге!", 3.5)
+					break
+
+	# Дружеские подарки и проявление чуткости
+	elif float(c1.traits.get("empathy", 50.0)) > 60.0 and aff >= 20.0 and (float(c1.traits.get("empathy", 50.0)) >= 75.0 or randf() < 0.35):
+		ph1 = "Я приберёг это для тебя, %s. Пусть служит тебе на пользу." % c2.name
+		ph2 = "Какая щедрость, %s! Я не забуду этого." % c1.name
+		emote1 = "gift"
+		emote2 = "joy"
+		c1.modify_relationship(c2.citizen_id, 8.0, 4.0)
+		c2.modify_relationship(c1.citizen_id, 8.0, 4.0)
+		c2.loyalty = minf(100.0, c2.loyalty + 4.0)
+		c1.add_memory("gift", "friendship", c2.citizen_id, 1.5, "Подарил полезную вещицу соплеменнику %s" % c2.name)
+
 	# Враги / антипатия
-	if aff < -35.0:
+	elif aff < -35.0:
 		var hostile1 = _pick_phrase(c1, [
 			"Держись подальше от меня, %s." % c2.name,
 			"С тобой я не хочу говорить.",
@@ -3686,6 +5446,15 @@ func _start_social_dialog(c1: CitizenNPC, c2: CitizenNPC) -> void:
 			if female_partner.get_spouses().has(male_partner.citizen_id) and not female_partner.is_pregnant():
 				if female_partner.age >= 18 and female_partner.age <= 42 and randf() < 0.25:
 					start_pregnancy(female_partner, male_partner)
+
+func _relocate_divorced_spouse(c: CitizenNPC) -> void:
+	var h_inst = get_citizen_home_instance(c)
+	if h_inst:
+		h_inst.remove_resident(c.citizen_id)
+	c.home_id = ""
+	c.home_coord = Vector2i(-1, -1)
+	c.home_pos = Vector2.ZERO
+	auto_assign_housing()
 
 # Выбор фразы по одной черте личности (для случайного выбора)
 func _pick_phrase(c: CitizenNPC, pool: Array) -> String:
@@ -3782,6 +5551,189 @@ func _pick_gossip_subject(speaker: CitizenNPC, _listener: CitizenNPC) -> String:
 			return "Старейшина %s — мудрый человек." % other.name
 	return ""
 
+# --- ЖИВАЯ СОЦИАЛЬНАЯ СИМУЛЯЦИЯ (ПОХОДЫ В ГОСТИ, РОМАНТИКА, СВИДАНИЯ, ПРИМИРЕНИЯ, ПИТОМЦЫ) ---
+func _try_visit_friend(c: CitizenNPC) -> bool:
+	if not population or population.citizens.is_empty():
+		return false
+	var candidates: Array[CitizenNPC] = []
+	for other in population.citizens:
+		if other == c or not other.is_alive:
+			continue
+		if other.home_id == "" or other.home_pos == Vector2.ZERO:
+			continue
+		if other.home_id == c.home_id and c.home_id != "":
+			continue
+		var aff = c.get_relationship_affinity(other.citizen_id)
+		var is_kin = c.is_related_to(other)
+		var is_elder = (other.cohort == "elder")
+		if aff >= 15.0 or is_kin or is_elder:
+			candidates.append(other)
+	if candidates.is_empty():
+		return false
+	candidates.sort_custom(func(a, b):
+		var aff_a = c.get_relationship_affinity(a.citizen_id) + (20.0 if c.is_related_to(a) else 0.0)
+		var aff_b = c.get_relationship_affinity(b.citizen_id) + (20.0 if c.is_related_to(b) else 0.0)
+		return aff_a > aff_b
+	)
+	var host = candidates[0]
+	var target_porch = host.home_pos + Vector2(randf_range(-12.0, 12.0), randf_range(2.0, 8.0))
+	var v_path: Array[Vector2] = GameManager.nav_grid.find_path(c.pos, target_porch) if GameManager and GameManager.nav_grid else []
+	if v_path.is_empty():
+		v_path.append(target_porch)
+	c.task_id = "visit_friend_home"
+	c.target_id = host.citizen_id
+	c.target_pos = target_porch
+	c.target_coord = host.home_coord
+	c.path = v_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.last_status_reason = "Идёт в гости к %s" % host.name
+	c.decision_cooldown = 1.0
+	return true
+
+func _try_start_dating_walk(c: CitizenNPC) -> bool:
+	if not population or population.citizens.is_empty():
+		return false
+	if c.cohort not in ["youth", "adult"]:
+		return false
+	var partner: CitizenNPC = null
+	# Если уже состоит в браке — идёт на прогулку с супругом
+	if c.spouse_id != "":
+		var sp = get_citizen_by_id(c.spouse_id)
+		if sp and sp.is_alive and sp.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.RESTING] and sp.pos.distance_to(c.pos) <= 300.0:
+			partner = sp
+	else:
+		# Ищет объект взаимной симпатии противоположного пола
+		for other in population.citizens:
+			if other == c or not other.is_alive or other.gender == c.gender:
+				continue
+			if other.cohort not in ["youth", "adult"] or c.is_related_to(other):
+				continue
+			if other.spouse_id != "" and marriage_law == "monogamy":
+				continue
+			if other.state not in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING, CitizenNPC.State.RESTING]:
+				continue
+			var aff = c.get_relationship_affinity(other.citizen_id)
+			var rom = float(c.get_relationship(other.citizen_id).get("romance", 0.0))
+			if rom >= 15.0 or aff >= 30.0 or randf() < 0.25:
+				partner = other
+				break
+	if partner == null:
+		return false
+	var walk_pos = _find_scenic_walk_pos(c)
+	if walk_pos == Vector2.ZERO:
+		walk_pos = _find_shore_pos(c)
+	if walk_pos == Vector2.ZERO:
+		walk_pos = _get_hearth_pos() + Vector2(randf_range(-40.0, 40.0), randf_range(-40.0, 40.0))
+	var w_path: Array[Vector2] = GameManager.nav_grid.find_path(c.pos, walk_pos) if GameManager and GameManager.nav_grid else []
+	if w_path.is_empty():
+		w_path.append(walk_pos)
+	var p_path: Array[Vector2] = GameManager.nav_grid.find_path(partner.pos, walk_pos) if GameManager and GameManager.nav_grid else []
+	if p_path.is_empty():
+		p_path.append(walk_pos)
+	c.task_id = "dating_walk"
+	c.target_id = partner.citizen_id
+	c.target_pos = walk_pos
+	c.path = w_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.last_status_reason = "Пригласил %s на романтическую прогулку" % partner.name
+	c.shout("Пойдём со мной прогуляться, %s?" % partner.name, 3.5)
+	c.show_emote("love", 3.5, 2)
+	
+	if not p_path.is_empty():
+		partner.task_id = "dating_walk"
+		partner.target_id = c.citizen_id
+		partner.target_pos = walk_pos
+		partner.path = p_path
+		partner.path_index = 0
+		partner.state = CitizenNPC.State.MOVING_TO_WORK
+		partner.last_status_reason = "Идёт на прогулку с %s" % c.name
+		partner.shout("С радостью, %s!" % c.name, 3.5)
+		partner.show_emote("romance", 3.5, 2)
+	c.decision_cooldown = 1.0
+	return true
+
+func _try_reconcile_quarrel(c: CitizenNPC) -> bool:
+	if not population or population.citizens.is_empty():
+		return false
+	var rival: CitizenNPC = null
+	for other in population.citizens:
+		if other == c or not other.is_alive:
+			continue
+		if c.has_grudge_against(other.citizen_id) or c.get_relationship_affinity(other.citizen_id) <= -20.0:
+			rival = other
+			break
+	if rival == null:
+		return false
+	var r_path: Array[Vector2] = GameManager.nav_grid.find_path(c.pos, rival.pos) if GameManager and GameManager.nav_grid else []
+	if r_path.is_empty():
+		r_path.append(rival.pos)
+	c.task_id = "reconcile_quarrel"
+	c.target_id = rival.citizen_id
+	c.target_pos = rival.pos
+	c.path = r_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.last_status_reason = "Идёт помириться с %s" % rival.name
+	c.decision_cooldown = 1.0
+	return true
+
+func _try_pet_animal(c: CitizenNPC) -> bool:
+	if not GameManager or not GameManager.wildlife_manager:
+		return false
+	var nearest_pet: WildAnimal = null
+	var min_d = 280.0
+	for a in GameManager.wildlife_manager.animals.values():
+		if a.is_alive() and a.is_tamed:
+			var d = c.pos.distance_to(a.pos)
+			if d < min_d:
+				min_d = d
+				nearest_pet = a
+	if nearest_pet == null:
+		return false
+	var p_path: Array[Vector2] = GameManager.nav_grid.find_path(c.pos, nearest_pet.pos) if GameManager.nav_grid else []
+	if p_path.is_empty():
+		p_path.append(nearest_pet.pos)
+	c.task_id = "pet_animal"
+	c.target_id = nearest_pet.id
+	c.target_pos = nearest_pet.pos
+	c.path = p_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.last_status_reason = "Идёт приласкать питомца (%s)" % (nearest_pet.custom_name if nearest_pet.custom_name != "" else "зверька")
+	c.decision_cooldown = 1.0
+	return true
+
+func _try_hearth_game_or_story(c: CitizenNPC) -> bool:
+	var h_pos = _get_hearth_pos()
+	if c.pos.distance_to(h_pos) > 90.0:
+		return false
+	if randf() < 0.5:
+		c.task_id = "play_dice"
+		c.state = CitizenNPC.State.RESTING
+		c.work_timer = randf_range(6.0, 10.0)
+		c.show_emote("game", 4.0, 2)
+		c.shout(_pick_phrase(c, [
+			"Бросаю кости! Шестёрка на удачу!",
+			"Ха, мой бросок точнее!",
+			"Кто следующий рискнет сыграть в кости?"
+		]), 3.5)
+		c.last_status_reason = "Играет в кости у костра"
+		return true
+	else:
+		c.task_id = "campfire_story"
+		c.state = CitizenNPC.State.RESTING
+		c.work_timer = randf_range(7.0, 12.0)
+		c.show_emote("storytelling" if c.cohort in ["elder", "adult"] else "curiosity", 4.5, 2)
+		c.shout(_pick_phrase(c, [
+			"Слушайте предание о духах северных ветров...",
+			"В тот год зверь был свиреп, но наше племя выстояло!",
+			"Предки оставили нам эту землю и священный огонь."
+		]), 4.0)
+		c.last_status_reason = "Рассказывает сказания у костра" if c.cohort in ["elder", "adult"] else "Слушает сказания у костра"
+		return true
+
 func _find_job_work_target(c: CitizenNPC) -> Vector2:
 	var tiles = GameManager.planet_data.get("tiles", [])
 	if tiles.is_empty():
@@ -3839,6 +5791,17 @@ func _find_hunting_camp_pos(c: CitizenNPC) -> Vector2:
 				if GameManager.nav_grid:
 					return GameManager.nav_grid.tile_to_world_center(b.pos)
 	return c.home_pos
+
+func _get_hunting_camp_instance(c: CitizenNPC) -> BuildingInstance:
+	if GameManager.building_instances:
+		if c.workplace_coord != Vector2i(-1, -1) and GameManager.building_instances.has(c.workplace_coord):
+			var b = GameManager.building_instances[c.workplace_coord]
+			if b and b.type == "hunting_camp":
+				return b
+		for b in GameManager.building_instances.values():
+			if b and "type" in b and b.type == "hunting_camp" and b.settlement_id == id:
+				return b
+	return null
 
 func _find_craftsman_workshop_pos(c: CitizenNPC) -> Vector2:
 	if c.workplace_coord != Vector2i(-1, -1) and GameManager.nav_grid:
@@ -3916,6 +5879,8 @@ func serialize() -> Dictionary:
 		"logging_zones": logging_zones.map(func(c): return [c.x, c.y]),
 		"active_relocations": active_relocations.duplicate(true),
 		"equipment_stockpile": equipment_stockpile.duplicate(),
+		"cemetery_plots": cemetery_plots.map(func(c): return [c.x, c.y]),
+		"deceased_registry": deceased_registry.duplicate(true),
 		"construction_queue": queue_serialized,
 		"population": population.serialize() if population else {}
 	}
@@ -3946,6 +5911,14 @@ func deserialize(data: Dictionary) -> void:
 		if p is Array and p.size() >= 2:
 			logging_zones.append(Vector2i(p[0], p[1]))
 	active_relocations = data.get("active_relocations", {}).duplicate(true)
+	cemetery_plots.clear()
+	for p in data.get("cemetery_plots", []):
+		if p is Array and p.size() >= 2:
+			cemetery_plots.append(Vector2i(p[0], p[1]))
+	deceased_registry.clear()
+	for r in data.get("deceased_registry", []):
+		if r is Dictionary:
+			deceased_registry.append(r.duplicate(true))
 	if data.has("construction_queue"):
 		construction_queue.clear()
 		for q in data["construction_queue"]:
@@ -3979,20 +5952,17 @@ func get_settlement_footpaths() -> Array[Dictionary]:
 	var footpaths: Array[Dictionary] = []
 	var hub_world = GameManager.nav_grid.tile_to_world_center(pos) if GameManager.nav_grid else Vector2(pos.x * 32.0 + 16, pos.y * 32.0 + 16)
 	
-	# Сбор всех точек зданий поселения
-	var building_coords: Array[Vector2i] = []
+	# Сбор только активных жилых домов и основных мастерских
+	var key_coords: Array[Vector2i] = []
 	if GameManager.building_instances:
 		for b in GameManager.building_instances.values():
-			if b and b.settlement_id == id and not building_coords.has(b.pos):
-				building_coords.append(b.pos)
-	if GameManager.tile_buildings:
-		for b_coord in GameManager.tile_buildings:
-			var tb = GameManager.tile_buildings[b_coord]
-			if tb.get("settlement_id", "") == id and not building_coords.has(b_coord):
-				building_coords.append(b_coord)
-				
-	# 1. Тропинки от каждого дома/мастерской к главному костру поселения
-	for b_c in building_coords:
+			if b and b.settlement_id == id and b.pos != pos:
+				if b.is_residential() or b.workers.size() > 0:
+					if not key_coords.has(b.pos):
+						key_coords.append(b.pos)
+						
+	# Тропинки только от жилых домов и рабочих мест к центральному костру (без паутины между соседями)
+	for b_c in key_coords:
 		var b_world = GameManager.nav_grid.tile_to_world_center(b_c) if GameManager.nav_grid else Vector2(b_c.x * 32.0 + 16, b_c.y * 32.0 + 16)
 		var p_pts = GameManager.nav_grid.find_path(b_world, hub_world) if GameManager.nav_grid else []
 		if p_pts.size() >= 2:
@@ -4000,21 +5970,6 @@ func get_settlement_footpaths() -> Array[Dictionary]:
 		else:
 			footpaths.append({"points": [b_world, hub_world], "type": "hub"})
 			
-	# 2. Тропинки между соседними хижинами (в радиусе до 5.5 клеток)
-	for i in range(building_coords.size()):
-		for j in range(i + 1, building_coords.size()):
-			var c1 = building_coords[i]
-			var c2 = building_coords[j]
-			var d = Vector2(c1.x - c2.x, c1.y - c2.y).length()
-			if d <= 5.5:
-				var w1 = GameManager.nav_grid.tile_to_world_center(c1) if GameManager.nav_grid else Vector2(c1.x * 32.0 + 16, c1.y * 32.0 + 16)
-				var w2 = GameManager.nav_grid.tile_to_world_center(c2) if GameManager.nav_grid else Vector2(c2.x * 32.0 + 16, c2.y * 32.0 + 16)
-				var p_pts = GameManager.nav_grid.find_path(w1, w2) if GameManager.nav_grid else []
-				if p_pts.size() >= 2:
-					footpaths.append({"points": p_pts, "type": "neighbor"})
-				else:
-					footpaths.append({"points": [w1, w2], "type": "neighbor"})
-					
 	return footpaths
 
 
@@ -4025,21 +5980,21 @@ func get_settlement_footpaths() -> Array[Dictionary]:
 
 # Типы декораций и их вероятности по чертам личности
 const DECORATION_DEFS: Dictionary = {
-	"sign":         {"tradition": 40.0, "empathy": 30.0,  "min_days": 5,  "label": "повесил табличку у дома"},
-	"bush_planted": {"diligence": 35.0, "tradition": 25.0, "min_days": 3,  "label": "посадил куст у тропинки"},
-	"bench":        {"empathy": 45.0,  "sociability": 40.0, "min_days": 8,  "label": "смастерил скамейку"},
-	"flowers":      {"empathy": 30.0,  "curiosity": 25.0,  "min_days": 2,  "label": "высадил цветы"},
-	"totem_small":  {"tradition": 60.0, "bravery": 35.0,   "min_days": 12, "label": "соорудил небольшого идола"},
-	"idol":         {"tradition": 75.0, "pride": 50.0,     "min_days": 20, "label": "соорудил идола предков"},
+	"sign":         {"tradition": 40.0, "empathy": 30.0,  "min_days": 0,  "label": "повесил табличку у дома"},
+	"bush_planted": {"diligence": 35.0, "tradition": 25.0, "min_days": 0,  "label": "посадил куст у тропинки"},
+	"bench":        {"empathy": 45.0,  "sociability": 40.0, "min_days": 0,  "label": "смастерил скамейку"},
+	"flowers":      {"empathy": 30.0,  "curiosity": 25.0,  "min_days": 0,  "label": "высадил цветы"},
+	"totem_small":  {"tradition": 60.0, "bravery": 35.0,   "min_days": 0,  "label": "соорудил небольшого идола"},
+	"idol":         {"tradition": 75.0, "pride": 50.0,     "min_days": 0,  "label": "соорудил идола предков"},
 	"trash":        {"diligence": -1.0, "temper": 55.0,    "min_days": 0,  "label": "бросил мусор"},  # бросает мусор — низкое усердие
 }
 
 # Радиус поиска клеток рядом с домом для размещения декорации
-const DECO_SEARCH_RADIUS: int = 2
+const DECO_SEARCH_RADIUS: int = 3
 # Максимум декораций на поселение (кроме мусора)
-const MAX_DECORATIONS_PER_SETTLEMENT: int = 24
+const MAX_DECORATIONS_PER_SETTLEMENT: int = 48
 # Базовый шанс (за один тик решений) что NPC займётся украшением/мусором
-const DECO_BASE_CHANCE: float = 0.025
+const DECO_BASE_CHANCE: float = 0.35
 
 func _try_personal_decoration_action(c: CitizenNPC) -> void:
 	if not GameManager:
@@ -4050,7 +6005,6 @@ func _try_personal_decoration_action(c: CitizenNPC) -> void:
 	var day = GameManager.total_simulation_days
 
 	# --- 1. Проверка: может ли NPC убрать чужой мусор ---
-	# Аккуратные или добрые NPC замечают мусор рядом с домом и убирают его
 	var empathy_val = float(c.traits.get("empathy", 50.0))
 	var diligence_val = float(c.traits.get("diligence", 50.0))
 	if empathy_val > 55.0 or diligence_val > 60.0:
@@ -4061,12 +6015,11 @@ func _try_personal_decoration_action(c: CitizenNPC) -> void:
 
 	# --- 2. Мусорящий NPC: низкое усердие + высокий темперамент ---
 	var temper_val = float(c.traits.get("temper", 20.0))
-	if diligence_val < 30.0 and temper_val > 50.0 and randf() < 0.35:
+	if diligence_val < 30.0 and temper_val > 50.0 and randf() < 0.25:
 		_place_trash(c, day)
 		return
 
-	# --- 3. Размещение позитивной декорации около дома ---
-	# Ограничение: не больше MAX_DECORATIONS_PER_SETTLEMENT не-мусорных объектов
+	# --- 3. Размещение позитивной декорации около дома / во дворе ---
 	var deco_count = 0
 	for deco in GameManager.tile_decorations.values():
 		if deco.get("settlement_id", "") == id and deco.get("type", "") != "trash":
@@ -4074,13 +6027,17 @@ func _try_personal_decoration_action(c: CitizenNPC) -> void:
 	if deco_count >= MAX_DECORATIONS_PER_SETTLEMENT:
 		return
 
-	# NPC не будет ставить декорацию если рядом уже есть его декорация
-	if c.home_coord == Vector2i(-1, -1):
-		return
-	for adj_coord in _get_adjacent_deco_coords(c.home_coord, DECO_SEARCH_RADIUS):
+	var base_home = c.home_coord
+	if base_home == Vector2i(-1, -1):
+		base_home = Vector2i(int(c.pos.x / 32.0), int(c.pos.y / 32.0))
+		
+	var personal_placed = 0
+	for adj_coord in _get_adjacent_deco_coords(base_home, DECO_SEARCH_RADIUS):
 		var existing = GameManager.tile_decorations.get(adj_coord, {})
 		if existing.get("placer_id", "") == c.citizen_id:
-			return # уже украсил — достаточно
+			personal_placed += 1
+	if personal_placed >= 3:
+		return # До 3 личных украшений на жителя во дворе
 
 	# Выбор типа декорации на основе черт личности
 	var best_type = ""
@@ -4089,14 +6046,12 @@ func _try_personal_decoration_action(c: CitizenNPC) -> void:
 		if deco_type == "trash":
 			continue
 		var def = DECORATION_DEFS[deco_type]
-		if day < def.get("min_days", 0):
-			continue
 		var score = 0.0
 		for trait_name in def:
 			if trait_name == "min_days" or trait_name == "label":
 				continue
-			score += maxf(0.0, float(c.traits.get(trait_name, 50.0)) - 40.0) * 0.01
-		score += randf() * 0.3
+			score += maxf(0.0, float(c.traits.get(trait_name, 50.0)) - 35.0) * 0.015
+		score += randf() * 0.4
 		if score > best_score:
 			best_score = score
 			best_type = deco_type
@@ -4105,27 +6060,30 @@ func _try_personal_decoration_action(c: CitizenNPC) -> void:
 		return
 
 	# Поиск свободной клетки рядом с домом
-	var target_coord = _find_free_deco_coord(c.home_coord)
+	var target_coord = _find_free_deco_coord(base_home)
 	if target_coord == Vector2i(-1, -1):
 		return
 
 	# NPC идёт к выбранной клетке
 	var target_pos = GameManager.nav_grid.tile_to_world_center(target_coord) if GameManager.nav_grid else Vector2(target_coord.x * 32.0 + 16, target_coord.y * 32.0 + 16)
 	var deco_path = GameManager.nav_grid.find_path(c.pos, target_pos) if GameManager.nav_grid else []
-	if deco_path.is_empty():
-		return
-
+	
 	c.task_id = "place_decoration"
 	c.target_coord = target_coord
 	c.target_pos = target_pos
+	c.task_instance_id = best_type
+	var label = DECORATION_DEFS[best_type].get("label", "украшает поселение")
+	c.last_status_reason = label
+
+	if deco_path.is_empty() or c.pos.distance_to(target_pos) <= 24.0:
+		_finish_decoration_placement(c)
+		return
+
 	c.path = deco_path
 	c.path_index = 0
 	c.state = CitizenNPC.State.MOVING_TO_WORK
-	c.action_timer = randf_range(3.0, 6.0)
-	# Сохраняем тип декорации в task_instance_id как флаг
-	c.task_instance_id = best_type
-	c.last_status_reason = DECORATION_DEFS[best_type].get("label", "украшает поселение")
-	c.decision_cooldown = randf_range(30.0, 90.0)
+	c.action_timer = randf_range(2.5, 5.0)
+	c.decision_cooldown = randf_range(15.0, 35.0)
 
 func _finish_decoration_placement(c: CitizenNPC) -> void:
 	# Вызывается из update_citizens когда NPC достиг цели task_id == "place_decoration"
@@ -4138,7 +6096,7 @@ func _finish_decoration_placement(c: CitizenNPC) -> void:
 		return
 
 	# Проверяем что клетка ещё свободна
-	if GameManager.tile_decorations.has(coord):
+	if GameManager.tile_decorations.has(coord) or (GameManager.tile_buildings and GameManager.tile_buildings.has(coord)):
 		c.task_id = ""
 		c.task_instance_id = ""
 		c.state = CitizenNPC.State.IDLE
@@ -4154,22 +6112,21 @@ func _finish_decoration_placement(c: CitizenNPC) -> void:
 		"variant": variant
 	}
 
-	c.show_emote("build", 2.5, 1)
+	var label = DECORATION_DEFS.get(deco_type, {}).get("label", "украсил поселение")
+	c.show_emote("build", 3.0, 2)
+	c.loyalty = minf(100.0, c.loyalty + 3.0)
+	c.add_memory("decorated_home", "home", "", 1.5, "Обустроил и украсил двор родного поселения (%s)" % label, true)
 	c.task_id = ""
 	c.task_instance_id = ""
 	c.state = CitizenNPC.State.IDLE
-	c.decision_cooldown = randf_range(20.0, 40.0)
-
-	var label = DECORATION_DEFS.get(deco_type, {}).get("label", "украсил поселение")
+	c.decision_cooldown = randf_range(15.0, 30.0)
 	c.last_status_reason = label
 
-	# Уведомление только для особых событий (идолы)
-	if deco_type in ["idol", "totem_small"]:
-		EventBus.notification_toast.emit(
-			"Духовная жизнь",
-			"%s %s" % [c.name, label],
-			"info"
-		)
+	EventBus.notification_toast.emit(
+		"🏡 Благоустройство",
+		"%s %s" % [c.name, label],
+		"good"
+	)
 
 func _place_trash(c: CitizenNPC, day: int) -> void:
 	# Найти свободную клетку рядом с позицией NPC
@@ -4296,3 +6253,73 @@ func _get_adjacent_deco_coords(center: Vector2i, radius: int) -> Array[Vector2i]
 		for dy in range(-radius, radius + 1):
 			result.append(Vector2i(center.x + dx, center.y + dy))
 	return result
+
+func _find_shore_pos(c: CitizenNPC) -> Vector2:
+	if not GameManager or not GameManager.planet_data or not GameManager.nav_grid:
+		return Vector2.ZERO
+	var tiles = GameManager.planet_data.get("tiles", [])
+	if tiles.is_empty():
+		return Vector2.ZERO
+	var c_coord = Vector2i(int(floor(c.pos.x / 32.0)), int(floor(c.pos.y / 32.0)))
+	var best_pos = Vector2.ZERO
+	var best_dist = 999999.0
+	var best_water_coord = Vector2i(-1, -1)
+	
+	for dx in range(-12, 13):
+		for dy in range(-12, 13):
+			var tx = c_coord.x + dx
+			var ty = c_coord.y + dy
+			var coord = Vector2i(tx, ty)
+			if tx < 0 or ty < 0 or ty >= tiles.size() or tx >= tiles[0].size():
+				continue
+			# Клетка суши (не вода и проходима)
+			if GameManager.nav_grid.is_water_tile(coord):
+				continue
+			# Проверяем соседство с настоящим водоёмом
+			var found_water = false
+			var adj_water = Vector2i(-1, -1)
+			for n_off in [Vector2i(1,0), Vector2i(-1,0), Vector2i(0,1), Vector2i(0,-1)]:
+				var n_coord = coord + n_off
+				if GameManager.nav_grid.is_water_tile(n_coord):
+					found_water = true
+					adj_water = n_coord
+					break
+			if found_water:
+				var candidate_p = GameManager.nav_grid.tile_to_world_center(coord)
+				var d = c.pos.distance_to(candidate_p)
+				if d < best_dist:
+					var test_path = GameManager.nav_grid.find_path(c.pos, candidate_p)
+					if not test_path.is_empty():
+						best_dist = d
+						best_pos = candidate_p
+						best_water_coord = adj_water
+						
+	if best_pos != Vector2.ZERO:
+		c.target_coord = best_water_coord
+		return best_pos
+	return Vector2.ZERO
+
+func _find_cemetery_target(c: CitizenNPC) -> Dictionary:
+	if not cemetery_plots.is_empty():
+		var coord = cemetery_plots[randi() % cemetery_plots.size()]
+		var g_pos = GameManager.nav_grid.tile_to_world_center(coord) if GameManager and GameManager.nav_grid else Vector2(coord.x * 32.0 + 16.0, coord.y * 32.0 + 16.0)
+		return {"coord": coord, "pos": g_pos, "deceased_id": "", "deceased_name": "предков"}
+	if GameManager and GameManager.building_instances:
+		for bi in GameManager.building_instances.values():
+			if bi is BuildingInstance and bi.settlement_id == id and bi.type in ["grave", "cemetery"]:
+				var g_pos = Vector2(bi.pos.x * 32.0 + 16.0, bi.pos.y * 32.0 + 16.0)
+				var dec_name = bi.building_data.get("deceased_name", "предков")
+				var dec_id = bi.building_data.get("deceased_id", "")
+				return {"coord": bi.pos, "pos": g_pos, "deceased_id": dec_id, "deceased_name": dec_name}
+	return {}
+
+func _find_scenic_walk_pos(c: CitizenNPC) -> Vector2:
+	var h_pos = _get_hearth_pos()
+	var angle = randf() * TAU
+	var dist = randf_range(40.0, 110.0)
+	var walk_p = h_pos + Vector2(cos(angle), sin(angle)) * dist
+	if GameManager and GameManager.nav_grid:
+		var tile_c = Vector2i(int(walk_p.x / 32.0), int(walk_p.y / 32.0))
+		if GameManager.nav_grid.is_tile_walkable(tile_c):
+			return GameManager.nav_grid.tile_to_world_center(tile_c)
+	return walk_p

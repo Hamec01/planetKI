@@ -59,6 +59,9 @@ var unlocked_special_buildings: Array[String] = []
 # Открытые практические открытия (вместо старого tech tree)
 var discovered_practices: Array[String] = []
 
+# Глобально открытые улучшения зданий (building_type -> Array[String])
+var unlocked_building_upgrades: Dictionary = {}
+
 # Летопись решений цивилизации
 var civilization_chronicle: Array[Dictionary] = []
 
@@ -103,6 +106,15 @@ func get_group_value(group_name: String) -> String:
 
 func is_group_value(group_name: String, check_value: String) -> bool:
 	return exclusive_groups.get(group_name, "UNDEFINED") == check_value
+
+func unlock_upgrade_globally(b_type: String, upgrade_id: String) -> void:
+	if not unlocked_building_upgrades.has(b_type):
+		unlocked_building_upgrades[b_type] = []
+	if not unlocked_building_upgrades[b_type].has(upgrade_id):
+		unlocked_building_upgrades[b_type].append(upgrade_id)
+
+func get_global_unlocked_upgrades(b_type: String) -> Array:
+	return unlocked_building_upgrades.get(b_type, [])
 
 func unlock_building(building_id: String) -> void:
 	if not unlocked_special_buildings.has(building_id):
@@ -217,6 +229,7 @@ func serialize() -> Dictionary:
 		"entries": serialized_entries,
 		"religion_data": religion_data,
 		"unlocked_special_buildings": unlocked_special_buildings,
+		"unlocked_building_upgrades": unlocked_building_upgrades,
 		"discovered_practices": discovered_practices,
 		"civilization_chronicle": civilization_chronicle,
 		"tribe_folk_name": tribe_folk_name
@@ -226,6 +239,7 @@ func deserialize(data: Dictionary) -> void:
 	exclusive_groups = data.get("exclusive_groups", exclusive_groups)
 	religion_data = data.get("religion_data", religion_data)
 	unlocked_special_buildings.assign(data.get("unlocked_special_buildings", []))
+	unlocked_building_upgrades = data.get("unlocked_building_upgrades", {})
 	discovered_practices.assign(data.get("discovered_practices", []))
 	civilization_chronicle.assign(data.get("civilization_chronicle", []))
 	tribe_folk_name = data.get("tribe_folk_name", "Люди Рассвета")

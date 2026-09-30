@@ -21,9 +21,9 @@ static func load_all_textures() -> void:
 	_load_base_biome(BiomeType.SHALLOW_COAST, ["res://Assets/terrain_atlas/base/water_shallow.png"])
 	_load_base_biome(BiomeType.PLAINS, ["res://Assets/terrain_atlas/base/plains.png"])
 	_load_base_biome(BiomeType.MEADOW, ["res://Assets/terrain_atlas/base/meadow.png"])
-	_load_base_biome(BiomeType.DECIDUOUS_FOREST, ["res://Assets/terrain_atlas/base/plains.png"])
-	_load_base_biome(BiomeType.PINE_TAIGA, ["res://Assets/terrain_atlas/base/plains.png"])
-	_load_base_biome(BiomeType.JUNGLE, ["res://Assets/terrain_atlas/base/meadow.png"])
+	_load_base_biome(BiomeType.DECIDUOUS_FOREST, ["res://Assets/terrain_atlas/base/dirt_alt.png"])
+	_load_base_biome(BiomeType.PINE_TAIGA, ["res://Assets/terrain_atlas/base/stone.png", "res://Assets/terrain_atlas/base/dirt.png"])
+	_load_base_biome(BiomeType.JUNGLE, ["res://Assets/terrain_atlas/base/swamp.png", "res://Assets/terrain_atlas/base/meadow.png"])
 	_load_base_biome(BiomeType.SAVANNA, ["res://Assets/terrain_atlas/base/savanna.png"])
 	_load_base_biome(BiomeType.DESERT, ["res://Assets/terrain_atlas/base/sand.png", "res://Assets/terrain_atlas/base/sand_alt.png"])
 	_load_base_biome(BiomeType.SWAMP, ["res://Assets/terrain_atlas/base/swamp.png"])
@@ -153,16 +153,18 @@ static func get_river_texture(river_name: String) -> Texture2D:
 static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant = null, custom_nature_name: String = "") -> Dictionary:
 	load_all_textures()
 	
+	var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
+	var variant_seed = abs(seed_val)
+
 	var picked_name = ""
 	if custom_nature_name != "":
 		if custom_nature_name == "none":
 			return {}
 		picked_name = custom_nature_name
 	else:
-		var seed_val = (coord.x * 374761393) ^ (coord.y * 668265263)
-		var rand_idx = abs(seed_val)
+		var rand_idx = variant_seed
 		var roll = rand_idx % 100
-		
+
 		match biome:
 			# 1. ЗИМА (СТРОГО ТОЛЬКО ЗИМНИЕ ОБЪЕКТЫ И СНЕГ)
 			BiomeType.SNOW_PEAKS:
@@ -298,5 +300,6 @@ static func get_nature_data(biome: int, coord: Vector2i, tile_resource: Variant 
 		"category": cat,
 		"scale_h": scale_h,
 		"can_harvest": can_harvest,
-		"harvest_res": meta.get("harvest_resource", null)
+		"harvest_res": meta.get("harvest_resource", null),
+		"variant_seed": variant_seed
 	}

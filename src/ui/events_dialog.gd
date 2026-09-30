@@ -9,9 +9,9 @@ extends PanelContainer
 var current_event_data: Dictionary = {}
 
 func _ready() -> void:
-	# Слушаем оба сигнала — старый (event_triggered) и новый цивилизационный
+	# Слушаем только старый (event_triggered) сигнал.
+	# Цивилизационные события обрабатываются специализированным окном CivilizationEventModal в MainHUD.
 	EventBus.event_triggered.connect(_on_event_triggered)
-	EventBus.civilization_event_triggered.connect(_on_civilization_event_triggered)
 	visible = false
 
 func _on_civilization_event_triggered(data: Dictionary) -> void:
@@ -61,14 +61,8 @@ func _on_civilization_event_triggered(data: Dictionary) -> void:
 			visible = false
 			if GameManager.civilization_event_manager:
 				GameManager.civilization_event_manager.apply_choice(captured_instance_id, captured_choice_id)
-			if GameManager.is_paused and GameManager.modal_pause_count <= 0:
-				GameManager.toggle_pause()
 		)
 		choices_container.add_child(btn)
-
-	# Ставим игру на паузу пока открыт диалог
-	if not GameManager.is_paused:
-		GameManager.toggle_pause()
 
 	visible = true
 
@@ -101,8 +95,6 @@ func _on_event_triggered(data: Dictionary) -> void:
 				GameManager.civilization_event_manager.apply_choice(inst_id, cid)
 			elif "EventManager" in Engine.get_singleton_list():
 				EventManager.resolve_choice(current_event_data.get("id", ""), choice_idx)
-			if GameManager.is_paused and GameManager.modal_pause_count <= 0:
-				GameManager.toggle_pause()
 		)
 		choices_container.add_child(btn)
 

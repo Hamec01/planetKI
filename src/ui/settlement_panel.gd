@@ -89,6 +89,14 @@ func _setup_tabbed_interface() -> void:
 	idle_workers_label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.5))
 	demo_vbox.add_child(idle_workers_label)
 	
+	var open_roster_btn = Button.new()
+	open_roster_btn.text = "👥 Открыть полный список соплеменников [U]"
+	open_roster_btn.custom_minimum_size = Vector2(0, 32)
+	open_roster_btn.pressed.connect(func():
+		EventBus.roster_requested.emit()
+	)
+	demo_vbox.add_child(open_roster_btn)
+	
 	demo_card.add_child(demo_vbox)
 	tab1_vbox.add_child(demo_card)
 	
@@ -216,15 +224,44 @@ func _refresh_ui() -> void:
 		
 	settlement_name_label.text = "🏛 %s (Эпоха 1 — Племя)" % settlement.name
 	var pop = settlement.population
+	if pop:
+		pop.sync_cohorts()
+	
+	# Подсчёт живой демографии
+	var children_cnt = 0
+	var youth_cnt = 0
+	var adults_m_cnt = 0
+	var adults_f_cnt = 0
+	var elders_cnt = 0
+	var old_folk_cnt = 0
+	if pop:
+		for c in pop.citizens:
+			if not c.is_alive:
+				continue
+			if c.cohort == "child" or c.age <= 13:
+				children_cnt += 1
+			elif c.cohort == "youth" or c.age <= 17:
+				youth_cnt += 1
+			elif c.cohort == "elder" or c.age > 45:
+				if c.age > 60:
+					old_folk_cnt += 1
+				else:
+					elders_cnt += 1
+			else:
+				if c.gender == "m":
+					adults_m_cnt += 1
+				else:
+					adults_f_cnt += 1
+					
 	pop_cohorts_label.text = "👶 Дети: %d  |  🧒 Юноши: %d  |  🧑 Взрослые (М/Ж): %d / %d  |  🧓 Старейшины: %d  |  👴 Старики: %d" % [
-		pop.children, pop.youth, pop.adults_m, pop.adults_f, pop.elders, pop.old_folk
+		children_cnt, youth_cnt, adults_m_cnt, adults_f_cnt, elders_cnt, old_folk_cnt
 	]
 	housing_label.text = "🏠 Жилой фонд: %d / %d мест   •   🛡 Обороноспособность: %.1f" % [
-		pop.get_total_population(), settlement.get_housing_capacity(), settlement.get_defense_rating()
+		pop.get_total_population() if pop else 0, settlement.get_housing_capacity(), settlement.get_defense_rating()
 	]
 	
 	idle_workers_label.text = "⚡ Свободные рабочие руки: %d (Всего способных трудиться: %d)" % [
-		settlement.get_idle_workforce(), pop.get_workforce_total()
+		settlement.get_idle_workforce(), pop.get_workforce_total() if pop else 0
 	]
 	
 	_populate_jobs()
@@ -237,17 +274,22 @@ func _populate_jobs() -> void:
 	for child in jobs_container.get_children():
 		child.queue_free()
 		
+	if settlement:
+		settlement.sync_assigned_jobs_from_citizens()
+		
 	var job_configs = [
 		{"id": "hunter", "name": "Охотники", "prod": "+1.4 🍗/дн", "icon_key": "hunter", "fallback": "🏹"},
 		{"id": "forager", "name": "Собиратели", "prod": "+1.1 🍗/дн", "icon_key": "forager", "fallback": "🧺"},
-		{"id": "farmer", "name": "Земледельцы", "prod": "+1.8 🍗/дн (осенью)", "icon_key": "farmer", "fallback": "🌾"},
+		{"id": "fisherman", "name": "Рыбаки", "prod": "+1.3 🐟/дн", "icon_key": "fish", "fallback": "🎣"},
+		{"id": "farmer", "name": "Земледельцы", "prod": "+1.8 🌾/дн (осенью)", "icon_key": "farmer", "fallback": "🌾"},
 		{"id": "woodcutter", "name": "Лесорубы", "prod": "+1.2 🪵/дн", "icon_key": "woodcutter", "fallback": "🪓"},
 		{"id": "quarryman", "name": "Каменотёсы", "prod": "+1.0 🪨/дн", "icon_key": "quarryman", "fallback": "⛏"},
 		{"id": "miner", "name": "Рудокопы", "prod": "+0.5 ⚒/дн", "icon_key": "miner", "fallback": "⛏"},
+		{"id": "builder", "name": "Строители", "prod": "+0.5 к скорости", "icon_key": "builder", "fallback": "🔨"},
 		{"id": "craftsman", "name": "Ремесленники", "prod": "+0.8 🪙/дн", "icon_key": "craftsman", "fallback": "🏺"},
 		{"id": "sage", "name": "Мудрецы", "prod": "+0.8 📜/дн", "icon_key": "sage", "fallback": "📜"},
 		{"id": "priest", "name": "Жрецы", "prod": "+0.5 🕯/дн", "icon_key": "priest", "fallback": "🕯"},
-		{"id": "builder", "name": "Строители", "prod": "+0.5 к скорости", "icon_key": "builder", "fallback": "🔨"}
+		{"id": "guard", "name": "Стражники", "prod": "+2.0 к защите", "icon_key": "weapon_spear", "fallback": "🛡"}
 	]
 	
 	for job in job_configs:

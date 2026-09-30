@@ -41,6 +41,8 @@ var ctx_desc_lbl: Label
 var ctx_progress_bar: ProgressBar
 var ctx_action_btn: Button
 var ctx_secondary_btn: Button
+var ctx_relocate_btn: Button
+var ctx_demolish_btn: Button
 var current_ctx_coord: Vector2i = Vector2i(-1, -1)
 var current_ctx_tile_data: Dictionary = {}
 var active_inspected_nature_coord: Vector2i = Vector2i(-1, -1)
@@ -59,6 +61,7 @@ func _ready() -> void:
 	EventBus.time_period_changed.connect(func(_p): _update_ui())
 	EventBus.settlement_selected.connect(_on_settlement_context_selected)
 	EventBus.notification_toast.connect(_on_notification_toast)
+	EventBus.cemetery_memorial_requested.connect(_on_cemetery_memorial_requested)
 	
 	pause_btn.pressed.connect(func(): GameManager.toggle_pause())
 	speed1_btn.pressed.connect(func(): GameManager.set_speed(1.0))
@@ -91,15 +94,21 @@ func _ready() -> void:
 	EventBus.start_building_placement.connect(_on_placement_started)
 	EventBus.cancel_building_placement.connect(_on_placement_cancelled)
 	EventBus.building_placed_on_map.connect(func(_id, _coord): _on_placement_cancelled())
+	EventBus.roster_requested.connect(func():
+		if settlement_roster_modal:
+			settlement_roster_modal.toggle()
+	)
 
 const RTSBuildMenuScript = preload("res://src/ui/rts_build_menu.gd")
-const BuildingDetailPanelScript = preload("res://src/ui/building_detail_panel.gd")
+var BuildingDetailPanelScript = load("res://src/ui/building_detail_panel.gd")
 const CivilizationEventModalScript = preload("res://src/ui/civilization_event_modal.gd")
 const EventRegistryPanelScript = preload("res://src/ui/event_registry_panel.gd")
 const TraditionsRegistryModalScript = preload("res://src/ui/traditions_registry_modal.gd")
 const FaithChronicleModalScript = preload("res://src/ui/faith_chronicle_modal.gd")
 const DevEventInspectorScript = preload("res://src/ui/dev_event_inspector.gd")
 const GameOverModalScript = preload("res://src/ui/game_over_modal.gd")
+const SettlementRosterModalScript = preload("res://src/ui/settlement_roster_modal.gd")
+const CemeteryMemorialModalScript = preload("res://src/ui/cemetery_memorial_modal.gd")
 
 var rts_build_menu: Control = null
 var building_detail_panel: Control = null
@@ -109,6 +118,8 @@ var traditions_modal: Control = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
 var game_over_modal: Control = null
+var settlement_roster_modal: Control = null
+var cemetery_memorial_modal: Control = null
 
 var notification_badges_container: HBoxContainer = null
 var badge_decisions_btn: Button = null
@@ -123,22 +134,22 @@ func _setup_top_left_notification_badges() -> void:
 	notification_badges_container.anchors_preset = Control.PRESET_TOP_LEFT
 	notification_badges_container.offset_left = 16.0
 	notification_badges_container.offset_top = 44.0
-	notification_badges_container.offset_right = 320.0
-	notification_badges_container.offset_bottom = 72.0
-	notification_badges_container.add_theme_constant_override("separation", 6)
+	notification_badges_container.offset_right = 460.0
+	notification_badges_container.offset_bottom = 74.0
+	notification_badges_container.add_theme_constant_override("separation", 8)
 	add_child(notification_badges_container)
 	
-	badge_decisions_btn = _create_badge_button("👑 Решения", "Решения правителя (ожидают выбора)", func():
+	badge_decisions_btn = _create_badge_button("👑 Решения (0)", "Решения правителя (ожидают выбора)", func():
 		if event_registry_panel:
-			event_registry_panel.open_tab(0)
+			event_registry_panel.toggle_tab(0)
 	)
-	badge_incidents_btn = _create_badge_button("⚠️ Угрозы", "Актуальные происшествия и простои", func():
+	badge_incidents_btn = _create_badge_button("⚠️ Угрозы (0)", "Актуальные происшествия и угрозы", func():
 		if event_registry_panel:
-			event_registry_panel.open_tab(1)
+			event_registry_panel.toggle_tab(1)
 	)
-	badge_chronicle_btn = _create_badge_button("📖 Летопись", "Хроника завершенных событий", func():
+	badge_chronicle_btn = _create_badge_button("📖 Летопись (0)", "Хроника завершенных событий рода", func():
 		if event_registry_panel:
-			event_registry_panel.open_tab(2)
+			event_registry_panel.toggle_tab(2)
 	)
 	
 	notification_badges_container.add_child(badge_decisions_btn)
@@ -149,15 +160,21 @@ func _create_badge_button(default_text: String, tip: String, on_click: Callable)
 	var btn = Button.new()
 	btn.text = default_text
 	btn.tooltip_text = tip
-	btn.custom_minimum_size = Vector2(0, 24)
-	btn.add_theme_font_size_override("font_size", 10)
+	btn.custom_minimum_size = Vector2(110, 26)
+	btn.add_theme_font_size_override("font_size", 11)
 	var sbox = StyleBoxFlat.new()
-	sbox.bg_color = Color(0.1, 0.14, 0.22, 0.92)
+	sbox.bg_color = Color(0.1, 0.14, 0.22, 0.95)
 	sbox.border_color = Color(0.7, 0.6, 0.3, 0.8)
 	sbox.set_border_width_all(1)
-	sbox.set_corner_radius_all(4)
-	sbox.set_content_margin_all(4)
+	sbox.set_corner_radius_all(5)
+	sbox.set_content_margin_all(5)
 	btn.add_theme_stylebox_override("normal", sbox)
+	
+	var hover_sbox = sbox.duplicate()
+	hover_sbox.bg_color = Color(0.18, 0.24, 0.36, 0.98)
+	hover_sbox.border_color = Color(0.95, 0.85, 0.45, 1.0)
+	btn.add_theme_stylebox_override("hover", hover_sbox)
+	
 	btn.pressed.connect(on_click)
 	return btn
 
@@ -177,13 +194,14 @@ func _setup_rts_build_menu() -> void:
 		civilization_event_modal.name = "CivilizationEventModal"
 		add_child(civilization_event_modal)
 		EventBus.civilization_event_triggered.connect(func(ev):
-			civilization_event_modal.open_event(ev)
+			_on_civilization_event_arrived(ev)
 		)
 	if event_registry_panel == null:
 		event_registry_panel = EventRegistryPanelScript.new()
 		event_registry_panel.name = "EventRegistryPanel"
 		add_child(event_registry_panel)
 		event_registry_panel.event_open_requested.connect(func(ev):
+			event_registry_panel.visible = false
 			civilization_event_modal.open_event(ev)
 		)
 			
@@ -206,6 +224,20 @@ func _setup_rts_build_menu() -> void:
 		game_over_modal = GameOverModalScript.new()
 		game_over_modal.name = "GameOverModal"
 		add_child(game_over_modal)
+		
+	if settlement_roster_modal == null:
+		settlement_roster_modal = SettlementRosterModalScript.new()
+		settlement_roster_modal.name = "SettlementRosterModal"
+		add_child(settlement_roster_modal)
+		
+	if cemetery_memorial_modal == null:
+		cemetery_memorial_modal = CemeteryMemorialModalScript.new()
+		cemetery_memorial_modal.name = "CemeteryMemorialModal"
+		add_child(cemetery_memorial_modal)
+
+func _on_cemetery_memorial_requested(s: SettlementData = null, b_inst: BuildingInstance = null) -> void:
+	if cemetery_memorial_modal:
+		cemetery_memorial_modal.open(s, b_inst)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if GameManager.is_game_over:
@@ -231,6 +263,10 @@ func _unhandled_input(event: InputEvent) -> void:
 					GameManager.set_speed(50.0)
 				else:
 					GameManager.set_speed(10.0)
+			KEY_U:
+				if settlement_roster_modal:
+					settlement_roster_modal.toggle()
+					get_viewport().set_input_as_handled()
 			KEY_B:
 				if rts_build_menu:
 					rts_build_menu.toggle_menu()
@@ -246,12 +282,16 @@ func _unhandled_input(event: InputEvent) -> void:
 				map_mode_panel.visible = not map_mode_panel.visible
 			KEY_E:
 				tab_opened.emit("history", null)
-			KEY_F12:
+			KEY_F3, KEY_F12:
 				if dev_inspector:
 					dev_inspector.toggle_inspector()
 			KEY_ESCAPE:
 				if civilization_event_modal and civilization_event_modal.visible:
-					pass
+					civilization_event_modal.visible = false
+				if event_registry_panel and event_registry_panel.visible:
+					event_registry_panel.visible = false
+				if settlement_roster_modal and settlement_roster_modal.visible:
+					settlement_roster_modal.close()
 				if dev_inspector and dev_inspector.visible:
 					dev_inspector.visible = false
 				if traditions_modal and traditions_modal.visible:
@@ -343,6 +383,7 @@ func _setup_bottom_rts_dock_bar() -> void:
 	
 	var menu_items = [
 		{"id": "settlement", "name": "🏛 Поселение", "icon": "backpack_LVL_01"},
+		{"id": "roster", "name": "👥 Жители [U]", "icon": "scroll_blank_01"},
 		{"id": "buildings", "name": "🔨 Постройки [B]", "icon": "shovel_01"},
 		{"id": "laws", "name": "📜 Законы [L]", "icon": "tome_01"},
 		{"id": "relig", "name": "🔮 Религия [R]", "icon": "crystal_01"},
@@ -350,7 +391,7 @@ func _setup_bottom_rts_dock_bar() -> void:
 		{"id": "map_modes", "name": "🗺 Карта [M]", "icon": "apple_red_01"},
 		{"id": "events", "name": "⚡ События", "icon": "book_01"},
 		{"id": "history", "name": "📖 Хроника [E]", "icon": "book_01"},
-		{"id": "inspector", "name": "⚙️ Инспектор [F12]", "icon": "gold_01"}
+		{"id": "inspector", "name": "🐞 Дебаг [F3]", "icon": "gold_01"}
 	]
 	
 	for item in menu_items:
@@ -393,7 +434,10 @@ func _on_menu_item_clicked(item_id: String) -> void:
 	elif map_mode_panel.visible:
 		map_mode_panel.visible = false
 		
-	if item_id == "buildings":
+	if item_id == "roster":
+		if settlement_roster_modal:
+			settlement_roster_modal.toggle()
+	elif item_id == "buildings":
 		if rts_build_menu:
 			rts_build_menu.toggle_menu()
 		else:
@@ -622,15 +666,19 @@ func _update_ui() -> void:
 		
 		var is_night = (GameManager.current_hour >= 22.0 or GameManager.current_hour < 6.0)
 		if is_night:
-			pop_label.text = "👥 %d/%d (🌙 Спят, подъём в 06:00)" % [total_pop, housing_cap]
+			pop_label.text = "👥 %d/%d (🌙 Ночной покой, спят до 06:00)" % [total_pop, housing_cap]
+			if is_instance_valid(date_label):
+				date_label.modulate = Color(0.72, 0.86, 1.25)
 		else:
 			pop_label.text = "👥 %d/%d (Своб: %d, Готовы: %d)" % [total_pop, housing_cap, unassigned, available]
+			if is_instance_valid(date_label):
+				date_label.modulate = Color.WHITE
 		if total_pop > housing_cap:
 			pop_label.tooltip_text = "⚠️ ПЕРЕНАСЕЛЕНИЕ! Не хватает жилья на %d чел.\nЖители: %d | Без профессии: %d | Доступны для задач: %d\n(Правитель исключен из населения)" % [total_pop - housing_cap, total_pop, unassigned, available]
 			pop_label.modulate = Color(1.0, 0.4, 0.4)
 		else:
 			pop_label.tooltip_text = "Жители: %d | Без профессии: %d | Доступны для задач: %d\nВместимость жилья: %d\nДети: %d, Юноши: %d, Взрослые: %d, Старики: %d\n(Правитель исключен из населения)" % [total_pop, unassigned, available, housing_cap, pop.children, pop.youth, pop.adults_m + pop.adults_f, pop.elders]
-			pop_label.modulate = Color.WHITE
+			pop_label.modulate = Color(0.75, 0.88, 1.2) if is_night else Color.WHITE
 			
 		loyalty_label.text = "Лояльность: %d%%" % int(econ.loyalty)
 		stability_label.text = "Порядок: %d%%" % int(econ.stability)
@@ -647,8 +695,12 @@ func _update_event_badges() -> void:
 			if not ev is Dictionary:
 				continue
 			var status = ev.get("status", "pending")
-			var is_incident = ev.get("type", "") == "incident" or ev.get("category", "") == "Происшествия"
-			if status == "pending":
+			var is_incident = (ev.get("type", "") in ["incident", "threat"]) \
+				or (ev.get("category", "") in ["Происшествия", "Угрозы", "Опасности", "Опасные хищники", "Поиски и спасение", "Война", "Нападение"]) \
+				or ev.get("is_threat", false) \
+				or int(ev.get("threat_level", 0)) > 0
+
+			if status in ["pending", "deferred"]:
 				if is_incident:
 					pending_incidents += 1
 				else:
@@ -664,6 +716,31 @@ func _update_event_badges() -> void:
 		badge_incidents_btn.modulate = Color(1.4, 0.4, 0.4) if pending_incidents > 0 else Color(0.8, 0.8, 0.8, 0.7)
 	if badge_chronicle_btn:
 		badge_chronicle_btn.text = "📖 Летопись (%d)" % total_chronicle
+
+func _on_civilization_event_arrived(ev: Dictionary) -> void:
+	_update_event_badges()
+	var is_incident = (ev.get("type", "") in ["incident", "threat"]) \
+		or (ev.get("category", "") in ["Происшествия", "Угрозы", "Опасности", "Опасные хищники", "Поиски и спасение", "Война", "Нападение"]) \
+		or ev.get("is_threat", false) \
+		or int(ev.get("threat_level", 0)) > 0
+
+	var ev_title = ev.get("title", "Новое событие")
+	if is_incident:
+		if badge_incidents_btn:
+			_pulse_badge(badge_incidents_btn, Color(2.0, 0.4, 0.4))
+		EventBus.notification_toast.emit("⚠️ Угроза: %s" % ev_title, "Новое происшествие занесено в раздел [⚠️ Угрозы]. Ознакомьтесь в шапке HUD.", "warning")
+	else:
+		if badge_decisions_btn:
+			_pulse_badge(badge_decisions_btn, Color(1.8, 1.5, 0.5))
+		EventBus.notification_toast.emit("👑 Решение: %s" % ev_title, "Совет племени ожидает решения правителя в разделе [👑 Решения].", "info")
+
+func _pulse_badge(btn: Button, target_color: Color) -> void:
+	if btn == null or not is_inside_tree():
+		return
+	var orig_mod = btn.modulate
+	var tw = create_tween()
+	tw.tween_property(btn, "modulate", target_color, 0.25)
+	tw.tween_property(btn, "modulate", orig_mod, 0.4)
 
 func _format_tooltip(res_name: String, total: float, net: float, sources: Dictionary) -> String:
 	var lines = ["📊 %s (Запас: %d):" % [res_name, int(total)]]
@@ -780,6 +857,28 @@ func _setup_cursor_context_menu() -> void:
 	ctx_action_btn.add_theme_stylebox_override("hover", act_hover)
 	
 	vbox.add_child(ctx_action_btn)
+	
+	# Дополнительные кнопки управления зданиями: Переместить и Снести
+	var b_mgmt_hbox = HBoxContainer.new()
+	b_mgmt_hbox.add_theme_constant_override("separation", 6)
+	
+	ctx_relocate_btn = Button.new()
+	ctx_relocate_btn.text = "📦 Переместить"
+	ctx_relocate_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ctx_relocate_btn.custom_minimum_size = Vector2(0, 26)
+	ctx_relocate_btn.add_theme_font_size_override("font_size", 11)
+	ctx_relocate_btn.visible = false
+	b_mgmt_hbox.add_child(ctx_relocate_btn)
+	
+	ctx_demolish_btn = Button.new()
+	ctx_demolish_btn.text = "🗑️ Снести"
+	ctx_demolish_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ctx_demolish_btn.custom_minimum_size = Vector2(0, 26)
+	ctx_demolish_btn.add_theme_font_size_override("font_size", 11)
+	ctx_demolish_btn.visible = false
+	b_mgmt_hbox.add_child(ctx_demolish_btn)
+	
+	vbox.add_child(b_mgmt_hbox)
 	add_child(cursor_context_menu)
 
 func _on_tile_right_clicked(coord: Vector2i, tile_data: Dictionary, screen_pos: Vector2) -> void:
@@ -874,7 +973,7 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 	# 3. Подзаголовок
 	if has_res:
 		var cat_names = {
-			"wood": "Лесной ресурс • 100 дров в дереве",
+			"wood": "Лесной ресурс • 18-20 древесины в дереве",
 			"food": "Сбор пищи • Ягоды и грибы",
 			"stone": "Каменная порода • Каменоломня",
 			"metal": "Металлическая руда"
@@ -904,7 +1003,7 @@ func _on_nature_object_selected(info: Dictionary, screen_pos: Vector2) -> void:
 			
 		var desc = "Запас ресурса: %d / %d %s\nСтатус: %s" % [int(res_amt), int(max_amt), unit_name, status_text]
 		if sprite_name in ["tree_young", "tree_spruce_young"]:
-			desc += "\n🌱 Молодой саженец. Растет во взрослое дерево (100 дров)."
+			desc += "\n🌱 Молодой саженец. Растет во взрослое дерево."
 		ctx_desc_lbl.text = desc
 		
 		# Кнопка действия
@@ -961,8 +1060,6 @@ func _on_animal_selected(animal: RefCounted, screen_pos: Vector2) -> void:
 	
 	ctx_icon_rect.texture = animal.get_texture()
 	var prefix = "🐺 " if animal.species == "wolf" else ("🐻 " if animal.species == "bear" else ("🦌 " if animal.species in ["deer", "moose"] else ("🐗 " if animal.species == "boar" else ("🦆 " if animal.species == "duck" else "🐾 "))))
-	ctx_title_lbl.text = prefix + display_name
-	
 	var behavior_desc = "Дикая фауна"
 	var bh = cfg.get("behavior", "")
 	if bh in ["predator", "territorial", "stealth_predator"]:
@@ -973,7 +1070,6 @@ func _on_animal_selected(animal: RefCounted, screen_pos: Vector2) -> void:
 		behavior_desc = "🌊 Водоплавающая птица. Спасается на воде."
 	else:
 		behavior_desc = "🌿 Пугливое травоядное животное."
-	ctx_coords_lbl.text = behavior_desc
 	
 	ctx_progress_bar.visible = true
 	ctx_progress_bar.max_value = animal.max_health
@@ -990,16 +1086,31 @@ func _on_animal_selected(animal: RefCounted, screen_pos: Vector2) -> void:
 		WildAnimal.State.FOLLOWING: state_text = "Следует за матерью"
 		WildAnimal.State.RESTING: state_text = "Отдыхает"
 		
-	ctx_desc_lbl.text = "Здоровье: %d / %d HP\nСостояние: %s\nДобыча при охоте: %s" % [
-		int(animal.health), int(animal.max_health), state_text, drops
-	]
-	
-	ctx_action_btn.visible = true
-	ctx_action_btn.disabled = false
-	ctx_action_btn.text = "🏹 Направить охотников"
-	ctx_action_btn.pressed.connect(func():
-		EventBus.notification_toast.emit("Охота", "Охотники поселения выследят эту цель.", "good")
-	)
+	if animal.is_tamed:
+		var pet_name = animal.custom_name if animal.custom_name != "" else display_name
+		ctx_title_lbl.text = "💚 " + pet_name
+		ctx_coords_lbl.text = "🏡 Домашний питомец поселения. Живёт у лагеря."
+		ctx_desc_lbl.text = "Здоровье: %d / %d HP\nСостояние: %s\nОхотники и жители поселения заботятся о питомце." % [
+			int(animal.health), int(animal.max_health), state_text
+		]
+		ctx_action_btn.visible = true
+		ctx_action_btn.disabled = false
+		ctx_action_btn.text = "❤️ Погладить"
+		ctx_action_btn.pressed.connect(func():
+			EventBus.notification_toast.emit("Любимец поселения", "%s довольно тянется к рукам!" % pet_name, "good")
+		)
+	else:
+		ctx_title_lbl.text = prefix + display_name
+		ctx_coords_lbl.text = behavior_desc
+		ctx_desc_lbl.text = "Здоровье: %d / %d HP\nСостояние: %s\nДобыча при охоте: %s" % [
+			int(animal.health), int(animal.max_health), state_text, drops
+		]
+		ctx_action_btn.visible = true
+		ctx_action_btn.disabled = false
+		ctx_action_btn.text = "🏹 Направить охотников"
+		ctx_action_btn.pressed.connect(func():
+			EventBus.notification_toast.emit("Охота", "Охотники поселения выследят эту цель.", "good")
+		)
 	
 	_position_cursor_menu(screen_pos)
 
@@ -1007,9 +1118,17 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 	current_ctx_coord = coord
 	current_ctx_tile_data = tile_data
 	
-	# Полный сброс всех старых подключений кнопки перед настройкой нового меню
+	# Полный сброс всех старых подключений кнопок перед настройкой нового меню
 	for conn in ctx_action_btn.pressed.get_connections():
 		ctx_action_btn.pressed.disconnect(conn["callable"])
+	if ctx_relocate_btn:
+		for conn in ctx_relocate_btn.pressed.get_connections():
+			ctx_relocate_btn.pressed.disconnect(conn["callable"])
+		ctx_relocate_btn.visible = false
+	if ctx_demolish_btn:
+		for conn in ctx_demolish_btn.pressed.get_connections():
+			ctx_demolish_btn.pressed.disconnect(conn["callable"])
+		ctx_demolish_btn.visible = false
 	
 	ctx_progress_bar.visible = false
 	ctx_action_btn.disabled = false
@@ -1060,8 +1179,40 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 		var b_info = BuildingDB.get_building(b_id)
 		var b_name = b_info.get("name", b_id)
 		var status = b_data.get("status", "active")
+		var s_id = b_data.get("settlement_id", "player_tribe_settlement")
+		var s = GameManager.settlements.get(s_id, null)
+		var b_inst = GameManager.get_or_create_building_instance(coord, b_id, s_id)
 		
 		ctx_icon_rect.texture = BuildingTextureManager.get_texture(b_id)
+		
+		# Кнопки перемещения и сноса для всех построек игрока
+		if ctx_relocate_btn:
+			ctx_relocate_btn.visible = true
+			ctx_relocate_btn.text = "📦 Переместить"
+			ctx_relocate_btn.pressed.connect(func():
+				cursor_context_menu.visible = false
+				EventBus.start_building_relocation.emit(coord, b_id)
+				EventBus.notification_toast.emit("Режим перемещения", "Выберите новую свободную клетку на карте (ЛКМ). ПКМ — отмена.", "info")
+			)
+		if ctx_demolish_btn:
+			ctx_demolish_btn.visible = true
+			if status == "constructing":
+				ctx_demolish_btn.text = "❌ Отменить стройку"
+				ctx_demolish_btn.pressed.connect(func():
+					cursor_context_menu.visible = false
+					if s:
+						s.demolish_building_with_salvage(coord, true)
+					EventBus.notification_toast.emit("Стройка отменена", "Строительство «%s» отменено, ресурсы возвращены." % b_name, "info")
+				)
+			else:
+				ctx_demolish_btn.text = "🗑️ Снести здание"
+				ctx_demolish_btn.pressed.connect(func():
+					cursor_context_menu.visible = false
+					if s:
+						var res = s.demolish_building_with_salvage(coord, true)
+						if res.get("success", false):
+							EventBus.notification_toast.emit("Здание снесено", "«%s» разобрано." % b_name, "warning")
+				)
 		
 		if status == "constructing":
 			ctx_title_lbl.text = "🔨 %s" % b_name
@@ -1072,14 +1223,31 @@ func _open_cursor_context_menu(coord: Vector2i, tile_data: Dictionary, screen_po
 			ctx_progress_bar.visible = true
 			ctx_progress_bar.max_value = total_days
 			ctx_progress_bar.value = total_days - days_left
-			ctx_action_btn.text = "🔨 Идет возведение..."
+			ctx_action_btn.text = "🔨 Стройка в процессе..."
 			ctx_action_btn.disabled = true
+		elif b_id in ["grave", "cemetery"]:
+			var total_buried = s.get_deceased_registry().size() if s else b_inst.building_data.get("buried_citizens", []).size()
+			if total_buried == 0 and b_inst.building_data.has("deceased_name"):
+				total_buried = 1
+				
+			var last_name = b_inst.building_data.get("deceased_name", b_inst.active_modifiers.get("deceased_name", "соплеменников"))
+			
+			ctx_title_lbl.text = "🪦 Родовой Могильник · Кладбище"
+			ctx_coords_lbl.text = "Священная земля (%d:%d)" % [coord.x, coord.y]
+			ctx_desc_lbl.text = "Здесь упокоены поколения соплеменников рода.\n🕯 Всего захоронений: %d\n🕊 Память предков дарует благословение и верность племени.\n\nНажмите «Книга Памяти», чтобы увидеть полный список усопших и обстоятельства их гибели." % total_buried
+			
+			ctx_action_btn.text = "📖 Открыть Книгу Памяти (Могильник)"
+			ctx_action_btn.disabled = false
+			ctx_action_btn.pressed.connect(func():
+				cursor_context_menu.visible = false
+				if cemetery_memorial_modal:
+					cemetery_memorial_modal.open(s, b_inst)
+			)
+			_position_cursor_menu(screen_pos)
+			return
 		else:
 			ctx_title_lbl.text = "🏠 %s" % b_name
 			ctx_coords_lbl.text = "Институт (%d:%d)" % [coord.x, coord.y]
-			var s_id = b_data.get("settlement_id", "player_tribe_settlement")
-			var b_inst = GameManager.get_or_create_building_instance(coord, b_id, s_id)
-			var s = GameManager.settlements.get(s_id, null)
 			
 			var desc_text = b_info.get("description", "Действующее здание.")
 			if b_inst and b_inst.is_residential():

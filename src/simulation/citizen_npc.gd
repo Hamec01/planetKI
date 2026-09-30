@@ -18,7 +18,14 @@ enum State {
 	FLEEING,
 	ATTACKING,
 	BUTCHERING,
-	WAITING
+	WAITING,
+	CELEBRATING,
+	MOURNING,
+	CONFRONTING,
+	COMPLAINING,
+	HELPING,
+	PRAYING,
+	FLEEING_HOME
 }
 
 # --- ИДЕНТИЧНОСТЬ И ДАННЫЕ ГРАЖДАНИНА ---
@@ -50,6 +57,7 @@ var is_guest: bool = false
 var family_id: String = ""
 var spouse_id: String = ""
 var settlement_id: String = ""
+var custom_data: Dictionary = {}
 
 # --- СЕМЕЙНЫЕ СВЯЗИ, ОТНОШЕНИЯ И ОПЕКА (S07) ---
 var relationships: Dictionary = {} # other_id -> {"type": "spouse"|"parent"|"child"|"sibling"|"guardian"|"ward", "closeness": float, "romance": float, "married": bool}
@@ -88,9 +96,15 @@ var max_carry: float = 6.0
 var health: float = 100.0 # 0 .. 100
 var max_health: float = 100.0
 var is_alive: bool = true
+var is_buried: bool = false
+var carrying_deceased_id: String = ""
+var subphase: String = ""
 var hunger: float = 100.0 # 100 = сыт, 0 = умирает от голода
 var energy: float = 100.0 # 100 = бодр, 0 = валится с ног
 var loyalty: float = 85.0
+var morale: float:
+	get: return loyalty
+	set(val): loyalty = clampf(val, 0.0, 100.0)
 var experience: Dictionary = {}
 var skills: Dictionary = {}
 
@@ -199,20 +213,52 @@ var traits: Dictionary = {
 }
 var commitment_timer: float = 0.0 # Таймер устойчивости выбора (защита от метания)
 var ongoing_task_kind: String = "" # Текущий закрепленный тип задачи
+var interrupted_task: Dictionary = {} # Снимок задачи, прерванной социальным действием/голодом (не пусто = есть что восстановить)
+var pending_social_action: String = "" # Тип соц. действия, ожидающего исполнения по прибытии ("complain", "help_neighbor", ...)
 var social_cooldown: float = 0.0 # Кулдаун на повторные социальные диалоги
+var death_cause: String = "" # Причина гибели: "В бою с волком", "От голода", "От старости"
 
 # Память о значимых событиях (P01.2 / ТЗ 4.3): спасение, жильё, выселение, предательство
 var memories: Array[Dictionary] = []
+
+# Индивидуальные причуды и мнения (Система живых NPC / ТЗ Разделы 2-5)
+var quirks: Array[String] = []
+var opinions: Dictionary = {} # decision_id -> {"stance": "support"|"oppose"|"neutral", "importance": float, "reason": String, "formed_at_tick": int}
+var active_social_action: String = ""
+var social_target_id: String = ""
+var social_timer: float = 0.0
 
 func take_damage(amount: float, source_name: String = "") -> bool:
 	health = maxf(0.0, health - amount)
 	if health <= 0.0:
 		is_alive = false
+		if death_cause == "":
+			if source_name != "":
+				if "волк" in source_name.to_lower():
+					death_cause = "В схватке с волком"
+				elif "медвед" in source_name.to_lower():
+					death_cause = "В схватке с медведем"
+				elif "кабан" in source_name.to_lower():
+					death_cause = "В схватке с кабаном"
+				elif "голод" in source_name.to_lower():
+					death_cause = "От истощения и голода"
+				elif "старост" in source_name.to_lower():
+					death_cause = "От преклонного возраста"
+				else:
+					death_cause = "Погиб от: %s" % source_name
+			else:
+				death_cause = "От ран и опасностей диких земель"
 		if is_ruler:
-			var killer = source_name if source_name != "" else "Опасности диких земель"
+			var killer = death_cause
 			EventBus.ruler_died.emit(name, killer)
 			if GameManager and GameManager.has_method("trigger_game_over"):
 				GameManager.trigger_game_over("Вождь племени %s погиб от: %s. Племя осталось без предводителя." % [name, killer])
+		elif GameManager and GameManager.settlements:
+			var s = GameManager.settlements.get(settlement_id, null)
+			if s == null and not GameManager.settlements.is_empty():
+				s = GameManager.settlements.values()[0]
+			if s and s.has_method("_process_citizen_death"):
+				s._process_citizen_death(self)
 		return true # Погиб
 	else:
 		if health < 30.0:
@@ -373,7 +419,7 @@ func _pick_initial_appearance() -> void:
 	elif cohort == "youth":
 		pool = ["teen_boy_1", "teen_boy_2"] if gender == "m" else ["teen_girl_1", "teen_girl_2"]
 	elif cohort == "elder":
-		pool = ["grandpa_staff", "elder_citizen_m"] if gender == "m" else ["grandma", "elder_citizen_f"]
+		pool = ["grandpa_staff", "elder_citizen_m", "senior_m"] if gender == "m" else ["grandma", "elder_citizen_f", "senior_f"]
 	else:
 		if gender == "m":
 			pool = ["villager_brown_m", "villager_blue_m", "adult_1", "adult_3"]
@@ -382,17 +428,27 @@ func _pick_initial_appearance() -> void:
 	if not pool.is_empty():
 		appearance_role = pool[seed_val % pool.size()]
 
-# Роли закреплённые за мужским гендером
+# Роли закреплённые за мужским гендером (32 роли)
 const MALE_ROLES: Array = [
-	"villager_brown_m", "villager_blue_m", "adult_1", "adult_3",
-	"teen_boy_1", "teen_boy_2", "child_boy_1", "child_boy_2",
-	"grandpa_staff", "elder_citizen_m"
+	"leader_m", "sage_m", "priest_m", "elder_m",
+	"forager_m", "hunter_m", "farmer_m", "fisherman_m",
+	"woodcutter_m", "mason_m", "miner_m", "builder_m",
+	"blacksmith_m", "potter_m", "villager_brown_m", "villager_blue_m",
+	"warrior_m", "guard_m", "archer_m", "spearman_m",
+	"commander_m", "veteran_m", "adult_1", "adult_3",
+	"child_boy_1", "child_boy_2", "teen_boy_1", "teen_boy_2",
+	"grandpa_staff", "elder_citizen_m", "senior_m", "father_baby"
 ]
-# Роли закреплённые за женским гендером
+# Роли закреплённые за женским гендером (32 роли)
 const FEMALE_ROLES: Array = [
-	"villager_green_f", "villager_red_f", "adult_2", "adult_4",
-	"teen_girl_1", "teen_girl_2", "child_girl_1", "child_girl_2",
-	"grandma", "elder_citizen_f"
+	"leader_f", "sage_f", "priest_f", "elder_f",
+	"forager_f", "hunter_f", "farmer_f", "fisherman_f",
+	"woodcutter_f", "mason_f", "miner_f", "builder_f",
+	"potter_f", "weaver_f", "villager_green_f", "villager_red_f",
+	"warrior_f", "guard_f", "archer_f", "spearman_f",
+	"commander_f", "veteran_f", "adult_2", "adult_4",
+	"child_girl_1", "child_girl_2", "teen_girl_1", "teen_girl_2",
+	"grandma", "elder_citizen_f", "senior_f", "mother_baby"
 ]
 
 func _is_appearance_valid_for_gender() -> bool:
@@ -413,12 +469,67 @@ func get_texture() -> Texture2D:
 		return cached_texture
 	CharacterTextureManager.load_all()
 	if job_id != "idle" and cohort in ["youth", "adult", "elder"]:
-		cached_texture = CharacterTextureManager.get_character_for_job(job_id, seed_val, race_id)
+		cached_texture = CharacterTextureManager.get_character_for_job(job_id, seed_val, race_id, gender)
 	else:
 		cached_texture = CharacterTextureManager.get_role_texture(race_id, appearance_role)
 	if cached_texture == null:
 		cached_texture = CharacterTextureManager.get_random_race_character(race_id, seed_val)
 	return cached_texture
+
+var preferred_job: String = ""
+
+func get_preferred_job() -> String:
+	if preferred_job != "" and preferred_job != "idle":
+		return preferred_job
+	var best_j = "forager"
+	var max_exp = -1.0
+	for j in experience:
+		var ev = float(experience[j])
+		if ev > max_exp:
+			max_exp = ev
+			best_j = j
+	if max_exp <= 0.0:
+		if traits.get("diligence", 50.0) > 55.0:
+			best_j = "builder" if randf() < 0.5 else "woodcutter"
+		elif traits.get("temper", 50.0) > 55.0 or traits.get("bravery", 50.0) > 55.0:
+			best_j = "hunter"
+		elif traits.get("empathy", 50.0) > 55.0:
+			best_j = "forager"
+	preferred_job = best_j
+	return preferred_job
+
+func set_job_by_player(new_job: String) -> void:
+	var pref = get_preferred_job()
+	var job_titles = {
+		"hunter": "охотник",
+		"woodcutter": "лесоруб",
+		"forager": "собиратель",
+		"quarryman": "каменотёс",
+		"miner": "рудокоп",
+		"builder": "строитель",
+		"farmer": "земледелец",
+		"craftsman": "ремесленник",
+		"sage": "мудрец",
+		"priest": "жрец",
+		"guard": "стражник",
+		"elder": "старейшина",
+		"idle": "свободный житель"
+	}
+	var new_name = job_titles.get(new_job, new_job)
+	var pref_name = job_titles.get(pref, pref)
+	
+	if new_job == pref:
+		loyalty = minf(100.0, loyalty + 5.0)
+		add_memory("job_happiness", "profession", "", 1.5, "Вождь доверил мне любимое дело: %s!" % new_name, true)
+		show_emote("joy", 3.0, 3)
+	elif new_job != "idle":
+		loyalty = maxf(10.0, loyalty - 8.0)
+		add_memory("job_discontent", "profession", "", -1.2, "Вождь заставил меня работать %s, хотя я хотел быть %s..." % [new_name, pref_name], true)
+		show_emote("protest", 3.5, 4)
+	else:
+		show_emote("sympathy", 2.0, 2)
+		
+	set_job(new_job)
 
 func set_job(new_job: String) -> void:
 	if job_id == new_job:
@@ -544,6 +655,9 @@ func init_personality(seed_num: int = 0) -> void:
 	traits["unpredictable"] = rng.randf() < 0.05
 	traits["aggression"] = traits["temper"]
 	traits["pride"] = traits["ambition"]
+	traits["loyalty_ruler"] = rng.randf_range(40.0, 90.0)
+	traits["tolerance"] = rng.randf_range(30.0, 80.0)
+	init_quirks(s)
 
 func inherit_traits_from_parents(mother: CitizenNPC, father: CitizenNPC) -> void:
 	var rng = RandomNumberGenerator.new()
@@ -551,7 +665,7 @@ func inherit_traits_from_parents(mother: CitizenNPC, father: CitizenNPC) -> void
 	var m_traits = mother.traits if mother != null else {}
 	var f_traits = father.traits if father != null else {}
 	
-	for key in ["diligence", "bravery", "empathy", "sociability", "temper", "honesty", "ambition", "tradition", "curiosity"]:
+	for key in ["diligence", "bravery", "empathy", "sociability", "temper", "honesty", "ambition", "tradition", "curiosity", "loyalty_ruler", "tolerance"]:
 		var m_val = float(m_traits.get(key, 50.0))
 		var f_val = float(f_traits.get(key, 50.0))
 		var avg = (m_val + f_val) * 0.5 if (mother and father) else (m_val if mother else f_val)
@@ -560,6 +674,7 @@ func inherit_traits_from_parents(mother: CitizenNPC, father: CitizenNPC) -> void
 	traits["unpredictable"] = (mother and mother.traits.get("unpredictable", false)) or (father and father.traits.get("unpredictable", false)) or (rng.randf() < 0.03)
 	traits["aggression"] = traits["temper"]
 	traits["pride"] = traits["ambition"]
+	init_quirks(seed_val)
 
 # --- ПАМЯТЬ И ЗНАНИЕ О МИРЕ (P01.2 / ТЗ 4.3) ---
 func add_memory(p_type: String, p_actor_id: String, p_target_id: String, p_importance: float, p_desc: String, p_permanent: bool = false) -> void:
@@ -587,6 +702,26 @@ func has_memory_of(p_actor_id: String, p_type: String = "") -> bool:
 			if p_type == "" or m.get("type", "") == p_type:
 				return true
 	return false
+
+func has_memory(p_type: String) -> bool:
+	for m in memories:
+		if m.get("type", "") == p_type:
+			return true
+	return false
+
+func has_grudge_against(p_actor_id: String) -> bool:
+	for m in memories:
+		if (m.get("actor_id", "") == p_actor_id or m.get("target_id", "") == p_actor_id) and (m.get("type", "") in ["grudge", "offense", "brawl", "feud", "rival", "betrayal"]):
+			return true
+	return false
+
+func clear_grudge(p_actor_id: String) -> void:
+	var i = memories.size() - 1
+	while i >= 0:
+		var m = memories[i]
+		if (m.get("actor_id", "") == p_actor_id or m.get("target_id", "") == p_actor_id) and (m.get("type", "") in ["grudge", "offense", "brawl", "feud", "rival", "betrayal"]):
+			memories.remove_at(i)
+		i -= 1
 
 func get_memories_about(p_actor_id: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -804,6 +939,7 @@ func serialize() -> Dictionary:
 		"race_id": race_id,
 		"appearance_role": appearance_role,
 		"job_id": job_id,
+		"preferred_job": preferred_job,
 		"workplace_id": workplace_id,
 		"workplace_coord": [workplace_coord.x, workplace_coord.y],
 		"home_id": home_id,
@@ -828,6 +964,10 @@ func serialize() -> Dictionary:
 		"experience": experience.duplicate(),
 		"skills": skills.duplicate(),
 		"last_status_reason": last_status_reason,
+		"death_cause": death_cause,
+		"is_buried": is_buried,
+		"carrying_deceased_id": carrying_deceased_id,
+		"subphase": subphase,
 		"strength_xp": strength_xp,
 		"strength_level": strength_level,
 		"endurance_xp": endurance_xp,
@@ -858,6 +998,10 @@ func serialize() -> Dictionary:
 func deserialize(data: Dictionary) -> void:
 	citizen_id = data.get("citizen_id", "")
 	name = data.get("name", "")
+	death_cause = data.get("death_cause", "")
+	is_buried = bool(data.get("is_buried", false))
+	carrying_deceased_id = data.get("carrying_deceased_id", "")
+	subphase = data.get("subphase", "")
 	gender = data.get("gender", "m")
 	age = data.get("age", 25)
 	age_progress = data.get("age_progress", 0.0)
@@ -866,6 +1010,7 @@ func deserialize(data: Dictionary) -> void:
 	race_id = data.get("race_id", "north")
 	appearance_role = data.get("appearance_role", "villager_brown_m")
 	job_id = data.get("job_id", "idle")
+	preferred_job = data.get("preferred_job", "")
 	workplace_id = data.get("workplace_id", "")
 	var wc = data.get("workplace_coord", [-1, -1])
 	workplace_coord = Vector2i(wc[0], wc[1])
@@ -979,6 +1124,98 @@ func _sync_cohort_on_age_change() -> void:
 		appearance_role = ""
 		_pick_initial_appearance()
 		cached_texture = null
+		if old_cohort in ["child", "youth"] and cohort == "adult" and not is_ruler:
+			choose_profession_on_adulthood()
+
+func choose_profession_on_adulthood() -> String:
+	# Если у взрослого жителя уже есть назначенная профессия (не idle/child/youth), сохраняем её
+	if job_id != "" and job_id != "idle" and job_id != "child" and job_id != "youth":
+		return job_id
+		
+	var scores: Dictionary = {
+		"hunter": 10.0,
+		"woodcutter": 10.0,
+		"forager": 10.0,
+		"builder": 8.0,
+		"guard": 8.0,
+		"quarryman": 6.0
+	}
+	
+	# Влияние характеристик и черт характера (traits)
+	var temper = float(traits.get("temper", 50.0))
+	var pride = float(traits.get("pride", 50.0))
+	var empathy = float(traits.get("empathy", 50.0))
+	var diligence = float(traits.get("diligence", 50.0))
+	
+	if temper > 55.0 or pride > 55.0:
+		scores["guard"] += 14.0
+		scores["hunter"] += 10.0
+	if empathy > 55.0:
+		scores["forager"] += 15.0
+	if diligence > 55.0:
+		scores["builder"] += 12.0
+		scores["woodcutter"] += 12.0
+		scores["quarryman"] += 10.0
+		
+	# Влияние накопленного в юности опыта (experience)
+	for p_job in scores.keys():
+		var exp_val = float(experience.get(p_job, 0.0))
+		scores[p_job] += exp_val * 1.5
+		
+	# Влияние профессии родителей (преемственность ремесла)
+	for rel_id in relationships:
+		var r_data = relationships[rel_id]
+		if r_data.get("is_parent", false) or r_data.get("type", "") == "parent":
+			if GameManager and GameManager.settlements and GameManager.settlements.has(settlement_id):
+				var p_sett = GameManager.settlements[settlement_id]
+				if p_sett and p_sett.population:
+					var parent_c = p_sett.population.get_citizen_by_id(rel_id)
+					if parent_c and parent_c.job_id in scores:
+						scores[parent_c.job_id] += 12.0
+						
+	# Влияние потребностей поселения (нехватка ресурсов)
+	if GameManager and GameManager.settlements and GameManager.settlements.has(settlement_id):
+		var p_sett = GameManager.settlements[settlement_id]
+		if p_sett and p_sett.economy:
+			var food_amt = float(p_sett.economy.resources.get("food", 0.0))
+			var wood_amt = float(p_sett.economy.resources.get("wood", 0.0))
+			var stone_amt = float(p_sett.economy.resources.get("stone", 0.0))
+			if food_amt < 25.0:
+				scores["hunter"] += 14.0
+				scores["forager"] += 14.0
+			if wood_amt < 20.0:
+				scores["woodcutter"] += 14.0
+			if stone_amt < 10.0:
+				scores["quarryman"] += 10.0
+				
+	# Выбор наилучшей профессии
+	var best_job = "forager"
+	var best_score = -999.0
+	for j_id in scores:
+		var randomized_score = scores[j_id] + randf_range(-1.5, 1.5)
+		if randomized_score > best_score:
+			best_score = randomized_score
+			best_job = j_id
+			
+	set_job(best_job)
+	
+	var job_titles_ru = {
+		"hunter": "охотника",
+		"woodcutter": "дровосека",
+		"forager": "собирателя",
+		"builder": "строителя",
+		"guard": "стражника",
+		"quarryman": "каменотёса"
+	}
+	var job_name_ru = job_titles_ru.get(best_job, best_job)
+	
+	add_memory("coming_of_age", "adulthood", "", 2.0, "Достиг совершеннолетия (18 лет) и избрал ремесло %s" % job_name_ru, true)
+	show_emote("joy", 4.0, 3)
+	shout("Мне 18! Мой путь — ремесло %s!" % job_name_ru, 4.0)
+	last_status_reason = "Избрал ремесло %s" % job_name_ru
+	EventBus.notification_toast.emit("🌱 Совершеннолетие", "%s достиг 18 лет и избрал путь %s" % [name, job_name_ru], "good")
+	
+	return best_job
 
 # --- МЕТОДЫ ОТНОШЕНИЙ, СОЮЗОВ И ОПЕКИ (S07) ---
 func add_relationship(other_id: String, rel_type: String, closeness: float = 50.0, romance: float = 0.0, married: bool = false) -> void:
@@ -1055,6 +1292,26 @@ func get_children() -> Array[String]:
 
 func is_child_of(parent_id: String) -> bool:
 	return get_parents().has(parent_id)
+
+func get_friends() -> Array[String]:
+	var result: Array[String] = []
+	for o_id in relationships:
+		var r = relationships[o_id]
+		if float(r.get("affinity", 0.0)) >= 25.0 or float(r.get("closeness", 0.0)) >= 65.0:
+			result.append(o_id)
+	return result
+
+func get_rivals() -> Array[String]:
+	var result: Array[String] = []
+	for o_id in relationships:
+		var r = relationships[o_id]
+		if float(r.get("affinity", 0.0)) <= -20.0 or has_grudge_against(o_id):
+			result.append(o_id)
+	return result
+
+func is_dating_with(other_id: String) -> bool:
+	var r = relationships.get(other_id, {})
+	return float(r.get("romance", 0.0)) >= 20.0 or r.get("married", false)
 
 func is_related_to(other: CitizenNPC) -> bool:
 	if other == null or other.citizen_id == citizen_id:
@@ -1183,4 +1440,678 @@ func gain_profession_xp(prof_name: String, work_seconds: float) -> void:
 			"%s повысил уровень в ремесле (%s: ур. %d)" % [name, prof_name, cur_level + 1],
 			"good"
 		)
+
+
+# ==============================================================================
+# СИСТЕМА ЖИВЫХ NPC (PLANETKI / ТЗ NPC_ALIVE_SYSTEM_TZ.md)
+# ==============================================================================
+
+# --- ПРИЧУДЫ (QUIRKS) И АРХЕТИПЫ ---
+
+func init_quirks(seed_num: int = 0) -> void:
+	quirks.clear()
+	var s = seed_num if seed_num != 0 else seed_val
+	var rng = RandomNumberGenerator.new()
+	rng.seed = s + 101
+	
+	var pool: Array[String] = [
+		"early_bird", "night_owl", "glutton", "ascetic",
+		"chatterbox", "superstitious", "workaholic", "perfectionist",
+		"brawler", "romantic", "gossip", "hoarder"
+	]
+	
+	# Склонность к определённым причудам на основе черт характера
+	var weighted_pool: Array[String] = []
+	for q in pool:
+		var weight = 1.0
+		match q:
+			"workaholic":
+				if float(traits.get("diligence", 50.0)) > 65.0: weight += 2.5
+			"perfectionist":
+				if float(traits.get("diligence", 50.0)) > 60.0 and float(traits.get("temper", 50.0)) < 40.0: weight += 2.0
+			"chatterbox", "gossip":
+				if float(traits.get("sociability", 50.0)) > 65.0: weight += 2.5
+			"ascetic":
+				if float(traits.get("sociability", 50.0)) < 35.0: weight += 2.0
+			"brawler":
+				if float(traits.get("temper", 50.0)) > 60.0 or float(traits.get("bravery", 50.0)) > 65.0: weight += 2.5
+			"superstitious":
+				if float(traits.get("tradition", 50.0)) > 65.0: weight += 2.5
+			"romantic":
+				if float(traits.get("empathy", 50.0)) > 60.0 and float(traits.get("sociability", 50.0)) > 55.0: weight += 2.0
+			"glutton":
+				if float(traits.get("temper", 50.0)) < 40.0 and float(traits.get("diligence", 50.0)) < 50.0: weight += 1.5
+		var count = maxi(1, int(round(weight)))
+		for i in range(count):
+			weighted_pool.append(q)
+	
+	# Выбираем 1-2 причуды
+	var num_quirks = 1 if rng.randf() > 0.4 else 2
+	for i in range(num_quirks):
+		if weighted_pool.is_empty():
+			break
+		var idx = rng.randi_range(0, weighted_pool.size() - 1)
+		var chosen = weighted_pool[idx]
+		if not quirks.has(chosen):
+			quirks.append(chosen)
+		# Удаляем все вхождения выбранной причуды
+		var new_pool: Array[String] = []
+		for q_item in weighted_pool:
+			if q_item != chosen:
+				new_pool.append(q_item)
+		weighted_pool = new_pool
+
+func has_quirk(quirk_id: String) -> bool:
+	return quirks.has(quirk_id)
+
+func get_quirk_effects() -> Dictionary:
+	var effects = {
+		"work_speed_mult": 1.0,
+		"hunger_rate_mult": 1.0,
+		"social_rate_mult": 1.0,
+		"morale_bonus": 0.0
+	}
+	for q in quirks:
+		match q:
+			"early_bird":
+				effects["work_speed_mult"] *= 1.1
+			"night_owl":
+				effects["work_speed_mult"] *= 1.05
+			"glutton":
+				effects["hunger_rate_mult"] *= 1.25
+			"ascetic":
+				effects["hunger_rate_mult"] *= 0.8
+			"chatterbox":
+				effects["social_rate_mult"] *= 1.4
+			"gossip":
+				effects["social_rate_mult"] *= 1.25
+			"brawler":
+				effects["morale_bonus"] += 2.0
+			"workaholic":
+				if state == State.WORKING or state == State.GATHERING:
+					effects["work_speed_mult"] *= 1.15
+				elif state == State.IDLE:
+					effects["morale_bonus"] -= 3.0
+			"perfectionist":
+				effects["work_speed_mult"] *= 0.9
+	return effects
+
+func get_personality_archetype() -> String:
+	var d = float(traits.get("diligence", 50.0))
+	var b = float(traits.get("bravery", 50.0))
+	var e = float(traits.get("empathy", 50.0))
+	var s = float(traits.get("sociability", 50.0))
+	var t = float(traits.get("temper", 50.0))
+	var a = float(traits.get("ambition", 50.0))
+	var tr = float(traits.get("tradition", 50.0))
+	var c = float(traits.get("curiosity", 50.0))
+	var lr = float(traits.get("loyalty_ruler", 50.0))
+	
+	if a >= 65.0 and s >= 55.0:
+		return "leader"
+	if b >= 65.0 and t >= 45.0:
+		return "fighter"
+	if t >= 60.0 and tr <= 40.0:
+		return "rebel"
+	if tr >= 65.0 and lr >= 55.0:
+		return "keeper"
+	if s >= 65.0 and e >= 55.0:
+		return "diplomat"
+	if e >= 65.0 and d >= 45.0:
+		return "caretaker"
+	if c >= 65.0 and tr <= 45.0:
+		return "visionary"
+	if s <= 35.0 and d >= 45.0:
+		return "loner"
+	if d >= 60.0 and tr >= 45.0:
+		return "worker"
+	
+	# Fallback по наивысшей доминирующей черте
+	var max_val = maxf(d, maxf(b, maxf(e, maxf(s, maxf(t, maxf(a, maxf(tr, c)))))))
+	if max_val == a: return "leader"
+	if max_val == b: return "fighter"
+	if max_val == t: return "rebel"
+	if max_val == tr: return "keeper"
+	if max_val == s: return "diplomat"
+	if max_val == e: return "caretaker"
+	if max_val == c: return "visionary"
+	if max_val == d: return "worker"
+	return "worker"
+
+
+# --- ПАРСИНГ И ВЫЧИСЛЕНИЕ УСЛОВИЙ РЕАКЦИЙ ---
+
+func _evaluate_condition(condition_str: String, event_data: Dictionary = {}) -> bool:
+	var cond = condition_str.strip_edges()
+	if cond == "" or cond == "true" or cond == "default":
+		return true
+	if cond == "false":
+		return false
+	
+	# Разделение по " or "
+	if " or " in cond:
+		var or_parts = cond.split(" or ")
+		for part in or_parts:
+			if _evaluate_condition(part.strip_edges(), event_data):
+				return true
+		return false
+		
+	# Разделение по " and "
+	if " and " in cond:
+		var and_parts = cond.split(" and ")
+		for part in and_parts:
+			if not _evaluate_condition(part.strip_edges(), event_data):
+				return false
+		return true
+		
+	# Одиночные проверки
+	if cond.begins_with("has_quirk(") and cond.ends_with(")"):
+		var q_name = cond.substr(10, cond.length() - 11).replace("\"", "").replace("'", "").strip_edges()
+		return has_quirk(q_name)
+		
+	if cond.begins_with("has_memory(") and cond.ends_with(")"):
+		var m_name = cond.substr(11, cond.length() - 12).replace("\"", "").replace("'", "").strip_edges()
+		return has_memory(m_name)
+		
+	# Проверка операторов сравнения: ==, !=, >=, <=, >, <
+	for op in [">=", "<=", "!=", "==", ">", "<"]:
+		if op in cond:
+			var parts = cond.split(op, false, 1)
+			if parts.size() == 2:
+				var left = parts[0].strip_edges()
+				var right = parts[1].strip_edges().replace("\"", "").replace("'", "")
+				var left_val: Variant = null
+				
+				if left == "cohort":
+					left_val = cohort
+				elif left == "job_id":
+					left_val = job_id
+				elif left == "gender":
+					left_val = gender
+				elif left == "is_ruler":
+					left_val = is_ruler
+				elif left == "personality" or left == "archetype":
+					left_val = get_personality_archetype()
+				elif left == "loyalty" or left == "morale":
+					left_val = loyalty
+				elif left == "health":
+					left_val = health
+				elif left == "hunger":
+					left_val = hunger
+				elif left == "energy":
+					left_val = energy
+				elif left == "age":
+					left_val = float(age)
+				elif left.begins_with("traits."):
+					var trait_key = left.substr(7)
+					left_val = float(traits.get(trait_key, 50.0))
+				elif left.begins_with("event."):
+					var ev_key = left.substr(6)
+					left_val = event_data.get(ev_key, null)
+				else:
+					left_val = traits.get(left, null)
+					
+				if left_val != null:
+					if typeof(left_val) == TYPE_BOOL:
+						var r_bool = right.to_lower() == "true"
+						return (left_val == r_bool) if op == "==" else (left_val != r_bool)
+					elif typeof(left_val) == TYPE_STRING:
+						var r_str = str(right)
+						return (str(left_val) == r_str) if op == "==" else (str(left_val) != r_str)
+					elif typeof(left_val) in [TYPE_INT, TYPE_FLOAT]:
+						var r_num = float(right)
+						var l_num = float(left_val)
+						match op:
+							"==": return is_equal_approx(l_num, r_num)
+							"!=": return not is_equal_approx(l_num, r_num)
+							">=": return l_num >= r_num
+							"<=": return l_num <= r_num
+							">":  return l_num > r_num
+							"<":  return l_num < r_num
+	return false
+
+
+# --- ОБРАБОТКА СОБЫТИЙ ЦИВИЛИЗАЦИИ И МИРА ---
+
+func receive_civilization_event(event_data: Dictionary, choices_history: Array = []) -> void:
+	if not is_alive:
+		return
+	
+	var reactions = event_data.get("npc_reactions", [])
+	if reactions is Dictionary:
+		reactions = [reactions]
+	elif not (reactions is Array):
+		reactions = []
+		
+	# Если есть реакции, привязанные к конкретным выборам игрока
+	var choice_reactions = event_data.get("reactions_by_choice", {})
+	if not choice_reactions.is_empty() and not choices_history.is_empty():
+		var last_choice = choices_history.back()
+		var last_choice_idx = int(last_choice.get("choice_index", -1)) if last_choice is Dictionary else int(last_choice)
+		if choice_reactions.has(str(last_choice_idx)):
+			var extra = choice_reactions[str(last_choice_idx)]
+			if extra is Array:
+				reactions.append_array(extra)
+			elif extra is Dictionary:
+				reactions.append(extra)
+				
+	var reacted = false
+	for r in reactions:
+		if not (r is Dictionary):
+			continue
+		var filter_str = r.get("filter", "true")
+		if _evaluate_condition(filter_str, event_data):
+			reacted = true
+			var morale_delta = float(r.get("morale_delta", 0.0))
+			if not is_zero_approx(morale_delta):
+				loyalty = clampf(loyalty + morale_delta, 0.0, 100.0)
+				
+			if r.has("memory") and r["memory"] is Dictionary:
+				var m = r["memory"]
+				add_memory(
+					m.get("type", "civ_event"),
+					"event",
+					event_data.get("id", ""),
+					float(m.get("importance", 0.6)),
+					m.get("desc", event_data.get("title", "Событие поселения"))
+				)
+				
+			if r.has("emote"):
+				var dur = float(r.get("duration", 3.5))
+				var prio = int(r.get("priority", 3))
+				show_emote(str(r["emote"]), dur, prio, true)
+				
+			if r.has("shout"):
+				var sh_dur = float(r.get("shout_duration", 3.0))
+				shout(str(r["shout"]), sh_dur)
+				
+			if r.has("trait_changes") and r["trait_changes"] is Dictionary:
+				for t_key in r["trait_changes"]:
+					var old_val = float(traits.get(t_key, 50.0))
+					var delta = float(r["trait_changes"][t_key])
+					traits[t_key] = clampf(old_val + delta, 0.0, 100.0)
+					EventBus.npc_trait_changed.emit(citizen_id, t_key, old_val, traits[t_key])
+					
+			if r.has("autonomous_action"):
+				_trigger_reaction_action(str(r["autonomous_action"]), event_data)
+				
+	# Если нет персональных реакций, применяем базовый эффект события по умолчанию
+	if not reacted:
+		var def_morale = float(event_data.get("default_morale_delta", 0.0))
+		if not is_zero_approx(def_morale):
+			loyalty = clampf(loyalty + def_morale, 0.0, 100.0)
+
+func receive_world_event(event_type: String, event_params: Dictionary) -> void:
+	if not is_alive:
+		return
+		
+	match event_type:
+		"citizen_died":
+			var deceased_id = event_params.get("deceased_id", "")
+			var deceased_name = event_params.get("deceased_name", "Соплеменник")
+			if deceased_id == citizen_id:
+				return
+				
+			var rel = relationships.get(deceased_id, {})
+			var is_close = not rel.is_empty() or deceased_id == spouse_id or deceased_id == guardian_id or deceased_id == family_id
+			var is_rival = has_grudge_against(deceased_id)
+			
+			if is_close:
+				add_memory("grief", "death", deceased_id, 2.5, "Потерял близкого человека: %s" % deceased_name, true)
+				loyalty = clampf(loyalty - 15.0, 0.0, 100.0)
+				state = State.MOURNING
+				social_timer = 18.0
+				show_emote("grief", 5.0, 5, true)
+				shout("Горе нам! Покойся с миром, %s..." % deceased_name)
+			elif is_rival:
+				loyalty = clampf(loyalty + 4.0, 0.0, 100.0)
+				show_emote("relief", 3.0, 2)
+			else:
+				var emp = float(traits.get("empathy", 50.0))
+				loyalty = clampf(loyalty - (emp * 0.05), 0.0, 100.0)
+				if emp > 65.0:
+					state = State.MOURNING
+					social_timer = 8.0
+					show_emote("sorrow", 3.0, 3)
+					
+		"law_enacted":
+			var law_id = event_params.get("law_id", "")
+			var tr = float(traits.get("tradition", 50.0))
+			var tmp = float(traits.get("temper", 50.0))
+			var arch = get_personality_archetype()
+			
+			if arch == "keeper" or tr >= 65.0:
+				loyalty = clampf(loyalty + 6.0, 0.0, 100.0)
+				show_emote("cheer", 3.0, 2)
+				shout("Закон укрепляет наш порядок!")
+			elif arch == "rebel" or (tmp >= 60.0 and tr <= 35.0):
+				loyalty = clampf(loyalty - 8.0, 0.0, 100.0)
+				state = State.COMPLAINING
+				social_timer = 12.0
+				show_emote("disapproval", 4.0, 4)
+				shout("Опять вождь стесняет нашу волю!")
+				EventBus.npc_complaint_to_ruler.emit(citizen_id, "law_discontent")
+				
+		"building_constructed":
+			var b_name = event_params.get("building_name", "Здание")
+			var is_builder = (job_id == "builder")
+			if is_builder:
+				loyalty = clampf(loyalty + 5.0, 0.0, 100.0)
+				show_emote("cheer", 3.0, 2)
+				shout("Наш труд украсил поселение (%s)!" % b_name)
+			else:
+				loyalty = clampf(loyalty + 2.0, 0.0, 100.0)
+				
+		"attack_started":
+			var brv = float(traits.get("bravery", 50.0))
+			if brv < 40.0:
+				state = State.FLEEING_HOME
+				social_timer = 15.0
+				show_emote("fear", 4.0, 5, true)
+				shout("Нападение! Спасайтесь в домах!")
+			elif brv >= 65.0 or get_personality_archetype() == "fighter":
+				show_emote("anger", 4.0, 5, true)
+				shout("К оружию! Защитим очаг!")
+				
+		"celebration_started":
+			if state != State.MOURNING and state != State.FLEEING:
+				state = State.CELEBRATING
+				social_timer = 20.0
+				loyalty = clampf(loyalty + 8.0, 0.0, 100.0)
+				show_emote("dance", 5.0, 3)
+				shout("Слава нашему роду!")
+				
+		"revolt_risk":
+			if loyalty < 35.0 and (get_personality_archetype() in ["rebel", "leader"]):
+				state = State.CONFRONTING
+				social_timer = 15.0
+				show_emote("anger", 5.0, 5, true)
+				shout("Вождь ведёт нас к гибели! Пора всё менять!")
+
+func _trigger_reaction_action(action_name: String, event_data: Dictionary) -> void:
+	active_social_action = action_name
+	match action_name:
+		"celebrate":
+			state = State.CELEBRATING
+			social_timer = 15.0
+		"mourn":
+			state = State.MOURNING
+			social_timer = 15.0
+		"confront", "protest":
+			state = State.CONFRONTING
+			social_timer = 12.0
+		"complain":
+			state = State.COMPLAINING
+			social_timer = 10.0
+			EventBus.npc_complaint_to_ruler.emit(citizen_id, event_data.get("id", "general_complaint"))
+		"pray":
+			state = State.PRAYING
+			social_timer = 12.0
+		"help":
+			state = State.HELPING
+			social_timer = 10.0
+		"flee_home":
+			state = State.FLEEING_HOME
+			social_timer = 15.0
+
+
+# --- МНЕНИЯ И ОЦЕНКА РЕШЕНИЙ (OPINIONS) ---
+
+func form_opinion_on_decision(decision_id: String, decision_data: Dictionary) -> Dictionary:
+	var tags = decision_data.get("tags", [])
+	var support_score = 0.0
+	var oppose_score = 0.0
+	var reasons: Array[String] = []
+	
+	var tr = float(traits.get("tradition", 50.0))
+	var emp = float(traits.get("empathy", 50.0))
+	var dil = float(traits.get("diligence", 50.0))
+	var amb = float(traits.get("ambition", 50.0))
+	var tmp = float(traits.get("temper", 50.0))
+	var brv = float(traits.get("bravery", 50.0))
+	
+	for tag in tags:
+		match tag:
+			"tradition":
+				if tr >= 55.0:
+					support_score += (tr - 50.0) * 0.5
+					reasons.append("уважает заветы предков")
+				else:
+					oppose_score += (50.0 - tr) * 0.5
+					reasons.append("хочет новизны и перемен")
+			"reform", "innovation":
+				if tr <= 45.0:
+					support_score += (50.0 - tr) * 0.5
+					reasons.append("стремится к развитию")
+				else:
+					oppose_score += (tr - 50.0) * 0.5
+					reasons.append("опасается ломки устоев")
+			"mercy", "charity":
+				if emp >= 55.0:
+					support_score += (emp - 50.0) * 0.5
+					reasons.append("проявляет сострадание")
+				else:
+					oppose_score += (50.0 - emp) * 0.3
+			"harsh_punishment", "sacrifice":
+				if emp >= 60.0:
+					oppose_score += (emp - 40.0) * 0.6
+					reasons.append("не приемлет жестокости")
+				elif tmp >= 60.0 or brv >= 65.0:
+					support_score += 15.0
+					reasons.append("верит в силу строгого порядка")
+			"hard_work", "tax":
+				if dil >= 60.0:
+					support_score += (dil - 50.0) * 0.3
+				else:
+					oppose_score += (60.0 - dil) * 0.4
+					reasons.append("тяготится лишним бременем")
+			"expansion", "war":
+				if amb >= 55.0 or brv >= 60.0:
+					support_score += (amb + brv - 100.0) * 0.4
+					reasons.append("жаждет побед и славы")
+				else:
+					oppose_score += 20.0
+					reasons.append("хочет мирного спокойствия")
+					
+	var stance = "neutral"
+	var diff = support_score - oppose_score
+	if diff >= 8.0:
+		stance = "support"
+	elif diff <= -8.0:
+		stance = "oppose"
+		
+	var importance = clampf(absf(diff) / 30.0, 0.2, 1.0)
+	var reason_str = ", ".join(reasons) if not reasons.is_empty() else "считает это обычным делом"
+	
+	var opinion_data = {
+		"stance": stance,
+		"importance": importance,
+		"reason": reason_str,
+		"score_diff": diff,
+		"formed_year": GameManager.current_year if GameManager else 1
+	}
+	
+	opinions[decision_id] = opinion_data
+	EventBus.npc_opinion_formed.emit(citizen_id, decision_id, stance)
+	return opinion_data
+
+func get_opinion(decision_id: String) -> Dictionary:
+	return opinions.get(decision_id, {})
+
+
+# --- АВТОНОМНЫЕ СОЦИАЛЬНЫЕ ДЕЙСТВИЯ (ТЗ РАЗДЕЛЫ 5-7) ---
+
+func _can_interrupt_current_task() -> bool:
+	if not interrupted_task.is_empty():
+		return false # Уже есть активное прерывание — не накладываем второе поверх первого
+	if state in [State.FLEEING, State.FLEEING_HOME, State.ATTACKING, State.BUTCHERING]:
+		return false # Бегство, бой и разделка туши всегда доводятся до конца
+	return true
+
+func _save_task_snapshot() -> void:
+	interrupted_task = {
+		"state": state,
+		"task_id": task_id,
+		"task_instance_id": task_instance_id,
+		"target_id": target_id,
+		"target_coord": target_coord,
+		"target_pos": target_pos,
+		"path": path.duplicate(),
+		"path_index": path_index,
+		"cargo_type": cargo_type,
+		"cargo_amount": cargo_amount,
+		"cargo_batch": cargo_batch.duplicate(true),
+		"subphase": subphase,
+		"work_timer": work_timer,
+		"action_timer": action_timer,
+		"commitment_timer": commitment_timer,
+		"ongoing_task_kind": ongoing_task_kind
+	}
+
+func _restore_task_snapshot() -> bool:
+	if interrupted_task.is_empty():
+		return false
+	var snap = interrupted_task
+	interrupted_task = {}
+	state = snap["state"]
+	task_id = snap["task_id"]
+	task_instance_id = snap["task_instance_id"]
+	target_id = snap["target_id"]
+	target_coord = snap["target_coord"]
+	target_pos = snap["target_pos"]
+	path = snap["path"]
+	path_index = snap["path_index"]
+	cargo_type = snap["cargo_type"]
+	cargo_amount = snap["cargo_amount"]
+	cargo_batch = snap["cargo_batch"]
+	subphase = snap["subphase"]
+	work_timer = snap["work_timer"]
+	action_timer = snap["action_timer"]
+	commitment_timer = snap["commitment_timer"]
+	ongoing_task_kind = snap["ongoing_task_kind"]
+	return true
+
+func get_work_speed_multiplier() -> float:
+	var mult = 1.0
+	var effects = get_quirk_effects()
+	if effects.has("work_speed_mult"):
+		mult *= float(effects["work_speed_mult"])
+	var diligence = float(traits.get("diligence", 50.0))
+	mult *= 1.0 + (diligence - 50.0) / 200.0
+	return clampf(mult, 0.6, 1.6)
+
+func _evaluate_autonomous_action(delta: float, settlement: RefCounted) -> void:
+	if not is_alive or settlement == null:
+		return
+		
+	# Обработка активных состояний реакций
+	if social_timer > 0.0:
+		social_timer -= delta
+		if social_timer <= 0.0:
+			if state in [State.CELEBRATING, State.MOURNING, State.CONFRONTING, State.COMPLAINING, State.HELPING, State.PRAYING, State.FLEEING_HOME]:
+				active_social_action = ""
+				if not _restore_task_snapshot():
+					state = State.IDLE
+		return
+		
+	if social_cooldown > 0.0:
+		social_cooldown -= delta
+		return
+		
+	# Раз в 12-20 секунд NPC ищет социальное взаимодействие
+	social_cooldown = randf_range(12.0, 20.0)
+	
+	# Если настроение критически низкое, жалуемся или протестуем
+	if loyalty < 30.0:
+		var arch = get_personality_archetype()
+		if arch in ["rebel", "fighter", "leader"] and _can_interrupt_current_task():
+			_save_task_snapshot()
+			var ruler_pos: Vector2 = settlement._get_hearth_pos() if settlement.has_method("_get_hearth_pos") else pos
+			var c_path: Array[Vector2] = GameManager.nav_grid.find_path(pos, ruler_pos) if GameManager and GameManager.nav_grid else []
+			if c_path.is_empty():
+				c_path.append(ruler_pos)
+			path = c_path
+			path_index = 0
+			target_pos = ruler_pos
+			task_id = "social_action_pending"
+			pending_social_action = "complain"
+			state = State.MOVING_TO_WORK
+			social_timer = 8.0
+			show_emote("disapproval", 3.5, 4)
+			shout("Вождю нет дела до простых людей!")
+			EventBus.npc_complaint_to_ruler.emit(citizen_id, "low_loyalty")
+			EventBus.npc_autonomous_action.emit(citizen_id, "complain", "")
+			return
+			
+	# Поиск ближайшего соплеменника для общения
+	var citizens_list: Array = settlement.citizens.values() if settlement.citizens is Dictionary else settlement.citizens
+	if citizens_list.size() < 2:
+		return
+		
+	var other_c: CitizenNPC = null
+	for c_cand in citizens_list:
+		if c_cand != null and c_cand.citizen_id != citizen_id and c_cand.is_alive:
+			if pos.distance_to(c_cand.pos) <= 80.0: # В пределах 2.5 тайлов
+				other_c = c_cand
+				break
+				
+	if other_c == null:
+		return
+		
+	var other_id = other_c.citizen_id
+	var other_rel = relationships.get(other_id, {})
+	var closeness = float(other_rel.get("closeness", 50.0))
+	var temper_a = float(traits.get("temper", 50.0))
+	var temper_b = float(other_c.traits.get("temper", 50.0))
+	var emp_a = float(traits.get("empathy", 50.0))
+	
+	# Конфликт / Вражда (если оба вспыльчивы или есть обида)
+	if has_grudge_against(other_id) or (temper_a > 65.0 and temper_b > 65.0 and randf() < 0.25):
+		closeness = maxf(0.0, closeness - 15.0)
+		relationships[other_id] = {"type": "rival", "closeness": closeness, "romance": 0.0, "married": false}
+		other_c.relationships[citizen_id] = {"type": "rival", "closeness": closeness, "romance": 0.0, "married": false}
+		
+		add_memory("feud", "social", other_id, 1.5, "Поссорился с %s" % other_c.name)
+		other_c.add_memory("feud", "social", citizen_id, 1.5, "Поссорился с %s" % name)
+		
+		show_emote("anger", 3.0, 4)
+		other_c.show_emote("anger", 3.0, 4)
+		shout("Опять ты мне дорогу переходишь, %s?!" % other_c.name)
+		
+		EventBus.npc_feud_started.emit(citizen_id, other_id, "hot_temper_argument")
+		EventBus.npc_autonomous_action.emit(citizen_id, "feud_quarrel", other_id)
+		return
+		
+	# Дружба (если общительные и эмпатичные)
+	if closeness >= 70.0 and randf() < 0.3:
+		relationships[other_id] = {"type": "friend", "closeness": minf(100.0, closeness + 5.0), "romance": other_rel.get("romance", 0.0), "married": other_rel.get("married", false)}
+		other_c.relationships[citizen_id] = {"type": "friend", "closeness": minf(100.0, closeness + 5.0), "romance": other_rel.get("romance", 0.0), "married": other_rel.get("married", false)}
+		
+		show_emote("talk", 2.5, 2)
+		other_c.show_emote("talk", 2.5, 2)
+		shout("Рад видеть тебя в добром здравии, друг %s!" % other_c.name)
+		
+		EventBus.npc_friendship_formed.emit(citizen_id, other_id)
+		EventBus.npc_autonomous_action.emit(citizen_id, "friendly_chat", other_id)
+		return
+		
+	# Помощь нуждающемуся
+	if emp_a >= 60.0 and (other_c.hunger < 35.0 or other_c.health < 40.0) and _can_interrupt_current_task():
+		_save_task_snapshot()
+		var h_path: Array[Vector2] = GameManager.nav_grid.find_path(pos, other_c.pos) if GameManager and GameManager.nav_grid else []
+		if h_path.is_empty():
+			h_path.append(other_c.pos)
+		path = h_path
+		path_index = 0
+		target_id = other_id
+		target_pos = other_c.pos
+		task_id = "social_action_pending"
+		pending_social_action = "help_neighbor"
+		state = State.MOVING_TO_WORK
+		social_timer = 8.0
+		show_emote("gift", 3.0, 3)
+		shout("Держись, %s, я помогу тебе!" % other_c.name)
+		other_c.show_emote("relief", 3.0, 3)
+		EventBus.npc_autonomous_action.emit(citizen_id, "help_neighbor", other_id)
+		return
 

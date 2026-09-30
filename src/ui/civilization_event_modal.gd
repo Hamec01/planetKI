@@ -53,10 +53,15 @@ func _build_ui() -> void:
 	main_vbox.add_theme_constant_override("separation", 10)
 	add_child(main_vbox)
 	
-	# Шапка: Категория + Заголовок
+	# Шапка: Категория + Заголовок + Кнопка закрытия
+	var header_hbox = HBoxContainer.new()
+	header_hbox.add_theme_constant_override("separation", 8)
+	main_vbox.add_child(header_hbox)
+
 	var header_vbox = VBoxContainer.new()
+	header_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_vbox.add_theme_constant_override("separation", 2)
-	main_vbox.add_child(header_vbox)
+	header_hbox.add_child(header_vbox)
 	
 	category_badge = Label.new()
 	category_badge.text = "🏛 СУДЬБА ЦИВИЛИЗАЦИИ"
@@ -69,6 +74,21 @@ func _build_ui() -> void:
 	title_label.add_theme_font_size_override("font_size", 16)
 	title_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
 	header_vbox.add_child(title_label)
+
+	var close_btn = Button.new()
+	close_btn.text = " ✕ "
+	close_btn.tooltip_text = "Отложить решение (закрыть окно)"
+	close_btn.custom_minimum_size = Vector2(30, 30)
+	close_btn.add_theme_font_size_override("font_size", 13)
+	var cls_sbox = StyleBoxFlat.new()
+	cls_sbox.bg_color = Color(0.18, 0.22, 0.30, 0.9)
+	cls_sbox.border_color = Color(0.6, 0.5, 0.3, 0.7)
+	cls_sbox.set_border_width_all(1)
+	cls_sbox.set_corner_radius_all(5)
+	cls_sbox.set_content_margin_all(4)
+	close_btn.add_theme_stylebox_override("normal", cls_sbox)
+	close_btn.pressed.connect(func(): visible = false)
+	header_hbox.add_child(close_btn)
 	
 	var sep = HSeparator.new()
 	main_vbox.add_child(sep)
@@ -231,7 +251,6 @@ func open_event(ev: Dictionary) -> void:
 		
 	if not visible:
 		visible = true
-		GameManager.push_modal_pause()
 
 func _select_choice(choice_id: String) -> void:
 	selected_choice_id = choice_id
@@ -278,18 +297,15 @@ func _on_confirm_pressed() -> void:
 	
 	if visible:
 		visible = false
-		GameManager.pop_modal_pause()
 
 func _on_defer_pressed() -> void:
 	var instance_id = current_event.get("instance_id", "")
 	GameManager.civilization_event_manager.defer_event(instance_id)
 	if visible:
 		visible = false
-		GameManager.pop_modal_pause()
 
 func _on_ignore_pressed() -> void:
 	var instance_id = current_event.get("instance_id", "")
 	GameManager.civilization_event_manager.resolve_without_intervention(instance_id)
 	if visible:
 		visible = false
-		GameManager.pop_modal_pause()

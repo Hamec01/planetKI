@@ -9,7 +9,9 @@ var is_following_camera: bool = false
 var portrait_rect: TextureRect
 var name_lbl: Label
 var subtitle_lbl: Label
-var job_lbl: Label
+var job_opt: OptionButton
+var pref_lbl: Label
+var _updating_job_ui: bool = false
 var workplace_lbl: Label
 var home_lbl: Label
 var action_lbl: Label
@@ -107,7 +109,7 @@ func _build_ui() -> void:
 	
 	vbox.add_child(HSeparator.new())
 	
-	# 2. Профессия и Рабочее место
+	# 2. Профессия и Смена ремесла игроком
 	var job_box = HBoxContainer.new()
 	job_box.add_theme_constant_override("separation", 6)
 	vbox.add_child(job_box)
@@ -117,15 +119,58 @@ func _build_ui() -> void:
 	job_tag.add_theme_color_override("font_color", Color(0.6, 0.65, 0.7))
 	job_box.add_child(job_tag)
 	
-	job_lbl = Label.new()
-	job_lbl.text = "Собиратель"
-	job_lbl.add_theme_color_override("font_color", Color(0.4, 0.85, 1.0))
-	job_box.add_child(job_lbl)
+	job_opt = OptionButton.new()
+	job_opt.custom_minimum_size = Vector2(130, 26)
+	job_opt.add_item("Свободный", 0); job_opt.set_item_metadata(0, "idle")
+	job_opt.add_item("🏹 Охотник", 1); job_opt.set_item_metadata(1, "hunter")
+	job_opt.add_item("🧺 Собиратель", 2); job_opt.set_item_metadata(2, "forager")
+	job_opt.add_item("🪓 Лесоруб", 3); job_opt.set_item_metadata(3, "woodcutter")
+	job_opt.add_item("⛏ Каменотёс", 4); job_opt.set_item_metadata(4, "quarryman")
+	job_opt.add_item("⚒ Рудокоп", 5); job_opt.set_item_metadata(5, "miner")
+	job_opt.add_item("🔨 Строитель", 6); job_opt.set_item_metadata(6, "builder")
+	job_opt.add_item("🌾 Земледелец", 7); job_opt.set_item_metadata(7, "farmer")
+	job_opt.add_item("🏺 Ремесленник", 8); job_opt.set_item_metadata(8, "craftsman")
+	job_opt.add_item("📜 Мудрец", 9); job_opt.set_item_metadata(9, "sage")
+	job_opt.add_item("🕯 Жрец", 10); job_opt.set_item_metadata(10, "priest")
+	job_opt.add_item("🛡 Стражник", 11); job_opt.set_item_metadata(11, "guard")
+	
+	job_opt.item_selected.connect(func(idx):
+		if current_citizen == null or _updating_job_ui:
+			return
+		var selected_job = job_opt.get_item_metadata(idx)
+		if selected_job != current_citizen.job_id:
+			current_citizen.set_job_by_player(selected_job)
+			if GameManager and GameManager.settlements:
+				var s = GameManager.settlements.get(current_citizen.settlement_id, null)
+				if s == null and not GameManager.settlements.is_empty():
+					s = GameManager.settlements.values()[0]
+				if s:
+					s.sync_assigned_jobs_from_citizens()
+			_update_ui_values()
+	)
+	job_box.add_child(job_opt)
 	
 	workplace_lbl = Label.new()
-	workplace_lbl.text = "· Стоянка собирателей"
+	workplace_lbl.text = "· Без места"
 	workplace_lbl.add_theme_color_override("font_color", Color(0.75, 0.8, 0.85))
 	job_box.add_child(workplace_lbl)
+	
+	# 2.1 Призвание и отношение к профессии
+	var pref_box = HBoxContainer.new()
+	pref_box.add_theme_constant_override("separation", 6)
+	vbox.add_child(pref_box)
+	
+	var pref_tag = Label.new()
+	pref_tag.text = "Призвание:"
+	pref_tag.add_theme_color_override("font_color", Color(0.55, 0.60, 0.65))
+	pref_tag.add_theme_font_size_override("font_size", 11)
+	pref_box.add_child(pref_tag)
+	
+	pref_lbl = Label.new()
+	pref_lbl.text = "Лесоруб (по душе ⭐)"
+	pref_lbl.add_theme_color_override("font_color", Color(0.9, 0.8, 0.4))
+	pref_lbl.add_theme_font_size_override("font_size", 11)
+	pref_box.add_child(pref_lbl)
 	
 	# 3. Жилье
 	var home_box = HBoxContainer.new()
@@ -367,12 +412,35 @@ func _update_ui_values() -> void:
 	else:
 		subtitle_lbl.text = "%d лет · %s, %s" % [current_citizen.age, cohort_str, gender_str]
 	
-	job_lbl.text = _get_job_display_name(current_citizen.job_id)
+	_updating_job_ui = true
+	var cur_job = current_citizen.job_id
+	for i in range(job_opt.item_count):
+		if job_opt.get_item_metadata(i) == cur_job:
+			job_opt.selected = i
+			break
+	_updating_job_ui = false
+	
+	var pref_j = current_citizen.get_preferred_job()
+	var pref_name = _get_job_display_name(pref_j)
+	if cur_job == pref_j:
+		pref_lbl.text = "%s (по душе ⭐ +15%% к отдаче)" % pref_name
+		pref_lbl.add_theme_color_override("font_color", Color(0.45, 0.92, 0.55))
+	elif cur_job == "idle":
+		pref_lbl.text = "%s (желает трудиться)" % pref_name
+		pref_lbl.add_theme_color_override("font_color", Color(0.85, 0.85, 0.90))
+	else:
+		var exp_in_job = float(current_citizen.experience.get(cur_job, 0.0))
+		if exp_in_job >= 30.0:
+			pref_lbl.text = "%s (освоил новое ремесло ✔)" % pref_name
+			pref_lbl.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
+		else:
+			pref_lbl.text = "%s (работает неохотно ⚠️ -25%%)" % pref_name
+			pref_lbl.add_theme_color_override("font_color", Color(0.95, 0.65, 0.35))
 	
 	if current_citizen.workplace_id != "":
 		workplace_lbl.text = "· " + current_citizen.workplace_id
 	else:
-		workplace_lbl.text = "· Без постоянного места"
+		workplace_lbl.text = "· Без места"
 		
 	if current_citizen.home_id != "":
 		home_lbl.text = current_citizen.home_id
@@ -419,27 +487,46 @@ func _update_ui_values() -> void:
 		stats["display_damage"], bd["base_attack"], bd["weapon_component"], bd["physical_damage"], bd["encounter_damage"]
 	]
 	
-	# Обновление верности, характера и воспоминаний (P01.2)
+	# Обновление верности, характера, архетипа и причуд (Система живых NPC)
 	loyalty_lbl.text = "👑 Верность правителю: %d%%" % int(current_citizen.loyalty)
-	var trait_list = []
-	var pers = current_citizen.personality
-	if pers.get("pride", 50.0) >= 65.0: trait_list.append("Гордый")
-	elif pers.get("pride", 50.0) <= 35.0: trait_list.append("Скромный")
-	if pers.get("sociability", 50.0) >= 65.0: trait_list.append("Общительный")
-	elif pers.get("sociability", 50.0) <= 35.0: trait_list.append("Замкнутый")
-	if pers.get("greed", 50.0) >= 65.0: trait_list.append("Бережливый")
-	elif pers.get("greed", 50.0) <= 35.0: trait_list.append("Щедрый")
-	if pers.get("laziness", 50.0) >= 65.0: trait_list.append("Ленивый")
-	elif pers.get("laziness", 50.0) <= 35.0: trait_list.append("Трудолюбивый")
-	if pers.get("temper", 50.0) >= 65.0: trait_list.append("Вспыльчивый")
-	elif pers.get("temper", 50.0) <= 35.0: trait_list.append("Хладнокровный")
-	if trait_list.is_empty():
-		trait_list.append("Уравновешенный нрав")
-	traits_lbl.text = "Черты: " + ", ".join(trait_list)
+	
+	var arch_ru = "Мастеровой"
+	match current_citizen.get_personality_archetype():
+		"leader": arch_ru = "Вожак (Лидер)"
+		"fighter": arch_ru = "Воин / Защитник"
+		"rebel": arch_ru = "Бунтарь / Вольнодумец"
+		"keeper": arch_ru = "Хранитель традиций"
+		"diplomat": arch_ru = "Дипломат / Миротворец"
+		"caretaker": arch_ru = "Заступник / Опекун"
+		"visionary": arch_ru = "Мечтатель / Искатель"
+		"loner": arch_ru = "Одиночка"
+		"worker": arch_ru = "Труженик"
+		
+	var quirk_names = {
+		"early_bird": "Ранняя пташка",
+		"night_owl": "Сова",
+		"glutton": "Любитель поесть",
+		"ascetic": "Аскет",
+		"chatterbox": "Болтун",
+		"superstitious": "Суеверный",
+		"workaholic": "Трудоголик",
+		"perfectionist": "Перфекционист",
+		"brawler": "Задира",
+		"romantic": "Романтик",
+		"gossip": "Сплетник",
+		"hoarder": "Запасливый"
+	}
+	var q_list: Array[String] = []
+	for q in current_citizen.quirks:
+		q_list.append(quirk_names.get(q, q))
+	var q_str = ", ".join(q_list) if not q_list.is_empty() else "без странностей"
+	
+	traits_lbl.text = "Характер: %s\nПричуды: %s" % [arch_ru, q_str]
 
 	if current_citizen.memories.size() > 0:
 		var last_mem = current_citizen.memories[-1]
-		memories_lbl.text = "Память: «%s»" % last_mem.get("desc", "")
+		var desc_text = last_mem.get("desc", last_mem.get("description", ""))
+		memories_lbl.text = "Память: «%s»" % desc_text
 	else:
 		memories_lbl.text = "Память: спокойная жизнь без потрясений"
 	

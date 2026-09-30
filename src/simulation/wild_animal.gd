@@ -56,6 +56,35 @@ var is_child: bool = false
 var parent_id: String = ""
 var pack_id: String = ""
 
+# --- ПРИРУЧЕНИЕ И СТАТУС ПИТОМЦА ---
+var is_tamed: bool = false
+var tamed_settlement_id: String = ""
+var custom_name: String = ""
+var tamed_role: String = "guardian" # "guardian" (Защитник поселения) или "hunter" (Охотничий спутник)
+
+func set_tamed_role(p_role: String) -> void:
+	if p_role in ["guardian", "hunter"]:
+		tamed_role = p_role
+
+func toggle_tamed_role() -> String:
+	if tamed_role == "guardian":
+		tamed_role = "hunter"
+		if EventBus:
+			EventBus.notification_toast.emit(
+				"🐺 Охотничий спутник",
+				"%s теперь сопровождает охотников и помогает загонять зверя!" % (custom_name if custom_name != "" else "Ручной волчонок"),
+				"good"
+			)
+	else:
+		tamed_role = "guardian"
+		if EventBus:
+			EventBus.notification_toast.emit(
+				"🐺 Защитник поселения",
+				"%s теперь охраняет границы поселения от диких хищников!" % (custom_name if custom_name != "" else "Ручной волчонок"),
+				"good"
+			)
+	return tamed_role
+
 var pos: Vector2 = Vector2.ZERO
 var target_pos: Vector2 = Vector2.ZERO
 var facing_dir: Vector2 = Vector2.RIGHT
@@ -131,17 +160,17 @@ func get_texture() -> Texture2D:
 	return null
 
 func get_scale() -> float:
-	if is_child:
-		return 0.70
+	if is_child or type_id in ["wolf_pup", "deer_fawn", "boar_piglet", "bear_cub", "fox_kit"]:
+		return 0.45
 	if species in ["moose", "bear"]:
-		return 1.15
+		return 1.05
 	if species in ["boar", "deer"]:
-		return 1.00
+		return 0.88
 	if species in ["wolf", "fox", "lynx"]:
-		return 0.90
+		return 0.75
 	if species in ["badger", "hare", "duck"]:
-		return 0.80
-	return 1.00
+		return 0.60
+	return 0.80
 
 func get_speed() -> float:
 	var base = 32.0
@@ -166,11 +195,11 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 	var cfg = SPECIES_CONFIG.get(type_id, SPECIES_CONFIG["hare_brown"])
 	var behavior = cfg.get("behavior", "skittish")
 	
-	# 0. Охранный радиус костра и стоянки: дикие звери боятся огня и бегут от поселения
+	# 0. Охранный радиус костра и стоянки: дикие звери боятся огня и бегут от поселения (прирученные животные не боятся)
 	var near_settlement_fire = false
 	var nearest_settlement_pos = Vector2.ZERO
 	var min_settlement_dist = 999999.0
-	if GameManager and GameManager.settlements:
+	if not is_tamed and GameManager and GameManager.settlements:
 		for s in GameManager.settlements.values():
 			var s_pos = Vector2(s.pos.x * 32.0 + 16.0, s.pos.y * 32.0 + 16.0)
 			var d_s = pos.distance_to(s_pos)
@@ -206,21 +235,23 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 	var spotted_citizen = null
 	var min_threat_dist = detect_radius
 	
-	for t in threat_positions:
-		var t_pos = Vector2.ZERO
-		var t_c = null
-		if t is Vector2:
-			t_pos = t
-		elif t is Dictionary:
-			t_pos = t.get("pos", Vector2.ZERO)
-			t_c = t.get("citizen", null)
-			
-		var d = pos.distance_to(t_pos)
-		if d < min_threat_dist:
-			min_threat_dist = d
-			nearest_threat_pos = t_pos
-			spotted_citizen = t_c
-			threat_spotted = true
+	# Прирученные животные доверяют гражданам поселения и не видят в них угрозу
+	if not is_tamed:
+		for t in threat_positions:
+			var t_pos = Vector2.ZERO
+			var t_c = null
+			if t is Vector2:
+				t_pos = t
+			elif t is Dictionary:
+				t_pos = t.get("pos", Vector2.ZERO)
+				t_c = t.get("citizen", null)
+				
+			var d = pos.distance_to(t_pos)
+			if d < min_threat_dist:
+				min_threat_dist = d
+				nearest_threat_pos = t_pos
+				spotted_citizen = t_c
+				threat_spotted = true
 			
 	# Поведение при обнаружении угрозы
 	if threat_spotted:
@@ -258,6 +289,43 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 			else:
 				target_pos = test_target
 
+	# 1b. Поведение прирученного животного в зависимости от роли (Защитник / Охотник)
+	if is_tamed:
+		if tamed_role == "guardian":
+			# Защитник поселения: сканирует приближающихся диких хищников вокруг поселения
+			if GameManager and GameManager.wildlife_manager:
+				for other_a in GameManager.wildlife_manager.animals.values():
+					if other_a != self and other_a.is_alive() and not other_a.is_tamed:
+						var o_cfg = SPECIES_CONFIG.get(other_a.type_id, {})
+						var o_beh = o_cfg.get("behavior", "")
+						if o_beh in ["predator", "pack_predator", "stealth_predator", "territorial", "mother_aggressive"]:
+							var d_pred = pos.distance_to(other_a.pos)
+							if d_pred <= detect_radius:
+								target_threat_id = other_a.id
+								target_threat_pos = other_a.pos
+								state = State.DEFENDING
+								break
+		elif tamed_role == "hunter":
+			# Охотничий спутник: сопровождает охотников и помогает атаковать добычу
+			if GameManager and GameManager.settlements and GameManager.settlements.has(tamed_settlement_id):
+				var s = GameManager.settlements[tamed_settlement_id]
+				if s and s.population:
+					var active_hunter = null
+					for cit in s.population.citizens:
+						if cit.is_alive and cit.job_id == "hunter":
+							active_hunter = cit
+							if cit.state == CitizenNPC.State.ATTACKING:
+								break
+					if active_hunter:
+						if active_hunter.state == CitizenNPC.State.ATTACKING and active_hunter.target_id != "":
+							target_threat_id = active_hunter.target_id
+							if GameManager.wildlife_manager and GameManager.wildlife_manager.animals.has(target_threat_id):
+								target_threat_pos = GameManager.wildlife_manager.animals[target_threat_id].pos
+								state = State.DEFENDING
+						elif active_hunter.pos.distance_to(pos) > 28.0 and state != State.DEFENDING:
+							state = State.FOLLOWING
+							target_pos = active_hunter.pos + Vector2(randf_range(-10, 10), randf_range(-10, 10))
+
 	# 2. Поведение детёныша: следование за матерью/лидером
 	if is_child and parent_animal != null and parent_animal.is_alive():
 		var dist_to_parent = pos.distance_to(parent_animal.pos)
@@ -268,7 +336,7 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 	# 3. Обработка состояний
 	match state:
 		State.DEFENDING:
-			# Сближение для удара
+			# Сближение для удара по цели
 			var to_threat = target_threat_pos - pos
 			var d_threat = to_threat.length()
 			if d_threat > 20.0:
@@ -278,7 +346,22 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 			else:
 				if attack_timer <= 0.0:
 					attack_timer = attack_interval
-					if target_citizen != null and is_instance_valid(target_citizen) and "health" in target_citizen and target_citizen.health > 0:
+					# Атака против другого дикого животного (например, помощь охотнику или защита от хищника)
+					if target_threat_id != "" and GameManager and GameManager.wildlife_manager and GameManager.wildlife_manager.animals.has(target_threat_id):
+						var prey_anim = GameManager.wildlife_manager.animals[target_threat_id]
+						if prey_anim and prey_anim.is_alive():
+							target_threat_pos = prey_anim.pos
+							var wolf_dmg = 12.0
+							prey_anim.take_damage(wolf_dmg, id)
+							if is_tamed and EventBus:
+								EventBus.notification_toast.emit("🐺 Помощь волка", "%s атакует %s!" % [custom_name if custom_name != "" else "Ручной волчонок", prey_anim.species], "info")
+							if not prey_anim.is_alive():
+								target_threat_id = ""
+								state = State.GRAZING
+						else:
+							target_threat_id = ""
+							state = State.GRAZING
+					elif target_citizen != null and is_instance_valid(target_citizen) and "health" in target_citizen and target_citizen.health > 0:
 						var a_stats = get_combat_stats()
 						var c_stats = target_citizen.get_combat_stats() if target_citizen.has_method("get_combat_stats") else {"armor": 0.0}
 						var outcome = CombatStatsResolver.resolve_attack(a_stats, c_stats)
@@ -295,7 +378,7 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 							var ret_outcome = CombatStatsResolver.resolve_attack(ret_stats, def_stats)
 							var counter_dmg = ret_outcome["damage"] if ret_outcome["is_hit"] else maxi(1, int(round(ret_stats.get("raw_damage", 5.0))))
 							take_damage(counter_dmg, target_citizen.citizen_id)
-			if min_threat_dist > 140.0:
+			if min_threat_dist > 140.0 and target_threat_id == "":
 				state = State.GRAZING
 				target_citizen = null
 				
@@ -359,7 +442,20 @@ func update(delta: float, nav_grid, threat_positions: Array, parent_animal = nul
 			else:
 				if wander_cooldown <= 0.0:
 					wander_cooldown = randf_range(4.0, 8.0)
-					if nav_grid:
+					if is_tamed:
+						# Прирученное животное мирно держится в радиусе 1.5-2.5 тайлов от лагеря / загона
+						var home_center = Vector2(home_coord.x * 32.0 + 16.0, home_coord.y * 32.0 + 16.0)
+						var wander_offset = Vector2(randf_range(-36.0, 36.0), randf_range(-36.0, 36.0))
+						var candidate_pos = home_center + wander_offset
+						if nav_grid:
+							var cand_tile = nav_grid.world_pos_to_tile(candidate_pos)
+							if nav_grid.is_tile_walkable(cand_tile):
+								target_pos = candidate_pos
+							else:
+								target_pos = nav_grid.tile_to_world_center(home_coord)
+						else:
+							target_pos = candidate_pos
+					elif nav_grid:
 						var cur_tile = nav_grid.world_pos_to_tile(pos)
 						var wander_tile = nav_grid.find_random_walkable_nearby(cur_tile, 2)
 						target_pos = nav_grid.tile_to_world_center(wander_tile) + Vector2(randf_range(-6, 6), randf_range(-6, 6))
@@ -424,6 +520,10 @@ func serialize() -> Dictionary:
 		"reserved_by": reserved_by,
 		"home_coord_x": home_coord.x,
 		"home_coord_y": home_coord.y,
+		"is_tamed": is_tamed,
+		"tamed_settlement_id": tamed_settlement_id,
+		"custom_name": custom_name,
+		"tamed_role": tamed_role,
 		"armor": armor,
 		"attackers_damage": attackers_damage
 	}
@@ -450,4 +550,8 @@ func deserialize(data: Dictionary) -> void:
 	extra_material_count = int(data.get("extra_material_count", extra_material_count))
 	reserved_by = data.get("reserved_by", "")
 	home_coord = Vector2i(int(data.get("home_coord_x", 0)), int(data.get("home_coord_y", 0)))
+	is_tamed = bool(data.get("is_tamed", false))
+	tamed_settlement_id = str(data.get("tamed_settlement_id", ""))
+	custom_name = str(data.get("custom_name", ""))
+	tamed_role = str(data.get("tamed_role", "guardian"))
 	attackers_damage = data.get("attackers_damage", {})

@@ -13,6 +13,8 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+__pycache__/
+*.pyc
 
 # Media & Heavy Asset Directories (Code-only repo)
 Assets/

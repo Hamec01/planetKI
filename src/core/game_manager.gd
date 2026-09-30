@@ -94,7 +94,12 @@ func get_or_create_building_instance(coord: Vector2i, b_id: String, s_id: String
 	if building_instances.has(coord):
 		return building_instances[coord]
 	var inst = BuildingInstanceScript.new(b_id + "_" + str(coord.x) + "_" + str(coord.y), b_id, s_id, coord)
+	if tile_buildings.has(coord):
+		var offset_arr = tile_buildings[coord].get("visual_offset", [0.0, 0.0])
+		inst.visual_offset = Vector2(offset_arr[0], offset_arr[1])
 	building_instances[coord] = inst
+	if nav_grid:
+		nav_grid.register_building(coord, Vector2i(1, 1), inst.instance_id)
 	return inst
 
 func _ready() -> void:
@@ -124,7 +129,14 @@ func get_time_period_for_hour(hour_val: float) -> String:
 func get_formatted_time() -> String:
 	var h = int(floor(current_hour))
 	var m = int(floor((current_hour - h) * 60.0))
-	return "%02d:%02d · %s" % [h, m, current_time_period]
+	var icon = "☀️"
+	if current_time_period == "Ночь":
+		icon = "🌙"
+	elif current_time_period == "Утро":
+		icon = "🌅"
+	elif current_time_period == "Вечер":
+		icon = "🌇"
+	return "%02d:%02d · %s %s" % [h, m, icon, current_time_period]
 
 func _process(delta: float) -> void:
 	if not is_game_active or is_paused or is_game_over:

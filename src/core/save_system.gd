@@ -227,6 +227,8 @@ func load_game(_slot: String = "") -> bool:
 			var inst = GameManager.BuildingInstanceScript.new(b_data.get("id", ""), b_data.get("type", ""), b_data.get("settlement_id", ""), c)
 			inst.deserialize(b_data)
 			GameManager.building_instances[c] = inst
+			if GameManager.nav_grid:
+				GameManager.nav_grid.register_building(c, inst.size, inst.type)
 	
 	if data.has("culture_memory") and GameManager.culture_memory:
 		GameManager.culture_memory.deserialize(data["culture_memory"])

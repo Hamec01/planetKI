@@ -122,7 +122,27 @@ func process_daily_triggers(current_day: int, total_days: int, p_settlement: Ref
 		event_context = check_npc_feud_trigger(cur_settlement)
 	elif chosen_event.get("id", "") == "NPC-GOSSIP-01":
 		event_context = check_npc_gossip_trigger(cur_settlement)
+	elif chosen_event.get("id", "").begins_with("HC-"):
+		event_context = check_hc_event_trigger(cur_settlement)
 	trigger_event(chosen_event, event_context)
+
+func check_hc_event_trigger(p_settlement: RefCounted) -> Dictionary:
+	if not p_settlement or not ("id" in p_settlement):
+		return {}
+	var camp_id = ""
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == p_settlement.id and b.is_hunting_camp():
+				camp_id = b.id
+				break
+	return {
+		"target_building_id": camp_id,
+		"causes": ["Деятельность охотничьего лагеря", "Промысел дичи в тайге"],
+		"context_data": {
+			"camp_id": camp_id,
+			"settlement_name": p_settlement.name if "name" in p_settlement else ""
+		}
+	}
 
 func check_hut_dispute_trigger(p_settlement: RefCounted) -> Dictionary:
 	if not p_settlement or not ("id" in p_settlement):
@@ -235,8 +255,24 @@ func _check_event_conditions(conds: Dictionary, total_days: int, settlement: Ref
 			return false
 		if conds.has("min_iron") and "economy" in settlement and settlement.economy.get_resource("iron") < float(conds["min_iron"]):
 			return false
-		if conds.has("required_building") and "buildings" in settlement and not settlement.buildings.has(conds["required_building"]):
+		if conds.has("food_less_than") and "economy" in settlement and settlement.economy.get_resource("food") >= float(conds["food_less_than"]):
 			return false
+		if conds.has("has_seeds") and "economy" in settlement and settlement.economy.get_resource("seeds") <= 0.0:
+			return false
+		if conds.has("has_grain") and "economy" in settlement and settlement.economy.get_resource("grain") <= 0.0:
+			return false
+		if conds.has("required_building"):
+			var b_req = conds["required_building"]
+			var has_b = false
+			if "buildings" in settlement and settlement.buildings.has(b_req):
+				has_b = true
+			elif GameManager and GameManager.building_instances:
+				for b in GameManager.building_instances.values():
+					if b and b.type == b_req and b.settlement_id == settlement.id:
+						has_b = true
+						break
+			if not has_b:
+				return false
 		if conds.has("min_huts"):
 			var hut_cnt = 0
 			if GameManager and GameManager.building_instances:
@@ -245,9 +281,10 @@ func _check_event_conditions(conds: Dictionary, total_days: int, settlement: Ref
 						hut_cnt += 1
 			if hut_cnt < int(conds["min_huts"]):
 				return false
-	elif conds.has("min_iron") or conds.has("required_building") or conds.has("min_huts"):
+	elif conds.has("min_iron") or conds.has("required_building") or conds.has("min_huts") or conds.has("has_seeds") or conds.has("has_grain"):
 		return false
 	return true
+
 
 func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 	if ev.is_empty():
@@ -421,7 +458,7 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 		for s_cand in GameManager.settlements.values():
 			if s_cand and "population" in s_cand and s_cand.population:
 				pop = s_cand.population
-				break
+	var culture = GameManager.culture_memory if GameManager else null
 	
 	# Отношения между участниками
 	if consequences.has("modify_relations") and pop:
@@ -659,6 +696,18 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 				elif lodge_inst == null:
 					lodge_inst = bi
 
+	if culture != null:
+		if consequences.get("unlock_upgrade_nursery", false):
+			culture.unlock_upgrade_globally("great_lodge", "nursery_corner")
+		if consequences.get("unlock_upgrade_elders", false):
+			culture.unlock_upgrade_globally("great_lodge", "elders_quarters")
+		if consequences.get("unlock_upgrade_knowledge", false):
+			culture.unlock_upgrade_globally("great_lodge", "knowledge_circle")
+		if consequences.get("unlock_upgrade_store", false):
+			culture.unlock_upgrade_globally("great_lodge", "communal_store")
+		if consequences.get("unlock_role_caretaker", false):
+			culture.unlock_upgrade_globally("great_lodge", "caretaker_quarters")
+
 	if lodge_inst != null:
 		if consequences.has("modify_harmony"):
 			var d_harm = float(consequences["modify_harmony"])
@@ -672,6 +721,8 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 			lodge_inst.unlock_upgrade("knowledge_circle")
 		if consequences.get("unlock_upgrade_store", false):
 			lodge_inst.unlock_upgrade("communal_store")
+		if consequences.get("unlock_role_caretaker", false):
+			lodge_inst.unlock_upgrade("caretaker_quarters")
 		if consequences.get("ward_of_lodge", false):
 			var ward_pop = pop
 			if lodge_inst and lodge_inst.settlement_id != "" and GameManager and GameManager.settlements.has(lodge_inst.settlement_id):
@@ -700,6 +751,119 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 					cand.job_id = "caretaker"
 					break
 
+	# Регистрация глобальных улучшений охотничьего лагеря
+	if culture != null:
+		if consequences.get("unlock_upgrade_dogs", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_dogs")
+		if consequences.get("unlock_upgrade_smokehouse", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_smokehouse")
+		if consequences.get("unlock_upgrade_outpost", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_outpost")
+		if consequences.get("unlock_upgrade_master_butcher", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_master_butcher")
+		if consequences.get("unlock_upgrade_mentor", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_mentor")
+		if consequences.get("unlock_upgrade_target", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_target")
+		if consequences.get("unlock_upgrade_trophies", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_trophies")
+
+	# Поиск охотничьего лагеря (Hunting Camp) для применения улучшений и эффектов
+	var camp_inst: BuildingInstance = null
+	if GameManager and GameManager.building_instances:
+		for bi in GameManager.building_instances.values():
+			if bi and bi.is_hunting_camp():
+				if target_b_id != "" and (bi.id == target_b_id or bi.instance_id == target_b_id):
+					camp_inst = bi
+					break
+				elif camp_inst == null:
+					camp_inst = bi
+
+	if camp_inst != null:
+		if consequences.get("unlock_upgrade_dogs", false):
+			camp_inst.unlock_upgrade("hunt_dogs")
+		if consequences.get("unlock_upgrade_smokehouse", false):
+			camp_inst.unlock_upgrade("hunt_smokehouse")
+		if consequences.get("unlock_upgrade_outpost", false):
+			camp_inst.unlock_upgrade("hunt_outpost")
+		if consequences.get("unlock_upgrade_master_butcher", false):
+			camp_inst.unlock_upgrade("hunt_master_butcher")
+		if consequences.get("unlock_upgrade_mentor", false):
+			camp_inst.unlock_upgrade("hunt_mentor")
+		if consequences.get("unlock_upgrade_target", false):
+			camp_inst.unlock_upgrade("hunt_target")
+		if consequences.get("unlock_upgrade_trophies", false):
+			camp_inst.unlock_upgrade("hunt_trophies")
+	if consequences.has("hunter_morale") and pop:
+		var d_mor = float(consequences["hunter_morale"])
+		for c in pop.citizens:
+			if c.job_id == "hunter":
+				c.loyalty = clampf(c.loyalty + d_mor, 0.0, 100.0)
+				c.energy = minf(100.0, c.energy + maxf(0.0, d_mor * 0.5))
+	if consequences.has("hunter_cohesion") and pop:
+		var d_coh = float(consequences["hunter_cohesion"])
+		for c in pop.citizens:
+			if c.job_id == "hunter":
+				c.loyalty = clampf(c.loyalty + d_coh, 0.0, 100.0)
+
+	# --- ФИЗИЧЕСКОЕ ПРИРУЧЕНИЕ ЖИВОТНЫХ (DEER & WOLF) ---
+	# Приручение оленёнка (HC-05 и цепочки животноводства)
+	if consequences.get("domestication_seed", false) or consequences.get("tame_deer", false):
+		var spawn_pos = Vector2.ZERO
+		if camp_inst != null:
+			spawn_pos = Vector2(camp_inst.pos.x * 32.0 + 16.0, camp_inst.pos.y * 32.0 + 16.0)
+		elif settlement:
+			spawn_pos = Vector2(settlement.pos.x * 32.0 + 16.0, settlement.pos.y * 32.0 + 16.0)
+		spawn_pos += Vector2(randf_range(-14.0, 14.0), randf_range(-14.0, 14.0))
+		
+		var s_id = settlement.id if settlement else ""
+		if GameManager and GameManager.wildlife_manager:
+			var fawn = GameManager.wildlife_manager.spawn_tamed_animal("deer_fawn", spawn_pos, s_id, "Прирученный оленёнок")
+			if fawn:
+				fawn.state = WildAnimal.State.GRAZING
+				
+		if culture != null:
+			culture.unlock_building("animal_pen")
+		EventBus.notification_toast.emit(
+			"🦌 Приручение оленёнка",
+			"В лагере поселился прирученный оленёнок! Открыто строительство Загона для скота (animal_pen).",
+			"good"
+		)
+
+	# Приручение волчонка / охотничьи собаки (HC-08)
+	if consequences.get("dog_taming", false) or consequences.get("tame_wolf", false):
+		var spawn_pos = Vector2.ZERO
+		if camp_inst != null:
+			spawn_pos = Vector2(camp_inst.pos.x * 32.0 + 16.0, camp_inst.pos.y * 32.0 + 16.0)
+		elif settlement:
+			spawn_pos = Vector2(settlement.pos.x * 32.0 + 16.0, settlement.pos.y * 32.0 + 16.0)
+		spawn_pos += Vector2(randf_range(-14.0, 14.0), randf_range(-14.0, 14.0))
+		
+		var s_id = settlement.id if settlement else ""
+		if GameManager and GameManager.wildlife_manager:
+			var already_has_wolf = false
+			for a in GameManager.wildlife_manager.animals.values():
+				if a.is_tamed and a.species == "wolf" and a.tamed_settlement_id == s_id:
+					already_has_wolf = true
+					break
+			if not already_has_wolf:
+				var pup = GameManager.wildlife_manager.spawn_tamed_animal("wolf_pup", spawn_pos, s_id, "Ручной волчонок")
+				if pup:
+					pup.state = WildAnimal.State.GRAZING
+					pup.set_tamed_role(consequences.get("tame_role", "guardian"))
+				
+		if culture != null:
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_dogs")
+		if camp_inst != null:
+			camp_inst.unlock_upgrade("hunt_dogs")
+			
+		var role_str = "Защитник поселения" if consequences.get("tame_role", "guardian") == "guardian" else "Охотничий спутник"
+		EventBus.notification_toast.emit(
+			"🐺 Верный спутник",
+			"В лагере появился ручной волчонок (%s)! Открыто улучшение «Охотничьи собаки»." % role_str,
+			"good"
+		)
+
 	if consequences.has("young_skill_boost") and pop:
 		var boost_amt = float(consequences["young_skill_boost"])
 		for c in pop.citizens:
@@ -708,9 +872,56 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 				c.skills["woodcutting"] = minf(100.0, float(c.skills.get("woodcutting", 10.0)) + boost_amt)
 				c.skills["survival"] = minf(100.0, float(c.skills.get("survival", 10.0)) + boost_amt)
 
+	if (consequences.has("young_hunter_skill_boost") or consequences.has("skill_boost_youth")) and pop:
+		var h_boost = float(consequences.get("young_hunter_skill_boost", consequences.get("skill_boost_youth", 2.0)))
+		for c in pop.citizens:
+			if c.job_id == "hunter" or (c.age < 25 and c.cohort in ["youth", "adult"]):
+				c.skill_hunter = minf(100.0, c.skill_hunter + h_boost)
+
+	# --- ПОСЛЕДСТВИЯ АГРАРНОЙ ЭВОЛЮЦИИ И ЗЕМЛЕДЕЛИЯ ---
+	if settlement:
+		if consequences.has("add_knowledge_cultivation") and "add_knowledge" in settlement:
+			settlement.add_knowledge("cultivation_knowledge", float(consequences["add_knowledge_cultivation"]))
+		if consequences.has("add_knowledge_plant") and "add_knowledge" in settlement:
+			settlement.add_knowledge("plant_knowledge", float(consequences["add_knowledge_plant"]))
+		if consequences.has("add_knowledge_seed") and "add_knowledge" in settlement:
+			settlement.add_knowledge("seed_knowledge", float(consequences["add_knowledge_seed"]))
+		if consequences.has("add_knowledge_soil") and "add_knowledge" in settlement:
+			settlement.add_knowledge("soil_knowledge", float(consequences["add_knowledge_soil"]))
+		if consequences.has("add_knowledge_water") and "add_knowledge" in settlement:
+			settlement.add_knowledge("water_management_knowledge", float(consequences["add_knowledge_water"]))
+		if consequences.has("add_knowledge_storage") and "add_knowledge" in settlement:
+			settlement.add_knowledge("storage_knowledge", float(consequences["add_knowledge_storage"]))
+		if consequences.has("add_knowledge_food_processing") and "add_knowledge" in settlement:
+			settlement.add_knowledge("food_processing_knowledge", float(consequences["add_knowledge_food_processing"]))
+		if consequences.has("add_food") and "economy" in settlement:
+			settlement.economy.add_resource("food", float(consequences["add_food"]))
+		if consequences.has("add_grain") and "economy" in settlement:
+			settlement.economy.add_resource("grain", float(consequences["add_grain"]))
+		if consequences.has("add_straw") and "economy" in settlement:
+			settlement.economy.add_resource("straw", float(consequences["add_straw"]))
+		if consequences.has("add_bread") and "economy" in settlement:
+			settlement.economy.add_resource("bread", float(consequences["add_bread"]))
+			settlement.economy.add_resource("food", float(consequences["add_bread"]))
+		if consequences.get("consume_half_seeds", false) and "economy" in settlement:
+			var cur_s = settlement.economy.get_resource("seeds")
+			settlement.economy.resources["seeds"] = maxf(0.0, cur_s * 0.5)
+		if consequences.get("consume_all_seeds", false) and "economy" in settlement:
+			settlement.economy.resources["seeds"] = 0.0
+
+	if culture:
+		if consequences.get("unlock_ox_plow", false):
+			culture.unlock_upgrade_globally("primitive_field", "field_ox_plow")
+			culture.unlock_upgrade_globally("wheat_field", "wheat_ox_plow")
+		if consequences.get("unlock_upgrade_manure", false):
+			culture.unlock_upgrade_globally("primitive_field", "field_manure_spreading")
+		if consequences.get("unlock_upgrade_trophies", false):
+			culture.unlock_upgrade_globally("hunting_camp", "hunt_trophies")
+
 	# Невмешательство из карточки выбора
 	if consequences.get("no_intervention", false):
 		resolve_without_intervention(ev.get("instance_id", ""))
+
 
 func defer_event(instance_id: String) -> void:
 	var ev: Dictionary = event_instances.get(instance_id, {})

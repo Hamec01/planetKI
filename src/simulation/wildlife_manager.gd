@@ -241,6 +241,17 @@ func _check_and_replenish_wildlife(nav_grid) -> void:
 	var animal = WildAnimalScript.new(a_id, picked, pos)
 	animals[a_id] = animal
 
+func spawn_tamed_animal(species_type: String, p_pos: Vector2, settlement_id: String = "", p_name: String = "") -> WildAnimal:
+	_next_animal_id += 1
+	var a_id = "tamed_%s_%d" % [species_type, _next_animal_id]
+	var animal = WildAnimalScript.new(a_id, species_type, p_pos)
+	animal.is_tamed = true
+	animal.tamed_settlement_id = settlement_id
+	animal.custom_name = p_name if p_name != "" else ("Прирученный %s" % animal.species)
+	animal.home_coord = Vector2i(int(p_pos.x / 32.0), int(p_pos.y / 32.0))
+	animals[a_id] = animal
+	return animal
+
 func find_nearest_hunt_target(from_pos: Vector2, max_radius: float, hunter_id: String) -> WildAnimal:
 	var nearest_animal: WildAnimal = null
 	var min_dist: float = max_radius
@@ -248,6 +259,8 @@ func find_nearest_hunt_target(from_pos: Vector2, max_radius: float, hunter_id: S
 	# Приоритет 1: Взрослая дичь (олени, лоси, кабаны, зайцы)
 	for animal in animals.values():
 		if not animal.is_alive():
+			continue
+		if animal.is_tamed: # Прирученных животных лагеря охотники никогда не трогают
 			continue
 		if not can_join_hunt_group(animal.id, hunter_id):
 			continue
@@ -264,6 +277,8 @@ func find_nearest_hunt_target(from_pos: Vector2, max_radius: float, hunter_id: S
 	# Приоритет 2: Любая доступная цель, если взрослой нет
 	for animal in animals.values():
 		if not animal.is_alive():
+			continue
+		if animal.is_tamed:
 			continue
 		if not can_join_hunt_group(animal.id, hunter_id):
 			continue

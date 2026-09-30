@@ -57,8 +57,43 @@ const BUILDING_MODES: Dictionary = {
 		{"id": "logging", "name": "🪓 Сплошная заготовка", "desc": "Лесорубы валят взрослые деревья для максимального сбора древесины (1 дерево = 100 дров)"},
 		{"id": "reforestation", "name": "🌱 Лесопосадка и уход", "desc": "Лесорубы и лесники сеют саженцы деревьев на вырубках и пустых полях, восстанавливая лес"},
 		{"id": "selective", "name": "🌲 Выборочная санитарная рубка", "desc": "Рубка только сухих и старых деревьев с бережным сохранением лесного массива"}
+	],
+	"foraging_post": [
+		{"id": "forage", "name": "🌿 Общий сбор трав и ягод", "desc": "Собиратели ищут все доступные растения в округе"},
+		{"id": "roots", "name": "🥔 Поиск клубней и корней", "desc": "Упор на питательные сытные коренья и дикие корнеплоды"},
+		{"id": "seeds", "name": "🌾 Сбор диких злаков и семян", "desc": "Заготовка семенного материала для будущих делянок"},
+		{"id": "medicinal", "name": "🌸 Целебные травы", "desc": "Подорожник, ромашка и мята для знахарей"}
+	],
+	"primitive_garden": [
+		{"id": "mixed_herbs", "name": "🌱 Смешанные грядки", "desc": "Равномерное выращивание зелени, корешков и бобов"},
+		{"id": "roots_focus", "name": "🥕 Клубни и корнеплоды", "desc": "Упор на питательные сытные овощи"},
+		{"id": "medicinal_focus", "name": "🌿 Лекарственный сад", "desc": "Лечебные травы для укрепления здоровья племени"}
+	],
+	"primitive_field": [
+		{"id": "wheat", "name": "🌾 Пшеница и ячмень", "desc": "Выращивание зерна для каш и муки"},
+		{"id": "fallow", "name": "💤 Земля под паром", "desc": "Отдых почвы для быстрого восстановления плодородия"}
+	],
+	"wheat_field": [
+		{"id": "wheat", "name": "🌾 Золотые колосья", "desc": "Максимальный урожай хлебного зерна и соломы"},
+		{"id": "fallow", "name": "💤 Земля под паром", "desc": "Отдых почвы для восстановления сил земли"}
+	],
+	"threshing_floor": [
+		{"id": "threshing", "name": "🪵 Обмолот снопов", "desc": "Выбивание зерна цепами и провеивание на ветру"}
+	],
+	"quern_house": [
+		{"id": "fine_flour", "name": "🪨 Тонкий помол", "desc": "Белая чистая мука для пышных хлебов"},
+		{"id": "coarse_flour", "name": "🥣 Грубый помол / Дробленое зерно", "desc": "Быстрый помол на кашу и пресные лепёшки"}
+	],
+	"bakery": [
+		{"id": "bread", "name": "🍞 Пышный хлеб", "desc": "Выпечка ароматных буханок из муки и трав"},
+		{"id": "flatbread", "name": "🫓 Пресные лепёшки", "desc": "Быстрая выпечка походных лепёшек"}
+	],
+	"orchard": [
+		{"id": "fruits", "name": "🍎 Сладкие плоды", "desc": "Сбор яблок, груш и слив"},
+		{"id": "nursery", "name": "🌳 Питомник саженцев", "desc": "Черенкование и уход за молодыми деревцами"}
 	]
 }
+
 
 # --- ПОЛНЫЙ КАТАЛОГ АПГРЕЙДОВ ДЛЯ 8 АКТИВНЫХ ЗДАНИЙ ---
 const UPGRADES: Dictionary = {
@@ -258,26 +293,96 @@ const UPGRADES: Dictionary = {
 	},
 
 	# 7. ОХОТНИЧИЙ ЛАГЕРЬ
+	"hunt_butcher_table": {
+		"id": "hunt_butcher_table", "building_type": "hunting_camp",
+		"name": "🩸 Площадка разделки", "desc": "Разделочный стол и подвес. Ускоряет разделку на 35%, повышает выход мяса со зверя на +15%.",
+		"category": "butchering", "unlock_type": "ordinary",
+		"cost": {"wood": 10, "stone": 6}, "prerequisites": [],
+		"effects": {"butchering_speed": 0.35, "meat_yield": 0.15}
+	},
+	"hunt_weapon_rack": {
+		"id": "hunt_weapon_rack", "building_type": "hunting_camp",
+		"name": "🏹 Стойка оружия", "desc": "Копья, луки и щиты. Охотники всегда экипированы, +25% к урону и защита от ранений.",
+		"category": "weapons", "unlock_type": "ordinary",
+		"cost": {"wood": 10, "stone": 5}, "prerequisites": [],
+		"effects": {"hunter_damage": 0.25, "hunt_safety": 0.20}
+	},
+	"hunt_fur_rack": {
+		"id": "hunt_fur_rack", "building_type": "hunting_camp",
+		"name": "🪶 Сушилка шкур и пушнины", "desc": "Стойка для просушки. Исключает порчу пушнины, +1 гарантированная шкура с крупного зверя.",
+		"category": "pelts", "unlock_type": "ordinary",
+		"cost": {"wood": 8, "leather": 2}, "prerequisites": [],
+		"effects": {"fur_yield": 1.0, "leather_boost": 0.25}
+	},
+	"hunt_campfire": {
+		"id": "hunt_campfire", "building_type": "hunting_camp",
+		"name": "🔥 Охотничий привал", "desc": "Кострище с брёвнами. Охотники греются и отдыхают после рейдов, быстро восстанавливая силы.",
+		"category": "rest", "unlock_type": "ordinary",
+		"cost": {"wood": 8, "stone": 6}, "prerequisites": [],
+		"effects": {"stamina_recovery": 0.30, "hunter_morale": 5.0}
+	},
 	"hunt_bone_traps": {
 		"id": "hunt_bone_traps", "building_type": "hunting_camp",
-		"name": "Костяные силки и петли", "desc": "+20% к пассивной добыче мелкой дичи и перьев.",
+		"name": "🪤 Костяные силки и петли", "desc": "+20% к пассивной добыче мелкой дичи и перьев вокруг лагеря.",
 		"category": "traps", "unlock_type": "ordinary",
-		"cost": {"wood": 20}, "prerequisites": [],
+		"cost": {"wood": 12, "bone": 4}, "prerequisites": [],
 		"effects": {"small_game_yield": 0.20}
 	},
 	"hunt_tracking": {
 		"id": "hunt_tracking", "building_type": "hunting_camp",
-		"name": "Следопытство и выслеживание", "desc": "+30% к добыче ценных шкур и мяса крупных копытных.",
+		"name": "🐾 Стойка следопыта", "desc": "+30% к дальности обнаружения дичи и выслеживанию ценных животных.",
 		"category": "skills", "unlock_type": "practical",
-		"cost": {"wood": 25}, "prerequisites": ["hunt_bone_traps"],
-		"effects": {"large_game_yield": 0.30}
+		"cost": {"wood": 15, "leather": 3}, "prerequisites": ["hunt_bone_traps"],
+		"effects": {"large_game_yield": 0.30, "tracking_range": 0.30}
 	},
 	"hunt_dogs": {
 		"id": "hunt_dogs", "building_type": "hunting_camp",
-		"name": "Приручение охотничьих собак", "desc": "Охотники загоняют дичь вдвое быстрее, защита от хищников.",
+		"name": "🐕 Приручение охотничьих собак", "desc": "Охотники загоняют дичь вдвое быстрее, надежная защита от хищников.",
 		"category": "beasts", "unlock_type": "event",
-		"cost": {"food": 30, "wood": 20}, "prerequisites": ["hunt_tracking"],
+		"cost": {"food": 25, "wood": 15}, "prerequisites": ["hunt_tracking"],
 		"effects": {"hunt_speed_boost": 0.50}
+	},
+	"hunt_master_butcher": {
+		"id": "hunt_master_butcher", "building_type": "hunting_camp",
+		"name": "🔪 Стол мастера разделки", "desc": "Открывает роль Мастера разделки. Разделывает туши в лагере без потерь мяса (+20%) и с гарантией целых шкур.",
+		"category": "butchering", "unlock_type": "practical",
+		"cost": {"wood": 12, "stone": 8}, "prerequisites": ["hunt_butcher_table"],
+		"effects": {"master_butcher_role": true, "meat_yield": 0.20, "fur_yield": 1.0}
+	},
+	"hunt_target": {
+		"id": "hunt_target", "building_type": "hunting_camp",
+		"name": "🎯 Тренировочная мишень", "desc": "Мишени возле лагеря. Свободные охотники тренируют меткость и владение луком и копьём.",
+		"category": "training", "unlock_type": "ordinary",
+		"cost": {"wood": 8, "leather": 2}, "prerequisites": ["hunt_weapon_rack"],
+		"effects": {"training_xp_gain": 0.25}
+	},
+	"hunt_mentor": {
+		"id": "hunt_mentor", "building_type": "hunting_camp",
+		"name": "🧓 Место наставника", "desc": "Опытные ветераны и старейшины обучают молодых охотников, передавая секреты ремесла.",
+		"category": "mentoring", "unlock_type": "practical",
+		"cost": {"wood": 10, "leather": 4}, "prerequisites": ["hunt_target"],
+		"effects": {"mentor_assignment": true, "youth_training_boost": 0.35}
+	},
+	"hunt_outpost": {
+		"id": "hunt_outpost", "building_type": "hunting_camp",
+		"name": "🌲 Дальняя охотничья стоянка", "desc": "Позволяет охотникам уходить дальше и устраивать ночлег. Радиус охоты +50%.",
+		"category": "range", "unlock_type": "practical",
+		"cost": {"wood": 15, "leather": 4}, "prerequisites": ["hunt_campfire"],
+		"effects": {"hunt_radius_mult": 1.50}
+	},
+	"hunt_trophies": {
+		"id": "hunt_trophies", "building_type": "hunting_camp",
+		"name": "🦴 Мастерская трофеев", "desc": "Обработка рогов, костей и зубов. Изготовление инструментов и оберегов, повышает дух и запас кости.",
+		"category": "trophies", "unlock_type": "ordinary",
+		"cost": {"wood": 12, "bone": 6}, "prerequisites": ["hunt_fur_rack"],
+		"effects": {"trophy_crafting": true, "morale_boost": 5.0}
+	},
+	"hunt_smokehouse": {
+		"id": "hunt_smokehouse", "building_type": "hunting_camp",
+		"name": "🔥 Коптильная яма", "desc": "Заготовка копчёного мяса. Снижает скорость порчи мяса на 80%, сохраняя провиант на долгие зимы.",
+		"category": "preservation", "unlock_type": "event",
+		"cost": {"wood": 12, "stone": 8}, "prerequisites": ["hunt_campfire"],
+		"effects": {"spoilage_reduction": 0.80}
 	},
 
 	# 8. ПЛОЩАДКА ВОИНОВ
@@ -426,9 +531,18 @@ static func get_modes_for_building(b_type: String) -> Array:
 static func get_upgrades_for_building(b_type: String) -> Array:
 	var list = []
 	for u_id in UPGRADES:
-		if UPGRADES[u_id]["building_type"] == b_type:
+		if UPGRADES[u_id].get("building_type", "") == b_type:
 			list.append(UPGRADES[u_id])
+	if list.is_empty():
+		list = BuildingDB.get_upgrades_for_building(b_type)
 	return list
 
 static func get_upgrade(u_id: String) -> Dictionary:
-	return UPGRADES.get(u_id, {})
+	if UPGRADES.has(u_id):
+		return UPGRADES[u_id]
+	for b_type in BuildingDB.UPGRADES:
+		for u in BuildingDB.UPGRADES[b_type]:
+			if u.get("id", "") == u_id:
+				return u
+	return {}
+

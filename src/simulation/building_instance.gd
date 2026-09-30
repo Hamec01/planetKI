@@ -11,10 +11,15 @@ var building_type: String:
 	set(val): type = val
 var settlement_id: String = ""
 var pos: Vector2i = Vector2i.ZERO
+var size: Vector2i = Vector2i(1, 1)
+var visual_offset: Vector2 = Vector2.ZERO # Косметический суб-клеточный сдвиг спрайта (px)
+var custom_name: String = ""
+var building_data: Dictionary = {}
 var tile_coord: Vector2i:
 	get: return pos
 	set(val): pos = val
 var condition: float = 100.0 # 0 - 100%
+var is_open: bool = false # Для ворот и проходов (открыто/заперто)
 
 var manager_id: String = "" # ID назначенного мастера/руководителя (напр. "cit_2")
 var workers: Array[String] = [] # IDs соплеменников
@@ -24,11 +29,15 @@ var residents: Array[String] = [] # IDs постоянных членов дом
 var guests: Array[String] = [] # IDs временных гостей (гостевое проживание)
 var max_residents: int = 8
 var comfort_capacity: int = 6
+var comfort: float = 20.0 # Уровень уюта жилья (0-100)
 var max_guests: int = 2
 var household_head_id: String = ""
 var resident_roles: Dictionary = {} # citizen_id -> "owner" | "resident" | "guest" | "dependent" | "ward"
 var domestic_goods: Dictionary = {} # Личные вещи и материалы домохозяйства
 var food_stockpile: float = 0.0 # Домашний запас пищи
+var domestic_food_stock: float:
+	get: return food_stockpile
+	set(val): food_stockpile = val
 var food_stockpile_max: float = 16.0 # Целевой запас на 2 дня
 var is_locked_by_player: bool = false # Запрет автоматического выселения игроком
 
@@ -64,6 +73,19 @@ var construction_year: int = 1
 var local_buffer_wood: float = 0.0
 var local_buffer_max: float = 50.0
 var tool_inventory: Array[Dictionary] = [] # [{"id": "...", "type": "axe", "name": "...", "durability": 100.0, "max_durability": 100.0, "quality": 1.0, "assigned_to": ""}]
+
+# --- СЕЛЬСКОХОЗЯЙСТВЕННЫЕ ПОЛЯ, ОГОРОДЫ И САДЫ (6 СТАДИЙ РОСТА) ---
+var growth_stage: int = 1 # 1..6 (1: Посев/Всходы, 2: Рост, 3: Цветение, 4: Созревание, 5: Спелый урожай, 6: Стерня/Отдых)
+var growth_progress: float = 0.0 # 0.0 - 1.0 (внутри текущей стадии)
+var stage_duration_days: float = 8.0 # Дней на 1 стадию
+var crop_type: String = "wheat" # "wheat", "roots", "vegetables", "herbs", "fruits"
+var soil_fertility: float = 90.0 # 0 - 100%
+var soil_moisture: float = 65.0 # 0 - 100%
+var weeds_level: float = 5.0 # 0 - 100% (сорняки отнимают влагу и урожай)
+var seed_stock: float = 25.0 # Запас семян на делянке
+var last_harvest_yield: float = 0.0 # Результат последнего сбора
+var disease_risk: float = 0.0 # 0 - 100%
+
 
 func _init_camp_tools() -> void:
 	if type == "woodcutter_camp":
@@ -128,6 +150,9 @@ func _init(p_id: String = "", p_type: String = "", p_settlement: String = "", p_
 	_init_housing_capacity()
 	_init_default_mode()
 	_init_camp_tools()
+	if GameManager and GameManager.culture_memory:
+		for up in GameManager.culture_memory.get_global_unlocked_upgrades(type):
+			unlock_upgrade(up)
 
 func _init_housing_capacity() -> void:
 	if type == "great_lodge":
@@ -170,7 +195,15 @@ func _init_default_mode() -> void:
 		"hunting_camp": active_mode = "plains"
 		"training_grounds": active_mode = "drills"
 		"woodcutter_camp": active_mode = "logging"
+		"foraging_post": active_mode = "forage"
+		"primitive_garden": active_mode = "mixed_herbs"
+		"primitive_field", "wheat_field": active_mode = "wheat"
+		"threshing_floor": active_mode = "threshing"
+		"quern_house": active_mode = "fine_flour"
+		"bakery": active_mode = "bread"
+		"orchard": active_mode = "fruits"
 		_: active_mode = "default"
+
 
 func add_history_entry(year: int, text: String) -> void:
 	event_history.append({
@@ -457,9 +490,12 @@ func consume_food(amount: float) -> float:
 func serialize() -> Dictionary:
 	return {
 		"id": id,
+		"custom_name": custom_name,
+		"building_data": building_data.duplicate(true),
 		"type": type,
 		"settlement_id": settlement_id,
 		"pos": [pos.x, pos.y],
+		"visual_offset": [visual_offset.x, visual_offset.y],
 		"condition": condition,
 		"manager_id": manager_id,
 		"workers": workers.duplicate(),
@@ -498,10 +534,14 @@ func serialize() -> Dictionary:
 
 func deserialize(data: Dictionary) -> void:
 	id = data.get("id", id)
+	custom_name = data.get("custom_name", custom_name)
+	building_data = data.get("building_data", building_data).duplicate(true)
 	type = data.get("type", type)
 	settlement_id = data.get("settlement_id", settlement_id)
 	var p = data.get("pos", [pos.x, pos.y])
 	pos = Vector2i(p[0], p[1])
+	var vo = data.get("visual_offset", [0.0, 0.0])
+	visual_offset = Vector2(vo[0], vo[1])
 	condition = data.get("condition", 100.0)
 	manager_id = data.get("manager_id", "")
 	workers.assign(data.get("workers", []))
@@ -702,3 +742,283 @@ func take_from_lodge_storage(res_name: String, amount: float) -> float:
 	var taken = minf(amount, curr)
 	lodge_storage[res_name] = maxf(0.0, curr - taken)
 	return taken
+
+# --- МЕТОДЫ ОХОТНИЧЬЕГО ЛАГЕРЯ ---
+func is_hunting_camp() -> bool:
+	return type == "hunting_camp"
+
+func get_butchering_speed_mult() -> float:
+	if is_hunting_camp():
+		if is_upgrade_unlocked("hunt_master_butcher"):
+			return 1.80 # Профессиональный мастер разделывает на 80% быстрее
+		elif is_upgrade_unlocked("hunt_butcher_table"):
+			return 1.45 # На 45% быстрее разделка на оборудованной площадке
+	return 1.0
+
+func get_meat_yield_mult() -> float:
+	var mult = 1.0
+	if is_hunting_camp():
+		if is_upgrade_unlocked("hunt_butcher_table"):
+			mult += 0.15 # +15% мяса за счет аккуратной разделки
+		if is_upgrade_unlocked("hunt_master_butcher"):
+			mult += 0.20 # +20% мяса за счет мастера разделки без потерь
+		if is_upgrade_unlocked("hunt_tracking"):
+			mult += 0.10 # +10% мяса за счет лучшего выбора добычи
+	return mult
+
+func get_fur_bonus() -> int:
+	var bonus = 0
+	if is_hunting_camp():
+		if is_upgrade_unlocked("hunt_fur_rack"):
+			bonus += 1 # +1 качественная шкура со зверя при наличии сушилки
+		if is_upgrade_unlocked("hunt_master_butcher"):
+			bonus += 1 # +1 шкура гарантированно благодаря мастеру разделки
+	return bonus
+
+func get_bone_bonus() -> int:
+	var bonus = 0
+	if is_hunting_camp():
+		if is_upgrade_unlocked("hunt_trophies"):
+			bonus += 2 # +2 кости и рога для мастерской трофеев
+		elif is_upgrade_unlocked("hunt_bone_traps"):
+			bonus += 1
+	return bonus
+
+func get_hunter_damage_mult() -> float:
+	var mult = 1.0
+	if is_hunting_camp() and is_upgrade_unlocked("hunt_weapon_rack"):
+		mult += 0.25 # +25% к урону охотников благодаря стойке оружия
+	return mult
+
+func is_dogs_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_dogs")
+
+func is_smokehouse_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_smokehouse")
+
+func is_outpost_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_outpost")
+
+func is_master_butcher_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_master_butcher")
+
+func is_target_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_target")
+
+func is_mentor_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_mentor")
+
+func is_trophies_unlocked() -> bool:
+	return is_hunting_camp() and is_upgrade_unlocked("hunt_trophies")
+
+func get_hunt_radius_mult() -> float:
+	if is_hunting_camp() and is_upgrade_unlocked("hunt_outpost"):
+		return 1.50 # Дальняя стоянка расширяет радиус на 50%
+	return 1.0
+
+func get_hunter_speed_mult() -> float:
+	if is_hunting_camp() and is_upgrade_unlocked("hunt_dogs"):
+		return 1.50 # Собаки загоняют дичь и ускоряют охоту на 50%
+	return 1.0
+
+func get_spoilage_reduction_mult() -> float:
+	if is_hunting_camp() and is_upgrade_unlocked("hunt_smokehouse"):
+		return 0.20 # Снижает порчу мяса на 80% (копчение)
+	return 1.0
+
+# --- СЕЛЬСКОХОЗЯЙСТВЕННЫЕ МЕТОДЫ (ПОЛЯ, ОГОРОДЫ, САДЫ) ---
+func is_agricultural() -> bool:
+	return type in ["primitive_garden", "primitive_field", "wheat_field", "orchard"]
+
+func get_growth_stage_name() -> String:
+	match type:
+		"primitive_garden":
+			match growth_stage:
+				1: return "Прорастание семян (1/6)"
+				2: return "Зелёная ботва (2/6)"
+				3: return "Цветение грядок (3/6)"
+				4: return "Формирование плодов (4/6)"
+				5: return "Спелый урожай — Сбор (5/6)"
+				6: return "Восстановление делянки (6/6)"
+				_: return "Стадия %d" % growth_stage
+		"primitive_field", "wheat_field":
+			match growth_stage:
+				1: return "Вспашка / Посев (1/6)"
+				2: return "Зелёные всходы (2/6)"
+				3: return "Кущение и рост (3/6)"
+				4: return "Высокие колосья (4/6)"
+				5: return "Золотая спелость — Жатва (5/6)"
+				6: return "Сжатая стерня / Отдых (6/6)"
+				_: return "Стадия %d" % growth_stage
+		"orchard":
+			match growth_stage:
+				1: return "Саженцы (1/6)"
+				2: return "Густая крона (2/6)"
+				3: return "Цветение сада (3/6)"
+				4: return "Завязи плодов (4/6)"
+				5: return "Спелые плоды — Сбор (5/6)"
+				6: return "Отдых деревьев (6/6)"
+				_: return "Стадия %d" % growth_stage
+		_:
+			return "Стадия %d" % growth_stage
+
+func get_growth_texture_id() -> String:
+	if type == "primitive_garden":
+		return "primitive_garden_stage_%d" % clampi(growth_stage, 1, 6)
+	elif type in ["primitive_field", "wheat_field"]:
+		return "wheat_field_stage_%d" % clampi(growth_stage, 1, 6)
+	return type
+
+func water_crop(amount: float = 25.0) -> void:
+	soil_moisture = clampf(soil_moisture + amount, 0.0, 100.0)
+
+func weed_crop(amount: float = 30.0) -> void:
+	weeds_level = clampf(weeds_level - amount, 0.0, 100.0)
+
+func fertilize_crop(amount: float = 35.0) -> void:
+	soil_fertility = clampf(soil_fertility + amount, 0.0, 100.0)
+
+func harvest_crop(settlement: RefCounted) -> Dictionary:
+	if growth_stage != 5:
+		return {"harvested": false, "reason": "Урожай ещё не созрел"}
+		
+	var base_yield = 20.0
+	if type in ["primitive_field", "wheat_field"]:
+		base_yield = 35.0
+		if is_upgrade_unlocked("wheat_ox_plow") or is_upgrade_unlocked("field_ox_plow"):
+			base_yield *= 1.5
+		elif is_upgrade_unlocked("field_wooden_ard"):
+			base_yield *= 1.3
+		if is_upgrade_unlocked("wheat_sickles"):
+			base_yield *= 1.2
+	elif type == "primitive_garden":
+		base_yield = 22.0
+		if is_upgrade_unlocked("garden_compost"):
+			base_yield *= 1.25
+	elif type == "orchard":
+		base_yield = 28.0
+		if is_upgrade_unlocked("orchard_grafting"):
+			base_yield *= 1.3
+			
+	# Модификаторы плодородия, влажности и сорняков
+	var fert_mod = clampf(soil_fertility / 80.0, 0.3, 1.5)
+	var moist_mod = clampf(soil_moisture / 60.0, 0.4, 1.3)
+	var weed_pen = clampf(1.0 - (weeds_level / 150.0), 0.4, 1.0)
+	
+	var total_yield = base_yield * fert_mod * moist_mod * weed_pen
+	last_harvest_yield = total_yield
+	
+	var gathered_resources: Dictionary = {}
+	if settlement and "economy" in settlement:
+		if type in ["primitive_field", "wheat_field"]:
+			var grain_amt = total_yield * 0.8
+			var straw_amt = total_yield * 0.4
+			var seeds_amt = total_yield * 0.25
+			settlement.economy.add_resource("grain", grain_amt)
+			settlement.economy.add_resource("straw", straw_amt)
+			settlement.economy.add_resource("seeds", seeds_amt)
+			settlement.economy.add_resource("food", grain_amt * 0.5)
+			gathered_resources = {"grain": grain_amt, "straw": straw_amt, "seeds": seeds_amt}
+			if "add_knowledge" in settlement:
+				settlement.add_knowledge("grain_knowledge", 8.0)
+				settlement.add_knowledge("cultivation_knowledge", 6.0)
+		elif type == "primitive_garden":
+			var veg_amt = total_yield * 0.6
+			var roots_amt = total_yield * 0.4
+			var herbs_amt = total_yield * 0.3
+			var seeds_amt = total_yield * 0.2
+			settlement.economy.add_resource("food", veg_amt + roots_amt)
+			settlement.economy.add_resource("roots", roots_amt)
+			settlement.economy.add_resource("herbs", herbs_amt)
+			settlement.economy.add_resource("seeds", seeds_amt)
+			gathered_resources = {"roots": roots_amt, "herbs": herbs_amt, "seeds": seeds_amt, "food": veg_amt + roots_amt}
+			if "add_knowledge" in settlement:
+				settlement.add_knowledge("plant_knowledge", 6.0)
+				settlement.add_knowledge("cultivation_knowledge", 8.0)
+		elif type == "orchard":
+			var fruits_amt = total_yield
+			settlement.economy.add_resource("food", fruits_amt)
+			settlement.economy.add_resource("berries", fruits_amt * 0.5)
+			gathered_resources = {"fruits": fruits_amt, "food": fruits_amt}
+			if "add_knowledge" in settlement:
+				settlement.add_knowledge("plant_knowledge", 8.0)
+				
+	# Переход на 6 стадию (стерня / отдых) и истощение почвы
+	growth_stage = 6
+	growth_progress = 0.0
+	soil_fertility = clampf(soil_fertility - 15.0, 10.0, 100.0)
+	weeds_level = clampf(weeds_level + 15.0, 0.0, 100.0)
+	
+	var yr = GameManager.current_year if GameManager else 1
+	add_history_entry(yr, "Собран урожай (%s): %.1f ед." % [type, total_yield])
+	return {"harvested": true, "yield": total_yield, "resources": gathered_resources}
+
+func advance_crop_cycle(delta_days: float, settlement: RefCounted = null) -> Dictionary:
+	if not is_agricultural():
+		return {}
+		
+	# 1. Высыхание почвы и рост сорняков
+	var evap_rate = 1.2 * delta_days
+	if type == "wheat_field" and is_upgrade_unlocked("wheat_irrigation_furrows"):
+		evap_rate *= 0.6
+	elif type == "primitive_garden" and is_upgrade_unlocked("garden_water_trough"):
+		evap_rate *= 0.7
+	soil_moisture = clampf(soil_moisture - evap_rate, 0.0, 100.0)
+	
+	# Сорняки растут быстрее при влажной и плодородной почве
+	weeds_level = clampf(weeds_level + (0.8 * delta_days), 0.0, 100.0)
+	
+	# 2. Если есть работники-земледельцы — они автоматически ухаживают за полем
+	var worker_count = workers.size()
+	if worker_count > 0:
+		# Прополка
+		weeds_level = clampf(weeds_level - (1.5 * worker_count * delta_days), 0.0, 100.0)
+		# Полив, если почва сухая
+		if soil_moisture < 50.0:
+			soil_moisture = clampf(soil_moisture + (1.0 * worker_count * delta_days), 0.0, 85.0)
+			
+	# 3. Продвижение стадии роста
+	var growth_speed = 1.0
+	# Снижение скорости из-за засухи или сорняков
+	if soil_moisture < 20.0:
+		growth_speed *= 0.35
+	elif soil_moisture < 40.0:
+		growth_speed *= 0.7
+	if weeds_level > 60.0:
+		growth_speed *= 0.6
+	if soil_fertility < 30.0:
+		growth_speed *= 0.5
+		
+	var stage_time = stage_duration_days
+	if type == "orchard":
+		stage_time *= 1.5
+		
+	growth_progress += (delta_days * growth_speed) / stage_time
+	
+	var stage_changed = false
+	if growth_progress >= 1.0:
+		growth_progress = 0.0
+		growth_stage += 1
+		stage_changed = true
+		
+		# Если дошли до 7 -> переход в 1 (новый цикл)
+		if growth_stage > 6:
+			growth_stage = 1
+			# На 6 стадии почва восстанавливается
+			soil_fertility = clampf(soil_fertility + 10.0, 0.0, 100.0)
+			
+		var yr = GameManager.current_year if GameManager else 1
+		add_history_entry(yr, "Фаза роста изменилась: %s" % get_growth_stage_name())
+		
+	# Авто-сбор если на поле есть работники на 5 стадии
+	if growth_stage == 5 and worker_count > 0:
+		harvest_crop(settlement)
+		
+	return {
+		"stage": growth_stage,
+		"stage_name": get_growth_stage_name(),
+		"stage_changed": stage_changed,
+		"fertility": soil_fertility,
+		"moisture": soil_moisture,
+		"weeds": weeds_level
+	}

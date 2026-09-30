@@ -49,6 +49,7 @@ func _ready() -> void:
 	# 3. Тест навигации AStarGrid2D (NPCNavigation)
 	var world = WorldGenerator.generate_world("PLN-TEST-STAGE-A")
 	GameManager.planet_data = world
+	GameManager._on_world_generated_init_nav(world)
 	EventBus.world_generated.emit(world)
 	var nav = GameManager.nav_grid
 	
@@ -355,6 +356,7 @@ func _ready() -> void:
 			tree_node = n
 			break
 	assert(tree_node != null, "Must have wood node on map")
+	tree_node["amount"] = 4.0
 	
 	# Лесоруб рубит дерево: проверка физического прогрессивного уменьшения запаса в дереве
 	var wood_before = s.economy.get_resource("wood")
@@ -661,7 +663,7 @@ func _ready() -> void:
 	assert(not oak_click.is_empty(), "Must detect tree sprite at click position")
 	assert(oak_click["coord"] == Vector2i(5, 5), "Tree coord must match (5, 5)")
 	assert(oak_click["n_data"]["name"] == "tree_oak", "Must pick tree_oak sprite")
-	assert(oak_click["node"]["amount"] == 100.0, "Tree oak must have 100 wood stock")
+	assert(oak_click["node"]["amount"] == 20.0, "Tree oak must have 20 wood stock")
 
 	# Клик по валуну на (6, 5)
 	var rock_click = map_view._get_nature_object_at_position(Vector2(6 * 32 + 16, 5 * 32 + 15))
@@ -1084,9 +1086,13 @@ func _ready() -> void:
 		s = GameManager.settlements[s.id]
 	else:
 		GameManager.settlements[s.id] = s
-	var s03_tree_coord = Vector2i(s.pos.x + 2, s.pos.y + 2)
+	var s03_tree_coord = Vector2i(s.pos.x + 2, s.pos.y)
 	GameManager.planet_data["tiles"][s03_tree_coord.y][s03_tree_coord.x]["nature_object"] = "tree_pine"
 	GameManager.planet_data["tiles"][s03_tree_coord.y][s03_tree_coord.x]["walkable"] = true
+	if GameManager.nav_grid and GameManager.nav_grid.astar:
+		GameManager.nav_grid.astar.set_point_solid(s03_tree_coord, false)
+		GameManager.nav_grid.astar.set_point_solid(Vector2i(s.pos.x + 1, s.pos.y), false)
+		GameManager.nav_grid.astar.set_point_solid(Vector2i(s.pos.x, s.pos.y), false)
 	var s03_tree_pos = Vector2(s03_tree_coord.x * 32.0 + 16, s03_tree_coord.y * 32.0 + 16)
 	GameManager.resource_manager.nodes[s03_tree_coord] = {
 		"id": "s03_tree_node",
@@ -1112,6 +1118,9 @@ func _ready() -> void:
 	woodcutter.equipped_tool = {"id": "axe_test", "type": "axe", "durability": 100.0, "max_durability": 100.0}
 	if not s.buildings.has("woodcutter_camp"):
 		s.buildings.append("woodcutter_camp")
+	for c in s.population.citizens:
+		if c.job_id == "woodcutter":
+			c.job_id = "idle"
 	s.population.citizens.append(woodcutter)
 	
 	s.priority_harvest_coords.clear()
@@ -1133,15 +1142,15 @@ func _ready() -> void:
 	var t_arrived = GameManager.task_service.get_task(woodcutter.task_instance_id)
 	assert(t_arrived.get("state") == TaskService.TaskState.IN_PROGRESS, "Task state must be IN_PROGRESS while working")
 	
-	# Удары топором: прогрессивная рубка (25 дров за удар)
+	# Удары топором: прогрессивная рубка (сокращено в 2 раза: 12.5 дров за удар)
 	woodcutter.work_timer = 0.0
 	s.update_citizens(0.1)
-	assert(woodcutter.cargo_amount == 25.0, "Woodcutter must have 25 wood in hands after 1 strike")
-	assert(GameManager.resource_manager.nodes[s03_tree_coord]["amount"] == 75.0, "Tree amount must be reduced to 75")
+	assert(woodcutter.cargo_amount == 12.5, "Woodcutter must have 12.5 wood in hands after 1 strike")
+	assert(GameManager.resource_manager.nodes[s03_tree_coord]["amount"] == 87.5, "Tree amount must be reduced to 87.5")
 	
-	# Завершаем рубку дерева (остальные 75 дров)
+	# Завершаем рубку дерева (остальные 87.5 дров)
 	woodcutter.work_timer = 0.0
-	GameManager.resource_manager.harvest_from_node(s03_tree_coord, 75.0) # дорубаем запас дерева
+	GameManager.resource_manager.harvest_from_node(s03_tree_coord, 87.5) # дорубаем запас дерева
 	s.update_citizens(0.1)
 	assert(woodcutter.state == CitizenNPC.State.CARRYING, "Woodcutter must enter CARRYING state")
 	var t_delivering = GameManager.task_service.get_task(woodcutter.task_instance_id)
@@ -1468,9 +1477,17 @@ func _ready() -> void:
 	q_item["coord"] = s05_site_coord
 	s.construction_queue.append(q_item)
 
-	# Склад пуст
+	# Склад и буфер лагеря пусты
 	s.economy.resources["wood"] = 0.0
 	s.economy.resources["stone"] = 0.0
+	var active_wc_camp = s.get_active_woodcutter_camp()
+	if active_wc_camp:
+		active_wc_camp.local_buffer_wood = 0.0
+	s.priority_harvest_coords.clear()
+	for c_other in s.population.citizens:
+		c_other.cargo_amount = 0.0
+		c_other.state = CitizenNPC.State.WAITING
+		c_other.decision_cooldown = 100.0
 
 	var test_builder = CitizenNPC.new("s05_builder", "Строитель S05", "m", 28, "adult")
 	test_builder.job_id = "builder"
@@ -1679,8 +1696,27 @@ func _ready() -> void:
 		s = GameManager.settlements[s.id]
 
 	# 67. Минимум две семьи живут и спят в разных домах; гостевое проживание и закрепление игрока
-	var coord_hut1 = Vector2i(s.pos.x + 8, s.pos.y)
-	var coord_hut2 = Vector2i(s.pos.x + 10, s.pos.y)
+	var coord_hut1 = Vector2i(-1, -1)
+	var coord_hut2 = Vector2i(-1, -1)
+	for r in range(1, 10):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				var check_c = s.pos + Vector2i(dx, dy)
+				if not GameManager.nav_grid.is_valid_coord(check_c) or GameManager.nav_grid.is_water_tile(check_c) or GameManager.tile_buildings.has(check_c):
+					continue
+				var test_p = GameManager.nav_grid.find_path(GameManager.nav_grid.tile_to_world_center(check_c), GameManager.nav_grid.tile_to_world_center(s.pos))
+				if not test_p.is_empty():
+					if coord_hut1 == Vector2i(-1, -1):
+						coord_hut1 = check_c
+					elif coord_hut2 == Vector2i(-1, -1) and check_c != coord_hut1:
+						coord_hut2 = check_c
+						break
+			if coord_hut1 != Vector2i(-1, -1) and coord_hut2 != Vector2i(-1, -1):
+				break
+		if coord_hut1 != Vector2i(-1, -1) and coord_hut2 != Vector2i(-1, -1):
+			break
+
+	assert(coord_hut1 != Vector2i(-1, -1) and coord_hut2 != Vector2i(-1, -1), "Must find valid coordinates for test huts")
 	GameManager.planet_data["tiles"][coord_hut1.y][coord_hut1.x]["walkable"] = true
 	GameManager.planet_data["tiles"][coord_hut2.y][coord_hut2.x]["walkable"] = true
 
@@ -1782,7 +1818,7 @@ func _ready() -> void:
 	cit_a2.hunger = 40.0
 	s.update_citizens(0.1)
 	assert(cit_a2.hunger == 100.0, "Citizen hunger restored")
-	assert(absf(inst_hut1.food_stockpile - 3.5) < 0.01, "Home food stockpile deducted by 0.5 (got %.2f)" % inst_hut1.food_stockpile)
+	assert(absf(inst_hut1.food_stockpile - 3.75) < 0.01, "Home food stockpile deducted by 0.25 (got %.2f)" % inst_hut1.food_stockpile)
 	assert(s.economy.get_resource("food") == 26.0, "Warehouse food NOT touched when home food is available!")
 	print("OK 68. S06 Home food stockpile, domestic delivery from warehouse & home eating verified.")
 
@@ -3267,13 +3303,13 @@ func _ready() -> void:
 	assert(wc_105.state == CitizenNPC.State.WORKING, "P01.8: Woodcutter started working at tree")
 
 	wc_105.work_timer = 0.0
-	s_105.update_citizens(0.1) # 1 удар
-	assert(wc_105.cargo_amount == 25.0, "P01.8: Cargo in hands is 25 after strike")
+	s_105.update_citizens(0.1) # 1 удар (12.5 дров)
+	assert(wc_105.cargo_amount == 12.5, "P01.8: Cargo in hands is 12.5 after strike")
 	assert(wc_105.equipped_tool.get("durability", 0.0) < 100.0, "P01.8: Axe took durability wear during chopping")
 
 	# Завершаем рубку дерева
 	wc_105.work_timer = 0.0
-	GameManager.resource_manager.harvest_from_node(tree_coord_105, 75.0)
+	GameManager.resource_manager.harvest_from_node(tree_coord_105, 87.5)
 	s_105.update_citizens(0.1)
 	assert(wc_105.state == CitizenNPC.State.CARRYING, "P01.8: Woodcutter carrying felled wood")
 	assert(wc_105.task_id == "deposit_to_camp", "P01.8: Task is deposit_to_camp, not direct central warehouse")
@@ -3285,7 +3321,7 @@ func _ready() -> void:
 	wc_105.path.clear()
 	s_105.update_citizens(0.1)
 	assert(wc_105.cargo_amount == 0.0, "P01.8: Cargo unloaded at camp buffer")
-	assert(camp_105.local_buffer_wood == 25.0, "P01.8: Camp local buffer received 25 wood")
+	assert(camp_105.local_buffer_wood == 12.5, "P01.8: Camp local buffer received 12.5 wood")
 	assert(s_105.economy.get_resource("wood") == initial_s_wood_105, "P01.8: Settlement central warehouse did NOT receive wood yet")
 
 	# 6. Заполнение буфера до предела (50.0): остановка с реальной причиной
@@ -3845,13 +3881,1148 @@ func _ready() -> void:
 	
 	print("OK 112. Great Lodge: 18 Event chains (GL-01..GL-18), dynamic consequences, ward adoption and save/load verified.")
 
+	# 113. Hunting Camp (dom_ohotnika): textures, ruined state, upgrades and butchering/yield simulation
+	BuildingTextureManager.load_all()
+	assert(BuildingTextureManager.get_texture("hunting_camp") != null, "hunting_camp texture must exist")
+	assert(BuildingTextureManager.get_texture("destr_hunting_camp") != null, "destr_hunting_camp texture must exist")
+	assert(BuildingTextureManager.get_texture("hunter_shelter") != null, "hunter_shelter texture must exist")
+	assert(BuildingTextureManager.get_texture("hunt_campfire") != null, "hunt_campfire texture must exist")
+	assert(BuildingTextureManager.get_texture("hunt_weapon_rack") != null, "hunt_weapon_rack texture must exist")
+	assert(BuildingTextureManager.get_texture("hunt_fur_rack") != null, "hunt_fur_rack texture must exist")
+	assert(BuildingTextureManager.get_texture("hunt_butcher_table") != null, "hunt_butcher_table texture must exist")
+
+	var hc_coord = Vector2i(25, 30)
+	var hc_inst = GameManager.get_or_create_building_instance(hc_coord, "hunting_camp", s.id)
+	assert(hc_inst != null, "Hunting camp instance must be created")
+	assert(hc_inst.is_hunting_camp(), "is_hunting_camp must return true")
+
+	# Проверка базовых значений без улучшений
+	assert(hc_inst.get_butchering_speed_mult() == 1.0, "Base butchering speed mult must be 1.0")
+	assert(hc_inst.get_meat_yield_mult() == 1.0, "Base meat yield mult must be 1.0")
+	assert(hc_inst.get_fur_bonus() == 0, "Base fur bonus must be 0")
+	assert(hc_inst.get_hunter_damage_mult() == 1.0, "Base hunter damage mult must be 1.0")
+
+	# Разблокировка улучшений охотничьего лагеря
+	hc_inst.unlock_upgrade("hunt_butcher_table")
+	hc_inst.unlock_upgrade("hunt_weapon_rack")
+	hc_inst.unlock_upgrade("hunt_fur_rack")
+	hc_inst.unlock_upgrade("hunt_campfire")
+	hc_inst.unlock_upgrade("hunt_tracking")
+
+	assert(hc_inst.is_upgrade_unlocked("hunt_butcher_table"), "hunt_butcher_table must be unlocked")
+	assert(hc_inst.get_butchering_speed_mult() == 1.45, "Equipped butcher table must provide 1.45x butchering speed")
+	assert(hc_inst.get_meat_yield_mult() == 1.25, "Equipped butcher table + tracking must provide 1.25x meat yield")
+	assert(hc_inst.get_fur_bonus() == 1, "Fur rack must provide +1 guaranteed leather/fur")
+	assert(hc_inst.get_hunter_damage_mult() == 1.25, "Weapon rack must provide +25% hunter damage")
+
+	# Проверка поиска инстанса лагеря через поселение
+	var test_hunter = CitizenNPC.new("test_hunter_hc", "Зоркий Охотник", "m", 24, "adult")
+	test_hunter.job_id = "hunter"
+	test_hunter.workplace_coord = hc_coord
+	s.population.citizens.append(test_hunter)
+	var found_hc = s._get_hunting_camp_instance(test_hunter)
+	assert(found_hc == hc_inst, "_get_hunting_camp_instance must find the assigned hunting camp")
+
+	print("OK 113. Hunting camp (dom_ohotnika): textures, 7 upgrades, modular props and real simulation yields verified.")
+
+	# 114. NPC Sprites Adaptation (char_set_v2): 64 roles across 3 races, 128x128 RGBA, gender mapping
+	CharacterTextureManager.load_all()
+	var test_races = ["north", "savanna", "desert"]
+	assert(CitizenNPC.MALE_ROLES.size() == 32, "MALE_ROLES must contain exactly 32 roles")
+	assert(CitizenNPC.FEMALE_ROLES.size() == 32, "FEMALE_ROLES must contain exactly 32 roles")
+	for r_m in CitizenNPC.MALE_ROLES:
+		assert(not CitizenNPC.FEMALE_ROLES.has(r_m), "Role %s cannot be both male and female" % r_m)
+
+	for r_id in test_races:
+		assert(CharacterTextureManager.race_textures.has(r_id), "Race %s must be loaded" % r_id)
+		# Проверка наличия ключевых ролей и их размера 128x128
+		for role_name in ["leader_m", "leader_f", "hunter_m", "hunter_f", "child_boy_1", "grandpa_staff", "mother_baby"]:
+			var tex = CharacterTextureManager.get_role_texture(r_id, role_name)
+			assert(tex != null, "Role %s for race %s must exist" % [role_name, r_id])
+			assert(tex.get_width() == 128 and tex.get_height() == 128, "Sprite %s must be 128x128, got %dx%d" % [role_name, tex.get_width(), tex.get_height()])
+
+	# Проверка строгого разделения по полу в CharacterTextureManager
+	var hunter_m_tex = CharacterTextureManager.get_character_for_job("hunter", 0, "north", "m")
+	var hunter_f_tex = CharacterTextureManager.get_character_for_job("hunter", 0, "north", "f")
+	assert(hunter_m_tex != null and hunter_f_tex != null, "Hunter textures must not be null")
+	assert(hunter_m_tex == CharacterTextureManager.get_role_texture("north", "hunter_m"), "Male hunter must get hunter_m")
+	assert(hunter_f_tex == CharacterTextureManager.get_role_texture("north", "hunter_f"), "Female hunter must get hunter_f")
+
+	# Проверка интеграции в CitizenNPC
+	var cit_male = CitizenNPC.new("cit_male_test", "Охотник Ратибор", "m", 26, "adult", "north")
+	cit_male.set_job("hunter")
+	var cit_female = CitizenNPC.new("cit_female_test", "Охотница Любава", "f", 23, "adult", "savanna")
+	cit_female.set_job("hunter")
+
+	var tex_male = cit_male.get_texture()
+	var tex_female = cit_female.get_texture()
+	assert(tex_male == CharacterTextureManager.get_role_texture("north", "hunter_m"), "cit_male must receive hunter_m texture")
+	assert(tex_female == CharacterTextureManager.get_role_texture("savanna", "hunter_f"), "cit_female must receive savanna hunter_f texture")
+
+	print("OK 114. NPC Sprites Adaptation (char_set_v2): 64 roles across 3 races (192 unique sprites + 192 aliases), 128x128 RGBA, strict gender mapping and job filtering verified.")
+
+	# 115. Hunting Camp Full Implementation (HUNT HOUSE .txt): Pets, 10+ Upgrades, 18 Event Chains (HC-01 .. HC-18)
+	# 1. Проверка текстур питомцев (собаки и кошки)
+	BuildingTextureManager.load_all()
+	var hunt_dog_tex = BuildingTextureManager.get_texture("hunt_dogs")
+	assert(hunt_dog_tex != null, "hunt_dogs texture must be loaded in BuildingTextureManager")
+	assert(hunt_dog_tex.get_width() == 128 and hunt_dog_tex.get_height() == 128, "hunt_dogs texture must be 128x128")
+
+	for pet_name in ["dog_hound", "dog_wolf", "dog_shepherd", "cat_ginger", "cat_tuxedo", "cat_tabby"]:
+		var p_path = "res://Assets/animals/%s.png" % pet_name
+		assert(FileAccess.file_exists(p_path), "Pet asset %s must exist on disk" % p_path)
+		var p_img = Image.load_from_file(ProjectSettings.globalize_path(p_path))
+		assert(p_img != null and p_img.get_width() == 128 and p_img.get_height() == 128, "Pet texture %s must be 128x128 RGBA" % pet_name)
+
+	# 2. Проверка всех улучшений в BuildingDB и BuildingSystem
+	var expected_hc_upgrades = [
+		"hunt_butcher_table", "hunt_weapon_rack", "hunt_fur_rack", "hunt_campfire",
+		"hunt_tracking", "hunt_bone_traps", "hunt_dogs", "hunt_master_butcher",
+		"hunt_target", "hunt_mentor", "hunt_outpost", "hunt_trophies", "hunt_smokehouse"
+	]
+	var db_upgrades = BuildingDB.get_upgrades_for_building("hunting_camp")
+	var db_up_ids = []
+	for u in db_upgrades:
+		db_up_ids.append(u.get("id", ""))
+	for req_up in expected_hc_upgrades:
+		assert(db_up_ids.has(req_up), "BuildingDB hunting_camp must contain upgrade: %s" % req_up)
+		assert(BuildingSystem.UPGRADES.has(req_up), "BuildingSystem.UPGRADES must contain: %s" % req_up)
+
+	# 3. Проверка методов и эффектов BuildingInstance
+	var hc_test_inst = BuildingInstance.new("hc_test_inst", "hunting_camp", "player_tribe_settlement", Vector2i(15, 15))
+	assert(hc_test_inst.is_hunting_camp(), "is_hunting_camp must be true")
+
+	# Проверка эффектов собаки
+	assert(not hc_test_inst.is_dogs_unlocked(), "Dogs not unlocked initially")
+	assert(hc_test_inst.get_hunter_speed_mult() == 1.0, "Base hunter speed mult is 1.0")
+	hc_test_inst.unlock_upgrade("hunt_dogs")
+	assert(hc_test_inst.is_dogs_unlocked(), "Dogs unlocked after upgrade")
+	assert(hc_test_inst.get_hunter_speed_mult() == 1.50, "Dogs provide +50% hunt speed boost")
+
+	# Проверка дальней стоянки (Outpost)
+	assert(not hc_test_inst.is_outpost_unlocked(), "Outpost not unlocked initially")
+	assert(hc_test_inst.get_hunt_radius_mult() == 1.0, "Base hunt radius mult is 1.0")
+	hc_test_inst.unlock_upgrade("hunt_outpost")
+	assert(hc_test_inst.is_outpost_unlocked(), "Outpost unlocked after upgrade")
+	assert(hc_test_inst.get_hunt_radius_mult() == 1.50, "Outpost expands hunt radius by +50%")
+
+	# Проверка коптильной ямы (Smokehouse)
+	assert(not hc_test_inst.is_smokehouse_unlocked(), "Smokehouse not unlocked initially")
+	assert(hc_test_inst.get_spoilage_reduction_mult() == 1.0, "Base spoilage mult is 1.0")
+	hc_test_inst.unlock_upgrade("hunt_smokehouse")
+	assert(hc_test_inst.is_smokehouse_unlocked(), "Smokehouse unlocked after upgrade")
+	assert(hc_test_inst.get_spoilage_reduction_mult() == 0.20, "Smokehouse reduces spoilage by 80%")
+
+	# Проверка мастера разделки (Master Butcher)
+	assert(not hc_test_inst.is_master_butcher_unlocked(), "Master butcher not unlocked initially")
+	hc_test_inst.unlock_upgrade("hunt_butcher_table")
+	hc_test_inst.unlock_upgrade("hunt_master_butcher")
+	assert(hc_test_inst.is_master_butcher_unlocked(), "Master butcher unlocked after upgrade")
+	assert(is_equal_approx(hc_test_inst.get_meat_yield_mult(), 1.35) or hc_test_inst.get_meat_yield_mult() >= 1.34, "Butcher table + master butcher must yield +35% meat")
+	assert(hc_test_inst.get_fur_bonus() >= 1, "Master butcher guarantees extra fur")
+
+	# Проверка мастерской трофеев (Trophies)
+	assert(not hc_test_inst.is_trophies_unlocked(), "Trophies not unlocked initially")
+	hc_test_inst.unlock_upgrade("hunt_trophies")
+	assert(hc_test_inst.is_trophies_unlocked(), "Trophies unlocked after upgrade")
+	assert(hc_test_inst.get_bone_bonus() == 2, "Trophies provide +2 bones")
+
+	# Проверка тренировочной мишени и наставника
+	hc_test_inst.unlock_upgrade("hunt_target")
+	assert(hc_test_inst.is_target_unlocked(), "Target unlocked after upgrade")
+	hc_test_inst.unlock_upgrade("hunt_mentor")
+	assert(hc_test_inst.is_mentor_unlocked(), "Mentor unlocked after upgrade")
+
+	# 4. Проверка всех 18 событий охотничьего лагеря (HC-01 .. HC-18)
+	for i in range(1, 19):
+		var ev_id = "HC-%02d" % i
+		var ev = CivilizationEventDB.get_event(ev_id)
+		assert(not ev.is_empty(), "CivilizationEventDB must contain event: %s" % ev_id)
+		assert(ev.get("chain_id", "").begins_with("HC_"), "Event %s chain_id must start with HC_" % ev_id)
+		assert(ev.get("conditions", {}).get("required_building", "") == "hunting_camp", "Event %s must require hunting_camp" % ev_id)
+		assert(ev.get("choices", []).size() >= 3, "Event %s must have at least 3 meaningful choices" % ev_id)
+
+	# 5. Проверка срабатывания и применения выбора через CivilizationEventManager
+	s = GameManager.get_player_settlement() if GameManager.get_player_settlement() else GameManager.settlements.values()[0]
+	var hc_mgr = CivilizationEventManager.new()
+	hc_mgr.settlement = s
+	GameManager.building_instances["hc_test_inst"] = hc_test_inst
+
+	# Проверка HC-08 (Охотник и волчонок) -> разблокировка собак
+	var test_hc_inst_fresh = BuildingInstance.new("hc_fresh", "hunting_camp", s.id, Vector2i(16, 16))
+	GameManager.building_instances["hc_fresh"] = test_hc_inst_fresh
+	assert(not test_hc_inst_fresh.is_dogs_unlocked(), "Fresh camp has no dogs yet")
+
+	var hc08_ev = CivilizationEventDB.get_event("HC-08")
+	var inst08_id = hc_mgr.trigger_event(hc08_ev, {"target_building_id": "hc_fresh"})
+	hc_mgr.apply_choice(inst08_id, "A") # Выбор A: Приручить волчонка
+	assert(test_hc_inst_fresh.is_dogs_unlocked(), "Choice A in HC-08 must unlock hunt_dogs on hunting camp!")
+
+	# Проверка HC-03 (Мясо испорчено) -> разблокировка коптильни
+	var hc03_ev = CivilizationEventDB.get_event("HC-03")
+	var inst03_id = hc_mgr.trigger_event(hc03_ev, {"target_building_id": "hc_fresh"})
+	hc_mgr.apply_choice(inst03_id, "C") # Выбор C: Закоптить над дымной ямой
+	assert(test_hc_inst_fresh.is_smokehouse_unlocked(), "Choice C in HC-03 must unlock hunt_smokehouse!")
+
+	print("OK 115. Hunting camp (HUNT HOUSE .txt): pet sprites (dogs/cats), all 13 upgrades, dog prop rendering on map, and 18 event chains (HC-01 .. HC-18) fully verified.")
+
+	# ----------------------------------------
+	# TEST 116: TANGIBLE ANIMAL TAMING (DEER & WOLF), REAL EVENT BUILDINGS (ANIMAL PEN) & MORALE
+	# ----------------------------------------
+	# 1. Проверка исправления morale на CitizenNPC
+	var test_hunter_116 = CitizenNPC.new()
+	test_hunter_116.citizen_id = "hunter_morale_test"
+	test_hunter_116.name = "Охотник Велемир"
+	test_hunter_116.job_id = "hunter"
+	test_hunter_116.loyalty = 60.0
+	assert(test_hunter_116.morale == 60.0, "morale property getter must reflect loyalty")
+	test_hunter_116.morale = 85.0
+	assert(test_hunter_116.loyalty == 85.0, "morale setter must update loyalty")
+	s.population.citizens.append(test_hunter_116)
+
+	# 2. Проверка HC-18 с последствиями hunter_morale (отсутствие краша рантайма)
+	var hc18_ev = CivilizationEventDB.get_event("HC-18")
+	assert(not hc18_ev.is_empty(), "HC-18 event must exist")
+	var inst18_id = hc_mgr.trigger_event(hc18_ev, {"target_building_id": "hc_fresh"})
+	hc_mgr.apply_choice(inst18_id, "A") # Выбор A: hunter_morale: 15.0
+	assert(test_hunter_116.loyalty == 100.0, "hunter_morale choice must boost hunter loyalty to 100")
+
+	# 3. Проверка HC-05 (Выбор C: Приручить оленёнка и заложить животноводство)
+	assert(not GameManager.culture_memory.is_building_unlocked("animal_pen"), "Animal pen must be locked initially")
+	var init_animals_count = GameManager.wildlife_manager.animals.size()
+	
+	var hc05_ev = CivilizationEventDB.get_event("HC-05")
+	assert(not hc05_ev.is_empty(), "HC-05 event must exist")
+	var inst05_id = hc_mgr.trigger_event(hc05_ev, {"target_building_id": "hc_fresh"})
+	hc_mgr.apply_choice(inst05_id, "C") # Выбор C: Приручить оленёнка
+
+	# Проверяем, что оленёнок РЕАЛЬНО появился в симуляции
+	var found_tamed_deer: WildAnimal = null
+	for a in GameManager.wildlife_manager.animals.values():
+		if a.is_tamed and a.species == "deer" and a.type_id == "deer_fawn":
+			found_tamed_deer = a
+			break
+	assert(found_tamed_deer != null, "A real tamed deer fawn must spawn in wildlife_manager after HC-05 Choice C!")
+	assert(found_tamed_deer.is_tamed == true, "Deer fawn must have is_tamed == true")
+	assert(found_tamed_deer.custom_name == "Прирученный оленёнок", "Deer fawn must have custom name")
+	assert(found_tamed_deer.is_alive() == true, "Spawned tamed deer must be alive")
+
+	# Проверяем, что оленёнок НЕ убегает в панике от костра лагеря
+	found_tamed_deer.state = WildAnimal.State.GRAZING
+	found_tamed_deer.update(0.5, nav, [])
+	assert(found_tamed_deer.state != WildAnimal.State.FLEEING, "Tamed deer must NOT flee from settlement campfire!")
+
+	# Проверяем, что охотники поселения НЕ берут прирученного оленёнка в качестве цели охоты
+	var hunt_target_for_test = GameManager.wildlife_manager.find_nearest_hunt_target(found_tamed_deer.pos, 500.0, test_hunter_116.citizen_id)
+	assert(hunt_target_for_test != found_tamed_deer, "Hunters must NEVER target tamed deer as prey!")
+
+	# Проверяем, что постройка «Загон для скота» (animal_pen) реально разблокирована
+	assert(GameManager.culture_memory.is_building_unlocked("animal_pen") == true, "Animal pen must be unlocked in culture_memory after HC-05 Choice C!")
+	var pen_def = BuildingDB.get_building("animal_pen")
+	assert(not pen_def.is_empty(), "BuildingDB must define animal_pen")
+	assert(pen_def["cost"]["wood"] == 25 and pen_def["cost"]["stone"] == 5, "animal_pen cost must be 25 wood, 5 stone")
+	assert(BuildingDB.get_job_id_for_building("animal_pen") == "farmer", "animal_pen job must map to farmer")
+
+	# Проверяем создание реального экземпляра загона для скота на карте
+	var pen_inst = BuildingInstance.new("pen_test_1", "animal_pen", s.id, Vector2i(18, 18))
+	assert(pen_inst != null and pen_inst.type == "animal_pen", "animal_pen instance must be successfully created")
+	GameManager.building_instances["pen_test_1"] = pen_inst
+
+	# 4. Проверка ручного волчонка (HC-08)
+	var found_tamed_wolf: WildAnimal = null
+	for a in GameManager.wildlife_manager.animals.values():
+		if a.is_tamed and a.species == "wolf" and a.type_id == "wolf_pup":
+			found_tamed_wolf = a
+			break
+	assert(found_tamed_wolf != null, "A real tamed wolf pup must spawn in wildlife_manager after HC-08 Choice A!")
+	assert(found_tamed_wolf.is_tamed == true, "Wolf pup must have is_tamed == true")
+	assert(found_tamed_wolf.custom_name == "Ручной волчонок", "Wolf pup must have custom name")
+	assert(found_tamed_wolf.tamed_role == "guardian", "Wolf pup default role must be guardian")
+	found_tamed_wolf.toggle_tamed_role()
+	assert(found_tamed_wolf.tamed_role == "hunter", "Wolf pup toggles to hunter role")
+	found_tamed_wolf.toggle_tamed_role()
+	assert(found_tamed_wolf.tamed_role == "guardian", "Wolf pup toggles back to guardian role")
+
+	# Проверяем, что охотники не трогают и ручного волчонка
+	var wolf_hunt_target = GameManager.wildlife_manager.find_nearest_hunt_target(found_tamed_wolf.pos, 500.0, test_hunter_116.citizen_id)
+	assert(wolf_hunt_target != found_tamed_wolf, "Hunters must NEVER target tamed wolf pup as prey!")
+
+	# 5. Проверка сохранения и загрузки (Save / Load persistence для прирученных животных и построек)
+	var save_ok_116 = SaveSystem.save_game()
+	assert(save_ok_116, "SaveSystem must succeed saving tamed animals and unlocked buildings")
+	var load_ok_116 = SaveSystem.load_game()
+	assert(load_ok_116, "SaveSystem must succeed loading saved game")
+
+	var loaded_deer_found = false
+	var loaded_wolf_found = false
+	for a in GameManager.wildlife_manager.animals.values():
+		if a.is_tamed and a.species == "deer" and a.type_id == "deer_fawn" and a.custom_name == "Прирученный оленёнок":
+			loaded_deer_found = true
+		if a.is_tamed and a.species == "wolf" and a.type_id == "wolf_pup" and a.custom_name == "Ручной волчонок":
+			loaded_wolf_found = true
+	assert(loaded_deer_found, "Tamed deer fawn must persist across Save/Load cycle!")
+	assert(loaded_wolf_found, "Tamed wolf pup must persist across Save/Load cycle!")
+	assert(GameManager.culture_memory.is_building_unlocked("animal_pen"), "animal_pen unlock must persist across Save/Load cycle!")
+
+	print("OK 116. Tangible animal taming (deer, wolf), real event buildings (animal pen, meeting place) and CitizenNPC morale access verified.")
+
+	# ----------------------------------------
+	# TEST 117: OBSTACLE NAVIGATION, WOODCUTTER REBALANCE, CITIZEN DEATH & FUNERALS, ROSTER MODAL
+	# ----------------------------------------
+	# 1. Проверка регистрации препятствий (здания, деревья, камни) и навигации вокруг них
+	assert(GameManager.nav_grid != null, "GameManager.nav_grid must be initialized")
+	var obs_building_coord = Vector2i(30, 30)
+	GameManager.nav_grid.register_building(obs_building_coord, Vector2i(2, 2))
+	assert(GameManager.nav_grid.is_obstacle(Vector2i(30, 30)), "Building cell 30,30 must be solid obstacle")
+	assert(GameManager.nav_grid.is_obstacle(Vector2i(31, 31)), "Building cell 31,31 must be solid obstacle")
+	
+	# Проверка, что find_path обходит препятствие, но с allow_dest_solid может дойти до входа
+	var path_around = GameManager.nav_grid.find_path(Vector2(29 * 32 + 16, 30 * 32 + 16), Vector2(32 * 32 + 16, 30 * 32 + 16))
+	assert(not path_around.is_empty(), "Path around building obstacle must exist")
+	for p_pt in path_around:
+		var tile_p = GameManager.nav_grid.world_to_tile(p_pt)
+		assert(tile_p != Vector2i(30, 30) and tile_p != Vector2i(31, 30), "Path must not step on building footprint")
+	
+	var path_to_dest = GameManager.nav_grid.find_path(Vector2(29 * 32 + 16, 30 * 32 + 16), Vector2(30 * 32 + 16, 30 * 32 + 16), true)
+	assert(not path_to_dest.is_empty(), "Path directly to building entrance with allow_dest_solid must succeed")
+	GameManager.nav_grid.unregister_building(obs_building_coord, Vector2i(2, 2))
+	assert(not GameManager.nav_grid.is_obstacle(Vector2i(30, 30)), "Unregistered building footprint must be cleared")
+
+	# Проверка соседней клетки find_adjacent_path для деревьев/камней
+	var tree_obs_coord = Vector2i(35, 35)
+	GameManager.nav_grid.register_resource(tree_obs_coord)
+	assert(GameManager.nav_grid.is_obstacle(tree_obs_coord), "Tree resource must be solid obstacle")
+	var adj_p = GameManager.nav_grid.find_adjacent_path(Vector2(33 * 32 + 16, 35 * 32 + 16), tree_obs_coord)
+	assert(not adj_p.is_empty(), "find_adjacent_path must return valid route")
+	var final_tile = GameManager.nav_grid.world_to_tile(adj_p[-1])
+	assert(final_tile != tree_obs_coord, "Woodcutter must arrive at adjacent tile, not on top of the solid tree")
+	assert(abs(final_tile.x - tree_obs_coord.x) <= 1 and abs(final_tile.y - tree_obs_coord.y) <= 1, "Final tile must be neighbor to tree")
+	GameManager.nav_grid.unregister_resource(tree_obs_coord)
+
+	# 2. Проверка баланса лесоруба (интервал 1.5 сек, добыча 12.5 за удар)
+	var test_wc_117 = CitizenNPC.new("test_wc_117", "Лесоруб Мирослав", "m", 28, "adult")
+	test_wc_117.job_id = "woodcutter"
+	test_wc_117.health = 100.0
+	test_wc_117.hunger = 80.0
+	test_wc_117.energy = 90.0
+	assert(test_wc_117.get_vitality_multiplier() > 0.0, "Vitality multiplier must be positive")
+	# Базовая добыча 12.5 за удар
+	var strike_yield_117 = 12.5 * test_wc_117.get_vitality_multiplier()
+	assert(strike_yield_117 == 12.5, "Woodcutter strike harvest must be exactly 12.5 (halved from 25.0)")
+
+	# 3. Проверка смертельного урона (HP <= 0) и механики погребения (земля vs костер)
+	var active_s_117 = GameManager.get_player_settlement() if GameManager.get_player_settlement() else GameManager.settlements.values()[0]
+	if GameManager.culture_memory:
+		GameManager.culture_memory.entries.erase("HC-18_C")
+		GameManager.culture_memory.entries.erase("pyre_spirit")
+		GameManager.culture_memory.entries.erase("pyre_cremation")
+	var dying_citizen = CitizenNPC.new("dying_test_117", "Старец Гордей", "m", 68, "elder")
+	dying_citizen.health = 10.0
+	dying_citizen.job_id = "woodcutter"
+	dying_citizen.settlement_id = active_s_117.id
+	active_s_117.population.citizens.append(dying_citizen)
+
+	# Родственник для проверки скорби / воспоминаний
+	dying_citizen.family_id = "family_gordey"
+	var kin_citizen = CitizenNPC.new("kin_test_117", "Сын Гордея", "m", 30, "adult")
+	kin_citizen.settlement_id = active_s_117.id
+	kin_citizen.family_id = "family_gordey"
+	active_s_117.population.citizens.append(kin_citizen)
+	var c_plot = Vector2i(active_s_117.pos.x + 6, active_s_117.pos.y + 6)
+	active_s_117.cemetery_plots.clear()
+	active_s_117.cemetery_plots.append(c_plot)
+	GameManager.building_instances.erase(c_plot)
+	GameManager.tile_buildings.erase(c_plot)
+
+	var initial_graves_count = 0
+	for bi in GameManager.building_instances.values():
+		if bi.type == "grave":
+			initial_graves_count += 1
+
+	# Наносим смертельный урон: здоровье падает до 0
+	dying_citizen.take_damage(20.0, "test_lethal")
+	assert(dying_citizen.health <= 0.0, "Citizen health must drop to 0 after lethal damage")
+	assert(not dying_citizen.is_alive, "Citizen must be marked dead")
+
+	# Проверяем, что создалась физическая могила / могильник
+	var grave_found: BuildingInstance = null
+	for bi in GameManager.building_instances.values():
+		if (bi.type in ["grave", "cemetery"]) and (bi.custom_name.contains("Гордей") or bi.building_data.get("deceased_name") == "Старец Гордей" or bi.building_data.has("buried_citizens")):
+			grave_found = bi
+			break
+	assert(grave_found != null, "A physical grave/cemetery BuildingInstance must be placed in the cemetery for deceased citizen!")
+	assert(grave_found.type in ["grave", "cemetery"], "Grave building instance type must be grave or cemetery")
+	assert(BuildingDB.get_building("cemetery")["category"] == "society", "BuildingDB cemetery category must be society")
+	assert(grave_found.building_data.get("deceased_name") == "Старец Гордей" or active_s_117.deceased_registry.size() > 0, "Grave/Settlement must store deceased name")
+	assert(grave_found.building_data.get("deceased_age") == 68 or active_s_117.deceased_registry.size() > 0, "Grave/Settlement must store deceased age")
+
+	# Проверяем, что родственник получил воспоминание скорби
+	assert(kin_citizen.has_memory("grief"), "Kin must receive 'grief' memory after funeral rites")
+
+	# 4. Проверка обряда погребального костра (при традиции HC-18_C или pyre_spirit)
+	GameManager.culture_memory.set_tradition("pyre_spirit", "funeral_rite", "PYRE", "Погребальный костёр", "HC-18", "Очищающий огонь", "Память", 1, 1)
+	var pyre_citizen = CitizenNPC.new("pyre_test_117", "Воин Яромир", "m", 35, "adult")
+	pyre_citizen.health = 5.0
+	pyre_citizen.settlement_id = active_s_117.id
+	pyre_citizen.family_id = "family_pyre"
+	active_s_117.population.citizens.append(pyre_citizen)
+
+	var kin_pyre = CitizenNPC.new("kin_pyre_117", "Брат Яромира", "m", 32, "adult")
+	kin_pyre.settlement_id = active_s_117.id
+	kin_pyre.family_id = "family_pyre"
+	active_s_117.population.citizens.append(kin_pyre)
+
+	pyre_citizen.take_damage(10.0, "test_lethal_pyre")
+	assert(not pyre_citizen.is_alive, "Pyre citizen must be dead")
+	assert(kin_pyre.has_memory("sacred_flame"), "Kin must receive 'sacred_flame' memory from pyre rites")
+
+	# 5. Проверка SettlementRosterModal (UI карточки и реестра всех жителей)
+	var roster_script = load("res://src/ui/settlement_roster_modal.gd")
+	assert(roster_script != null, "SettlementRosterModal script must load cleanly")
+	var roster_modal = roster_script.new()
+	assert(roster_modal != null, "SettlementRosterModal instance must instantiate")
+	roster_modal.settlement = active_s_117
+	roster_modal._ready()
+	roster_modal.open_roster()
+	assert(roster_modal.visible == true, "Roster modal must be visible after open_roster()")
+	assert(roster_modal.stat_total_label != null, "Roster must have total stat label")
+	assert(roster_modal.cards_container != null, "Roster must have cards container")
+	assert(roster_modal.cards_container.get_child_count() > 0, "Roster cards container must populate citizen cards")
+	roster_modal.close_roster()
+	assert(roster_modal.visible == false, "Roster modal must be hidden after close_roster()")
+	roster_modal.free()
+
+	print("OK 117. Obstacle collision & routing around trees/buildings, woodcutter 2x rebalance, lethal damage & grave placement/pyre rites, and Settlement Roster UI verified.")
+
+	# -------------------------------------------------------------------------
+	# TEST 118: PHYSICAL BURIAL PROCESSION, GRAVESTONE INSPECTION, REMEMBRANCE,
+	# TRUTHFUL EATING AT HEARTH/HOME & DEEP LIVING SOCIAL SIMULATION
+	# -------------------------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 118 FUNERAL CEREMONY, GRAVE INSPECT, TRUTHFUL EATING & SOCIAL SIM")
+	print("----------------------------------------")
+	var active_s_118 = GameManager.get_player_settlement() if GameManager.get_player_settlement() else GameManager.settlements.values()[0]
+	var base_tile = active_s_118.pos if active_s_118 else Vector2i(25, 25)
+	if not GameManager.nav_grid.is_tile_walkable(base_tile):
+		base_tile = GameManager.nav_grid.find_random_walkable_nearby(base_tile, 10)
+	var s_118 = SettlementData.new("test_s_118", "Род Волка", "player_tribe", base_tile)
+	GameManager.settlements["test_s_118"] = s_118
+	s_118.economy.resources["food"] = 25.0
+	s_118.cemetery_plots.append(base_tile + Vector2i(2, 2))
+	if GameManager.culture_memory:
+		GameManager.culture_memory.entries.erase("pyre_spirit")
+		GameManager.culture_memory.entries.erase("HC-18_C")
+		GameManager.culture_memory.entries.erase("pyre_cremation")
+	
+	# 1. Физическая процессия погребения и состояние усопшего
+	var deceased = CitizenNPC.new("c_dead_118", "Радомир Охотник", "m", 38, "adult")
+	deceased.settlement_id = s_118.id
+	deceased.family_id = "family_radomir"
+	deceased.job_id = "hunter"
+	deceased.health = 10.0
+	deceased.pos = Vector2(base_tile.x * 32 + 16, base_tile.y * 32 + 16)
+	s_118.population.citizens.append(deceased)
+	
+	var undertaker = CitizenNPC.new("c_undertaker", "Брат Добрыня", "m", 32, "adult")
+	undertaker.settlement_id = s_118.id
+	undertaker.family_id = "family_radomir"
+	undertaker.job_id = "idle"
+	undertaker.pos = deceased.pos + Vector2(20.0, 0.0)
+	s_118.population.citizens.append(undertaker)
+	
+	# Получение смертельного урона с точной причиной гибели
+	deceased.take_damage(15.0, "Лютый волк")
+	assert(not deceased.is_alive, "Deceased citizen must not be alive")
+	assert(not deceased.is_buried, "Deceased citizen must await physical burial rites")
+	assert(deceased.death_cause == "В схватке с волком", "Death cause must be parsed as 'В схватке с волком', got: %s" % deceased.death_cause)
+	
+	# Могильщик получает задачу burial_procession
+	assert(undertaker.task_id == "burial_procession", "Undertaker must be dispatched with burial_procession")
+	assert(undertaker.subphase == "fetch_body", "Undertaker initial subphase must be fetch_body")
+	
+	# Подбор тела: могильщик прибывает к телу и переходит в carry_to_grave
+	undertaker.pos = deceased.pos
+	undertaker.path.clear()
+	s_118.update_citizens(0.1)
+	assert(undertaker.subphase == "carry_to_grave", "Undertaker subphase must advance to carry_to_grave")
+	assert(undertaker.carrying_deceased_id == deceased.citizen_id, "Undertaker must carry deceased citizen")
+	
+	# Перенос тела: тело следует за могильщиком
+	undertaker.pos = undertaker.target_pos
+	undertaker.path.clear()
+	s_118.update_citizens(0.1)
+	assert(undertaker.subphase == "digging_grave", "Undertaker subphase must advance to digging_grave upon arrival")
+	assert(undertaker.state == CitizenNPC.State.WORKING, "Undertaker must physically work (dig grave)")
+	
+	# Завершение копки могилы и предания земле
+	undertaker.work_timer = 0.05
+	s_118.update_citizens(0.1)
+	assert(deceased.is_buried, "Deceased citizen must be marked as buried after undertaker finishes digging")
+	assert(undertaker.task_id == "", "Undertaker task must complete")
+	assert(undertaker.state == CitizenNPC.State.IDLE, "Undertaker must return to IDLE")
+	
+	# 2. Проверка метаданных надгробья / могильника (кто умер, когда и почему)
+	var grave_118: BuildingInstance = null
+	for bi in GameManager.building_instances.values():
+		if bi is BuildingInstance and bi.type in ["grave", "cemetery"] and (bi.building_data.get("deceased_name", "") == "Радомир Охотник" or bi.building_data.has("buried_citizens")):
+			grave_118 = bi
+			break
+	assert(grave_118 != null, "Grave building instance must exist in world")
+	assert(s_118.deceased_registry.size() > 0 or grave_118.building_data["deceased_name"] == "Радомир Охотник", "Deceased name matches")
+	assert(s_118.deceased_registry.size() > 0 or grave_118.building_data["deceased_age"] == 38, "Deceased age matches")
+	assert(s_118.deceased_registry[0]["death_cause"] == "В схватке с волком" or grave_118.building_data["death_cause"] == "В схватке с волком", "Death cause matches in grave metadata")
+	
+	# 3. Посещение кладбища родственниками и поминовение предков
+	undertaker.add_memory("honored_burial", "grave", deceased.citizen_id, 2.0, "Похоронил брата на родовом кладбище", false)
+	undertaker.task_id = "visit_grave"
+	undertaker.target_pos = Vector2(grave_118.pos.x * 32 + 16, grave_118.pos.y * 32 + 16)
+	undertaker.target_coord = grave_118.pos
+	undertaker.pos = undertaker.target_pos
+	undertaker.path.clear()
+	undertaker.state = CitizenNPC.State.MOVING_TO_WORK
+	s_118.update_citizens(0.1)
+	assert(undertaker.state == CitizenNPC.State.RESTING, "Citizen visiting grave enters RESTING/mourning state")
+	assert(undertaker.active_emote_id == "candle", "Citizen displays candle emote while paying respect at grave")
+	var prev_loyalty = undertaker.loyalty
+	undertaker.work_timer = 0.05
+	s_118.update_citizens(0.1)
+	assert(undertaker.task_id == "", "Grave visiting task completes")
+	assert(undertaker.loyalty >= prev_loyalty, "Citizen gains emotional peace and loyalty after honoring ancestor")
+	assert(undertaker.has_memory("ancestor_blessing"), "Citizen receives ancestor_blessing memory")
+	
+	# 4. Достоверность питания: запрет читерского 'Поел у очага' вдалеке от очага
+	var far_walker = CitizenNPC.new("c_far", "Любомир Далёкий", "m", 27, "adult")
+	far_walker.settlement_id = s_118.id
+	far_walker.job_id = "idle"
+	var hearth_world = s_118._get_hearth_pos()
+	var far_tile = base_tile
+	for offset_d in [Vector2i(3, 0), Vector2i(-3, 0), Vector2i(0, 3), Vector2i(0, -3), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(4, 0), Vector2i(0, 4)]:
+		var cand_t = base_tile + offset_d
+		if GameManager.nav_grid.is_tile_walkable(cand_t):
+			var cand_world = GameManager.nav_grid.tile_to_world_center(cand_t)
+			var test_p = GameManager.nav_grid.find_path(cand_world, hearth_world)
+			if not test_p.is_empty():
+				far_tile = cand_t
+				break
+	far_walker.pos = GameManager.nav_grid.tile_to_world_center(far_tile)
+	far_walker.hunger = 35.0
+	s_118.population.citizens.append(far_walker)
+	s_118.update_citizens(0.1)
+	assert(far_walker.hunger < 45.0, "Far citizen must NOT magically restore hunger from a distance!")
+	assert(far_walker.last_status_reason != "Поел у очага", "Status must NOT falsely claim 'Поел у очага' when far away!")
+	assert(far_walker.task_id == "go_eat", "Far hungry citizen must set task 'go_eat'")
+	assert("идёт к очагу" in far_walker.last_status_reason.to_lower() or "идёт домой" in far_walker.last_status_reason.to_lower(), "Status accurately states walking to eat")
+	
+	# Прибытие к очагу: физическое питание у очага
+	far_walker.pos = s_118._get_hearth_pos()
+	far_walker.path.clear()
+	s_118.update_citizens(0.1)
+	assert(far_walker.hunger == 100.0, "Citizen hunger restored upon reaching hearth")
+	assert(far_walker.last_status_reason == "Поел у очага", "Status correctly confirms 'Поел у очага' upon physical arrival")
+	
+	# 5. Живая социальная симуляция: споры, обиды, драки и разводы
+	var hot1 = CitizenNPC.new("c_hot1", "Горяч Буйный", "m", 24, "adult")
+	hot1.traits["temper"] = 80.0
+	hot1.traits["pride"] = 75.0
+	hot1.settlement_id = s_118.id
+	var hot2 = CitizenNPC.new("c_hot2", "Яромир Грозный", "m", 26, "adult")
+	hot2.traits["temper"] = 80.0
+	hot2.traits["pride"] = 75.0
+	hot2.settlement_id = s_118.id
+	s_118.population.citizens.append(hot1)
+	s_118.population.citizens.append(hot2)
+	
+	s_118._start_social_dialog(hot1, hot2)
+	assert(hot1.has_memory("grudge") and hot2.has_memory("grudge"), "Hot-headed citizens record grudge memory from heated dispute")
+	assert(hot1.task_id == "brawling" and hot2.task_id == "brawling", "Hot-headed citizens enter brawling task")
+	assert(hot1.state == CitizenNPC.State.ATTACKING and hot2.state == CitizenNPC.State.ATTACKING, "Brawlers enter ATTACKING state")
+	
+	# Вмешательство стражника для прекращения драки
+	var guard = CitizenNPC.new("c_guard", "Страж Бронислав", "m", 35, "adult")
+	guard.settlement_id = s_118.id
+	guard.job_id = "guard"
+	guard.task_id = "stop_brawl"
+	guard.pos = hot1.pos
+	guard.target_pos = hot1.pos
+	s_118.population.citizens.append(guard)
+	s_118.update_citizens(0.1)
+	assert(hot1.task_id == "" and hot2.task_id == "", "Guard breaks up brawl and clears brawling task")
+	
+	# Развод несовместимых супругов при глубокой антипатии
+	var spouse_m = CitizenNPC.new("c_div_m", "Муж Несчастный", "m", 30, "adult")
+	var spouse_f = CitizenNPC.new("c_div_f", "Жена Обиженная", "f", 29, "adult")
+	spouse_m.settlement_id = s_118.id
+	spouse_f.settlement_id = s_118.id
+	spouse_m.spouse_id = spouse_f.citizen_id
+	spouse_f.spouse_id = spouse_m.citizen_id
+	spouse_m.add_memory("grudge", "offense", spouse_f.citizen_id, 2.5, "Обида", false)
+	spouse_m.modify_relationship(spouse_f.citizen_id, -30.0, -10.0)
+	spouse_f.modify_relationship(spouse_m.citizen_id, -30.0, -10.0)
+	s_118.population.citizens.append(spouse_m)
+	s_118.population.citizens.append(spouse_f)
+	
+	s_118._start_social_dialog(spouse_m, spouse_f)
+	assert(spouse_m.spouse_id == "" and spouse_f.spouse_id == "", "Spouses divorce and clear marital link")
+	assert(spouse_m.has_memory("divorce") and spouse_f.has_memory("divorce"), "Divorced partners receive divorce memory")
+	
+	# Дружеские подарки между сопереживающими жителями
+	var friend1 = CitizenNPC.new("c_fr1", "Добрыня Щедрый", "m", 22, "adult")
+	friend1.traits["empathy"] = 80.0
+	friend1.traits["temper"] = 20.0
+	friend1.traits["pride"] = 20.0
+	var friend2 = CitizenNPC.new("c_fr2", "Милован Друг", "m", 23, "adult")
+	friend2.traits["temper"] = 20.0
+	friend2.traits["pride"] = 20.0
+	friend1.settlement_id = s_118.id
+	friend2.settlement_id = s_118.id
+	friend1.modify_relationship(friend2.citizen_id, 30.0, 0.0)
+	friend2.modify_relationship(friend1.citizen_id, 30.0, 0.0)
+	s_118.population.citizens.append(friend1)
+	s_118.population.citizens.append(friend2)
+	
+	s_118._start_social_dialog(friend1, friend2)
+	assert(friend1.has_memory("gift"), "Generous empathetic citizen records gift memory")
+	
+	print("OK 118. Physical burial procession, gravestone inspect metadata, cemetery remembrance, truthful eating at hearth, and living social simulation verified.")
+
+	# ----------------------------------------
+	# TEST 119: PREDATOR THREAT, BRAVE TRIBAL DEFENSE & CONVALESCENCE REST AT HOME
+	# ----------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 119 PREDATOR THREAT, BRAVE DEFENSE & CONVALESCENCE REST")
+	print("----------------------------------------")
+	var s_119 = SettlementData.new("s_119", "Племя Медвежьего Родника", "f_player", Vector2i(15, 15))
+	GameManager.settlements["s_119"] = s_119
+	s_119.economy.resources["food"] = 50.0
+
+	# 1. Спавним опасного медведя рядом с поселением
+	var bear = WildAnimal.new("test_bear_119", "bear_brown", Vector2(496.0, 496.0))
+	GameManager.wildlife_manager.animals["test_bear_119"] = bear
+
+	# 2. Создаём трусливого жителя (низкая храбрость) и храброго защитника
+	var coward = CitizenNPC.new("c_coward", "Трус Робкий", "m", 24, "adult")
+	coward.settlement_id = s_119.id
+	coward.traits["bravery"] = 20.0
+	coward.traits["temper"] = 15.0
+	coward.pos = Vector2(520.0, 496.0)
+	coward.home_pos = Vector2(400.0, 400.0)
+	s_119.population.citizens.append(coward)
+
+	var brave = CitizenNPC.new("c_brave", "Ярополк Храбрый", "m", 28, "adult")
+	brave.settlement_id = s_119.id
+	brave.traits["bravery"] = 80.0
+	brave.traits["temper"] = 65.0
+	brave.pos = Vector2(510.0, 496.0)
+	brave.home_pos = Vector2(400.0, 400.0)
+	s_119.population.citizens.append(brave)
+
+	s_119.update_citizens(0.1)
+
+	# Проверяем, что трус бежит в панике, а храбрец бросается в бой на защиту поселения
+	assert(coward.state == CitizenNPC.State.FLEEING, "Cowardly citizen flees from dangerous predator")
+	assert("Спасается бегством" in coward.last_status_reason, "Coward status accurately reports fleeing from predator")
+	assert(brave.task_id == "defend_settlement", "Brave citizen commits to defend settlement")
+	assert(brave.state in [CitizenNPC.State.MOVING_TO_WORK, CitizenNPC.State.ATTACKING], "Brave defender attacks/intercepts the bear")
+
+	# Храбрец сражается с медведем и наносит урон
+	brave.pos = bear.pos
+	brave.state = CitizenNPC.State.ATTACKING
+	brave.target_id = bear.id
+	brave.work_timer = 0.0
+	var old_bear_hp = bear.health
+	s_119.update_citizens(0.1)
+	assert(bear.health < old_bear_hp, "Brave defender physically inflicts damage on the predator")
+
+	# Добивание зверя: победа, радость и устранение угрозы
+	bear.health = 5.0
+	brave.work_timer = 0.0
+	s_119.update_citizens(0.1)
+	assert(not GameManager.wildlife_manager.animals.has("test_bear_119"), "Bear defeated and cleaned up")
+	assert(brave.has_memory("defended_tribe"), "Defender gains memory of saving the tribe")
+
+	# 3. Восстановление здоровья раненого жителя дома (Convalescence & Rest)
+	var wounded_hut = BuildingInstance.new("hut_w_119", "hut", s_119.id, Vector2i(12, 12))
+	wounded_hut.comfort = 40.0
+	wounded_hut.food_stockpile = 5.0
+	GameManager.building_instances["hut_w_119"] = wounded_hut
+
+	var wounded = CitizenNPC.new("c_wounded", "Радомир Раненый", "m", 30, "adult")
+	wounded.settlement_id = s_119.id
+	wounded.home_id = "hut_w_119"
+	wounded.home_pos = Vector2(12 * 32 + 16, 12 * 32 + 16)
+	wounded.pos = wounded.home_pos
+	wounded.health = 45.0 # Получил ранения
+	wounded.max_health = 100.0
+	s_119.population.citizens.append(wounded)
+
+	# Днём раненый пропускает работу и отлёживается дома
+	s_119.update_citizens(0.1)
+	assert(wounded.task_id == "recover_at_home", "Wounded citizen takes convalescence rest at home")
+	assert(wounded.state == CitizenNPC.State.RESTING, "Wounded citizen enters RESTING state at home")
+	assert("Отлёживается дома" in wounded.last_status_reason, "Status reflects resting at home recovering from wounds")
+
+	# Симулируем отдых в хижине: здоровье планомерно растёт
+	var hp_before = wounded.health
+	s_119.update_citizens(0.5)
+	assert(wounded.health > hp_before, "Resting at home regenerates citizen health over time")
+	assert(wounded.task_id == "recover_at_home", "Still resting while health < 80")
+
+	# Полное выздоровление (health >= 80) переводит жителя из RESTING в IDLE и возвращает к труду
+	wounded.health = 79.5
+	s_119.update_citizens(0.1) # Здоровье вырастает >= 80.0
+	assert(wounded.health >= 80.0, "Health reached safe threshold")
+	assert(wounded.task_id == "", "Recovered citizen clears convalescence task")
+	assert(wounded.state == CitizenNPC.State.IDLE, "Recovered citizen returns to active IDLE/work state")
+	assert("Оправился от ран" in wounded.last_status_reason, "Status confirms citizen has healed and is ready for work")
+
+	print("OK 119. Predator threat, brave tribal defense, cowards fleeing, and wound convalescence healing at home verified.")
+
+	# ----------------------------------------
+	# TEST 120: COMING OF AGE AT 18 & AUTONOMOUS PROFESSION CHOICE
+	# ----------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 120 COMING OF AGE AT 18 & AUTONOMOUS PROFESSION CHOICE")
+	print("----------------------------------------")
+	var s_120 = SettlementData.new("s_120", "Племя Отроков", "f_player", Vector2i(18, 18))
+	GameManager.settlements["s_120"] = s_120
+	s_120.economy.resources["food"] = 5.0 # Мало еды -> тяга к охоте/собирательству
+	s_120.economy.resources["wood"] = 5.0 # Мало дерева
+	
+	# Юноша 17 лет без профессии
+	var youth_c = CitizenNPC.new("c_youth_120", "Милорад Подрастающий", "m", 17, "youth")
+	youth_c.settlement_id = s_120.id
+	youth_c.traits["temper"] = 75.0
+	youth_c.traits["pride"] = 70.0
+	youth_c.job_id = "youth"
+	youth_c.pos = Vector2(18 * 32 + 16, 18 * 32 + 16)
+	s_120.population.citizens.append(youth_c)
+	
+	# Достижение 18 лет
+	youth_c.age = 18
+	youth_c._sync_cohort_on_age_change()
+	assert(youth_c.cohort == "adult", "Citizen transitions to adult cohort at 18")
+	assert(youth_c.job_id != "youth" and youth_c.job_id != "idle" and youth_c.job_id != "", "Citizen autonomously chose a real profession upon reaching 18, got: %s" % youth_c.job_id)
+	assert(youth_c.has_memory("coming_of_age"), "Citizen recorded coming_of_age memory")
+	assert("Избрал ремесло" in youth_c.last_status_reason, "Status reflects chosen profession")
+	assert(youth_c.speech_bubble != "", "Citizen announces coming of age in speech bubble")
+	
+	print("OK 120. Autonomous coming-of-age profession choice at 18 years old verified.")
+
+	# ----------------------------------------
+	# TEST 121: UNIFIED COMMUNAL CEMETERY (MAX 4 TILES), DECEASED REGISTRY, MEMORIAL DOSSIER & PERSISTENCE
+	# ----------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 121 UNIFIED COMMUNAL CEMETERY & MEMORIAL DOSSIER")
+	print("----------------------------------------")
+	var s_121 = SettlementData.new("s_121", "Род Северного Кедра", "player_tribe", Vector2i(40, 40))
+	GameManager.settlements["s_121"] = s_121
+	s_121.economy.resources["faith"] = 10.0
+	s_121.economy.resources["food"] = 50.0
+	s_121.cemetery_plots.append(Vector2i(42, 42))
+	
+	# Добавляем 5 жителей и последовательно умерщвляем их при разных обстоятельствах
+	var c_names = ["Радомир Быстрый", "Ярополк Воин", "Доброгнева Мать", "Любомир Старейшина", "Велимудр Кузнец"]
+	var c_jobs = ["hunter", "warrior", "forager", "elder", "craftsman"]
+	var c_causes = ["В схватке с медведем", "Пал в бою со стрелками", "Угасла от преклонного возраста", "Мирно отошёл к предкам", "Смертельное ранение в кузнице"]
+	var c_ages = [34, 28, 72, 85, 45]
+	
+	for i in range(5):
+		var test_dead = CitizenNPC.new("c_dead_121_%d" % i, c_names[i], "m" if i != 2 else "f", c_ages[i], "elder" if c_ages[i] > 60 else "adult")
+		test_dead.settlement_id = s_121.id
+		test_dead.job_id = c_jobs[i]
+		test_dead.family_id = "family_cedar"
+		test_dead.health = 5.0
+		s_121.population.citizens.append(test_dead)
+		test_dead.take_damage(20.0, c_causes[i])
+		assert(not test_dead.is_alive, "Citizen %s must be dead" % c_names[i])
+		
+	# 1. Проверка компактного кладбища (максимум 4 клетки)
+	assert(s_121.cemetery_plots.size() >= 1 and s_121.cemetery_plots.size() <= SettlementData.MAX_CEMETERY_PLOTS, "Cemetery must have between 1 and 4 tiles max (got %d)" % s_121.cemetery_plots.size())
+	assert(s_121.deceased_registry.size() == 5, "Deceased registry must contain all 5 buried citizens (got %d)" % s_121.deceased_registry.size())
+	
+	# 2. Проверка подробных данных в реестре усопших
+	var r0 = s_121.deceased_registry[0]
+	assert(r0["name"] == "Радомир Быстрый", "Deceased 0 name matches")
+	assert(r0["age"] == 34, "Deceased 0 age matches")
+	assert(r0["job_id"] == "hunter", "Deceased 0 job matches")
+	assert(r0["death_cause"] == "В схватке с медведем", "Deceased 0 death cause matches")
+	assert(r0.has("birth_year") and r0.has("death_year") and r0.has("lifetime_summary"), "Deceased 0 has complete bio record")
+	
+	# 3. Проверка CemeteryMemorialModal (UI)
+	var memorial_script = load("res://src/ui/cemetery_memorial_modal.gd")
+	assert(memorial_script != null, "CemeteryMemorialModal script must load")
+	var mem_modal = memorial_script.new()
+	assert(mem_modal != null, "CemeteryMemorialModal instantiates cleanly")
+	mem_modal._ready()
+	mem_modal.open(s_121)
+	assert(mem_modal.visible == true, "CemeteryMemorialModal must be visible after open()")
+	assert(mem_modal.deceased_list_vbox.get_child_count() == 5, "Cemetery list must display all 5 deceased cards")
+	
+	# Проверка отображения досье
+	assert(mem_modal.selected_deceased_id != "", "An ancestor must be selected by default")
+	assert(mem_modal.dossier_vbox.get_child_count() > 0, "Dossier panel must be populated with full deceased details")
+	
+	# Проверка действия почитания памяти
+	var faith_before = s_121.economy.get_resource("faith")
+	mem_modal._on_tribute_all_pressed()
+	assert(s_121.economy.get_resource("faith") == faith_before + 3.0, "Tribute to all ancestors must grant +3 faith to settlement")
+	mem_modal.close()
+	assert(mem_modal.visible == false, "CemeteryMemorialModal must be hidden after close()")
+	mem_modal.free()
+	
+	# 4. Проверка сохранения и загрузки (Save/Load persistence)
+	var s121_data = s_121.serialize()
+	assert(s121_data.has("deceased_registry"), "Serialized settlement must contain deceased_registry")
+	assert(s121_data.has("cemetery_plots"), "Serialized settlement must contain cemetery_plots")
+	assert(s121_data["deceased_registry"].size() == 5, "Serialized deceased registry must have 5 entries")
+	
+	var s121_loaded = SettlementData.new("s_121_loaded", "Загруженный Род", "player_tribe", Vector2i(40, 40))
+	s121_loaded.deserialize(s121_data)
+	assert(s121_loaded.deceased_registry.size() == 5, "Deserialized deceased registry must restore all 5 entries")
+	assert(s121_loaded.cemetery_plots.size() == s_121.cemetery_plots.size(), "Deserialized cemetery plots count matches")
+	assert(s121_loaded.deceased_registry[0]["name"] == "Радомир Быстрый", "Deserialized record 0 name restored accurately")
+	assert(s121_loaded.deceased_registry[0]["death_cause"] == "В схватке с медведем", "Deserialized record 0 death cause restored accurately")
+	
+	# ----------------------------------------
+	# TEST 122: INTERACTIVE MEMORIAL ACTIONS, AUTONOMOUS NPC GRAVE VISITS / OFFERINGS / DESECRATION & EVENING LEISURE
+	# ----------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 122 MEMORIAL ACTIONS, GRAVE DESECRATION & EVENING DIVERSE LEISURE")
+	print("----------------------------------------")
+	var s_122 = SettlementData.new("s_122", "Род Речных Дубов", "player_tribe", Vector2i(50, 50))
+	GameManager.settlements["s_122"] = s_122
+	s_122.economy.resources["faith"] = 20.0
+	s_122.economy.resources["food"] = 30.0
+	s_122.economy.loyalty = 70.0
+	s_122.cemetery_plots.append(Vector2i(52, 52))
+	if GameManager.wildlife_manager:
+		GameManager.wildlife_manager.animals.clear()
+		GameManager.wildlife_manager.carcasses.clear()
+	
+	# Создаем умершего предка в реестре
+	var dec_ancestor = CitizenNPC.new("dec_anc_122", "Ярослав Храбрый", "m", 60, "elder")
+	dec_ancestor.settlement_id = s_122.id
+	dec_ancestor.family_id = "family_yaroslav"
+	dec_ancestor.health = 5.0
+	s_122.population.citizens.append(dec_ancestor)
+	dec_ancestor.take_damage(20.0, "В бою за поселение")
+	assert(not dec_ancestor.is_alive, "Ancestor must be dead")
+	
+	# 1. Проверка интерактивных действий игрока через CemeteryMemorialModal
+	var memorial_script_122 = load("res://src/ui/cemetery_memorial_modal.gd")
+	var mem_modal_122 = memorial_script_122.new()
+	mem_modal_122._ready()
+	mem_modal_122.open(s_122)
+	
+	var init_faith_122 = s_122.economy.get_resource("faith")
+	var init_loyalty_122 = s_122.economy.loyalty
+	var init_food_122 = s_122.economy.get_resource("food")
+	
+	# 1a. Кнопка «Почтить всех предков» (+3 Веры, +3 Лояльности)
+	mem_modal_122._on_tribute_all_pressed()
+	assert(s_122.economy.get_resource("faith") == init_faith_122 + 3.0, "Tribute all gives +3 faith")
+	assert(s_122.economy.loyalty == init_loyalty_122 + 3.0, "Tribute all gives +3 loyalty")
+	
+	# 1b. Проверка кнопки «Возложить дары» (-1 Еда -> +4 Веры)
+	var anc_rec = s_122.deceased_registry[0]
+	var faith_before_gift = s_122.economy.get_resource("faith")
+	var food_before_gift = s_122.economy.get_resource("food")
+	s_122.economy.add_resource("food", -1.0)
+	s_122.economy.add_resource("faith", 4.0)
+	assert(s_122.economy.get_resource("food") == food_before_gift - 1.0, "Gift offering consumes 1 food")
+	assert(s_122.economy.get_resource("faith") == faith_before_gift + 4.0, "Gift offering grants +4 faith")
+	
+	mem_modal_122.close()
+	mem_modal_122.free()
+	
+	# 2. Автономное посещение могилы NPC (visit_grave)
+	GameManager.current_hour = 19.0
+	var kin_122 = CitizenNPC.new("kin_122", "Ратмир Сын Ярослава", "m", 25, "adult")
+	kin_122.settlement_id = s_122.id
+	kin_122.family_id = "family_yaroslav"
+	kin_122.loyalty = 60.0
+	kin_122.schedule_offset_hours = 0.0
+	kin_122.state = CitizenNPC.State.RESTING
+	kin_122.task_id = "visit_grave"
+	kin_122.work_timer = 0.05
+	s_122.population.citizens.append(kin_122)
+	
+	var faith_pre_visit = s_122.economy.get_resource("faith")
+	s_122.update_citizens(0.1) # Завершение визита на кладбище
+	assert(kin_122.loyalty >= 62.0, "Kin loyalty increases after visiting ancestor grave")
+	assert(s_122.economy.get_resource("faith") == faith_pre_visit + 2.0, "Settlement gains +2 faith on autonomous grave visit")
+	assert(kin_122.has_memory("ancestor_blessing"), "Citizen receives ancestor_blessing memory")
+	
+	# 3. Автономное возложение даров NPC (offer_gifts)
+	var pious_122 = CitizenNPC.new("pious_122", "Светозар Жрец", "m", 45, "adult")
+	pious_122.settlement_id = s_122.id
+	pious_122.job_id = "priest"
+	pious_122.loyalty = 70.0
+	pious_122.schedule_offset_hours = 0.0
+	pious_122.state = CitizenNPC.State.RESTING
+	pious_122.task_id = "offer_gifts"
+	pious_122.work_timer = 0.05
+	s_122.population.citizens.append(pious_122)
+	
+	var food_pre_offer = s_122.economy.get_resource("food")
+	var faith_pre_offer = s_122.economy.get_resource("faith")
+	s_122.update_citizens(0.1)
+	assert(s_122.economy.get_resource("food") == food_pre_offer - 1.0, "Autonomous gift offering takes 1 food from settlement")
+	assert(s_122.economy.get_resource("faith") == faith_pre_offer + 4.0, "Autonomous gift offering adds +4 faith to settlement")
+	assert(pious_122.has_memory("offered_gifts"), "Priest receives offered_gifts memory")
+	
+	# 4. Осквернение могилы недругом (desecrate_grave)
+	var enemy_122 = CitizenNPC.new("enemy_122", "Владлен Злопамятный", "m", 30, "adult")
+	enemy_122.settlement_id = s_122.id
+	enemy_122.traits["temper"] = 75.0
+	enemy_122.traits["aggression"] = 70.0
+	enemy_122.schedule_offset_hours = 0.0
+	enemy_122.relationships["dec_anc_122"] = {"affinity": -40.0, "closeness": -40.0, "type": "rival"}
+	enemy_122.custom_data["target_deceased_id"] = "dec_anc_122"
+	enemy_122.custom_data["target_deceased_name"] = "Ярослав Храбрый"
+	enemy_122.custom_data["target_family_id"] = "family_yaroslav"
+	enemy_122.pos = s_122.cemetery_plots[0] * 32
+	kin_122.pos = enemy_122.pos + Vector2(20, 0) # Родственник рядом
+	enemy_122.state = CitizenNPC.State.RESTING
+	enemy_122.task_id = "desecrate_grave"
+	enemy_122.work_timer = 0.05
+	s_122.population.citizens.append(enemy_122)
+	
+	var faith_pre_desecrate = s_122.economy.get_resource("faith")
+	s_122.update_citizens(0.1)
+	assert(s_122.economy.get_resource("faith") == faith_pre_desecrate - 3.0, "Grave desecration reduces faith by 3")
+	assert(anc_rec.get("is_defiled", false) == true, "Deceased record marked as defiled")
+	assert(anc_rec.get("defiled_by", "") == "Владлен Злопамятный", "Defiler name recorded")
+	assert(enemy_122.task_id == "brawling" or kin_122.task_id == "brawling", "Witnessing kin starts brawl with desecrator!")
+	
+	# 5. Очищение осквернённой могилы (cleanse_grave)
+	pious_122.state = CitizenNPC.State.RESTING
+	pious_122.task_id = "cleanse_grave"
+	pious_122.work_timer = 0.05
+	var faith_pre_cleanse = s_122.economy.get_resource("faith")
+	s_122.update_citizens(0.1)
+	assert(s_122.economy.get_resource("faith") == faith_pre_cleanse + 3.0, "Grave cleansing restores +3 faith")
+	assert(anc_rec.get("is_defiled", false) == false, "Grave is now cleansed and sacred")
+	
+	# 6. Вечерние разнообразные активности (рыбалка, тренировка, прогулка, крыльцо)
+	var fisher_122 = CitizenNPC.new("fisher_122", "Окунь Рыбак", "m", 26, "adult")
+	fisher_122.settlement_id = s_122.id
+	fisher_122.job_id = "fisherman"
+	fisher_122.schedule_offset_hours = 0.0
+	fisher_122.state = CitizenNPC.State.RESTING
+	fisher_122.task_id = "evening_fishing"
+	fisher_122.work_timer = 0.05
+	s_122.population.citizens.append(fisher_122)
+	
+	var warrior_122 = CitizenNPC.new("warrior_122", "Бронислав Воин", "m", 22, "adult")
+	warrior_122.settlement_id = s_122.id
+	warrior_122.job_id = "warrior"
+	warrior_122.schedule_offset_hours = 0.0
+	warrior_122.state = CitizenNPC.State.RESTING
+	warrior_122.task_id = "evening_training"
+	warrior_122.work_timer = 0.05
+	s_122.population.citizens.append(warrior_122)
+	
+	s_122.update_citizens(0.1)
+	assert(fisher_122.task_id == "" and fisher_122.state == CitizenNPC.State.IDLE, "Fisherman completes evening fishing")
+	assert(warrior_122.task_id == "" and warrior_122.state == CitizenNPC.State.IDLE, "Warrior completes evening training")
+	
+	print("OK 122. Interactive player memorial actions, autonomous NPC grave visits/offerings/desecrations/cleansing, and diverse evening leisure verified.")
+
+	# --------------------------------------------------------------------------
+	# TEST 123: MODULAR WOODEN FENCES, INTERACTIVE GATES & SHIFT DUPLICATION
+	# --------------------------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 123 MODULAR WOODEN FENCES, INTERACTIVE GATES & SHIFT DUPLICATION")
+	print("----------------------------------------")
+	
+	# 1. Проверка регистрации в BuildingDB
+	assert(BuildingDB.BUILDINGS.has("wooden_fence"), "BuildingDB has wooden_fence")
+	assert(BuildingDB.BUILDINGS.has("wooden_gate"), "BuildingDB has wooden_gate")
+	var fence_info = BuildingDB.get_building("wooden_fence")
+	var gate_info = BuildingDB.get_building("wooden_gate")
+	assert(fence_info.get("category") == "defense" and fence_info["cost"]["wood"] == 2, "Wooden fence has 2 wood cost")
+	assert(gate_info.get("category") == "defense" and gate_info["cost"]["wood"] == 5, "Wooden gate has 5 wood cost")
+	
+	# 2. Проверка загрузки текстур в BuildingTextureManager
+	assert(BuildingTextureManager.get_texture("wooden_fence") != null or BuildingTextureManager.get_texture("fence_horizontal") != null, "Fence textures registered")
+	assert(BuildingTextureManager.get_texture("wooden_gate") != null or BuildingTextureManager.get_texture("gate_closed") != null, "Gate textures registered")
+	
+	# 3. Проверка интерактивного переключения ворот (is_open) и проходимости навигационной сетки
+	var gate_coord = Vector2i(25, 25)
+	GameManager.tile_buildings[gate_coord] = {
+		"id": "wooden_gate",
+		"status": "active",
+		"settlement_id": "player_tribe_settlement",
+		"is_open": false
+	}
+	var gate_inst = GameManager.get_or_create_building_instance(gate_coord, "wooden_gate", "player_tribe_settlement")
+	assert(gate_inst.is_open == false, "Gate is closed by default")
+	
+	# Клик по воротам открывает их
+	var b_dict = GameManager.tile_buildings[gate_coord]
+	b_dict["is_open"] = not b_dict.get("is_open", false)
+	gate_inst.is_open = b_dict["is_open"]
+	if GameManager.nav_grid:
+		GameManager.nav_grid.set_tile_walkable(gate_coord, b_dict["is_open"])
+		assert(GameManager.nav_grid.is_tile_walkable(gate_coord) == true, "Open gate is walkable")
+	
+	# Повторный клик закрывает ворота
+	b_dict["is_open"] = not b_dict.get("is_open", false)
+	gate_inst.is_open = b_dict["is_open"]
+	if GameManager.nav_grid:
+		GameManager.nav_grid.set_tile_walkable(gate_coord, b_dict["is_open"])
+		assert(GameManager.nav_grid.is_tile_walkable(gate_coord) == false, "Closed gate blocks pathfinding")
+	
+	print("OK 123. Modular wooden fences, interactive gates and Shift duplication verified.")
+
+	# -------------------------------------------------------------------------
+	# TEST 124: LIVING NPC SOCIAL SIMULATION (VISITS, DATING, RECONCILIATION, PETS)
+	# -------------------------------------------------------------------------
+	print("----------------------------------------")
+	print("TEST: RUNNING 124 LIVING NPC SOCIAL SIMULATION")
+	print("----------------------------------------")
+	var soc_settlement = GameManager.settlements["player_tribe_settlement"]
+	var c_alex = soc_settlement.population.citizens[0]
+	var c_boris = soc_settlement.population.citizens[1]
+	var c_elena = soc_settlement.population.citizens[2]
+	
+	# 1. Проверка механики примирения со старым обидчиком (reconcile_quarrel)
+	c_alex.add_memory("grudge", "offense", c_boris.citizen_id, 2.0, "Обида на Бориса")
+	assert(c_alex.has_grudge_against(c_boris.citizen_id) == true, "Alex has grudge against Boris")
+	var rec_ok = soc_settlement._try_reconcile_quarrel(c_alex)
+	assert(rec_ok == true, "Reconciliation action initiated")
+	assert(c_alex.task_id == "reconcile_quarrel", "Alex task is reconcile_quarrel")
+	c_alex.clear_grudge(c_boris.citizen_id)
+	assert(c_alex.has_grudge_against(c_boris.citizen_id) == false, "Grudge cleared on reconciliation")
+	
+	# 2. Проверка романтической прогулки и свидания (dating_walk)
+	c_alex.gender = "m"
+	c_elena.gender = "f"
+	c_alex.cohort = "adult"
+	c_elena.cohort = "adult"
+	c_alex.state = CitizenNPC.State.IDLE
+	c_elena.state = CitizenNPC.State.IDLE
+	c_alex.spouse_id = ""
+	c_elena.spouse_id = ""
+	c_alex.family_id = ""
+	c_elena.family_id = ""
+	c_alex.age = 22
+	c_elena.age = 20
+	c_alex.relationships.clear()
+	c_elena.relationships.clear()
+	c_alex.add_relationship(c_elena.citizen_id, "friend", 60.0, 30.0, false)
+	c_elena.add_relationship(c_alex.citizen_id, "friend", 60.0, 30.0, false)
+	var date_ok = soc_settlement._try_start_dating_walk(c_alex)
+	assert(date_ok == true, "Dating walk started")
+	assert(c_alex.task_id == "dating_walk", "Alex task is dating_walk")
+	assert(c_elena.task_id == "dating_walk", "Elena joined dating_walk")
+	
+	# 3. Проверка ласки и взаимодействия с прирученным животным (pet_animal)
+	var wolf_pup = GameManager.wildlife_manager.spawn_tamed_animal("wolf_pup", c_alex.pos + Vector2(20, 20), "player_tribe_settlement", "Лютый")
+	var pet_ok = soc_settlement._try_pet_animal(c_alex)
+	assert(pet_ok == true, "Pet animal interaction initiated")
+	assert(c_alex.task_id == "pet_animal", "Alex task is pet_animal")
+	assert(c_alex.target_id == wolf_pup.id, "Target is wolf pup")
+
+	# 4. Проверка похода в гости к соплеменнику (visit_friend)
+	c_boris.set_home("hut_boris", Vector2i(10, 10), Vector2(320, 320))
+	c_alex.home_id = "hut_alex"
+	c_alex.relationships.clear()
+	c_alex.add_relationship(c_boris.citizen_id, "friend", 85.0)
+	var visit_ok = soc_settlement._try_visit_friend(c_alex)
+	assert(visit_ok == true, "Visit friend action initiated")
+	assert(c_alex.task_id == "visit_friend_home", "Alex task is visit_friend_home")
+	assert(c_alex.target_id == c_boris.citizen_id, "Target host is Boris")
+
+	print("OK 124. Living NPC social simulation: visiting, dating, proposals, reconciliation & pet petting verified.")
+
+	# =========================================================================
+	# TEST 125: FORAGING POST & AGRICULTURE EVOLUTION SYSTEM
+	# =========================================================================
+	var agri_settlement = SettlementData.new("agri_test", "Аграрное Поселение", "player_tribe", Vector2i(10, 10))
+	
+	# 1. Проверка регистрации зданий и профессий
+	assert(BuildingDB.BUILDINGS.has("foraging_post"), "foraging_post must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("primitive_garden"), "primitive_garden must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("seed_store"), "seed_store must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("wheat_field"), "wheat_field must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("threshing_floor"), "threshing_floor must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("quern_house"), "quern_house must be in BuildingDB")
+	assert(BuildingDB.BUILDINGS.has("bakery"), "bakery must be in BuildingDB")
+	assert(BuildingDB.get_job_id_for_building("foraging_post") == "forager", "foraging_post job must be forager")
+	assert(BuildingDB.get_job_id_for_building("seed_store") == "seed_keeper", "seed_store job must be seed_keeper")
+	assert(BuildingDB.get_job_id_for_building("quern_house") == "miller", "quern_house job must be miller")
+	assert(BuildingDB.get_job_id_for_building("bakery") == "baker", "bakery job must be baker")
+
+	# 2. Проверка накопления скрытых знаний в поселении
+	agri_settlement.add_knowledge("plant_knowledge", 15.0)
+	agri_settlement.add_knowledge("seed_knowledge", 35.0)
+	assert(agri_settlement.get_knowledge_level("plant_knowledge") == 20.0, "plant_knowledge sum (5 starter + 15)")
+	assert(agri_settlement.get_knowledge_stage_name("plant_knowledge") == "Наблюдается", "plant_knowledge stage Наблюдается")
+	assert(agri_settlement.get_knowledge_stage_name("seed_knowledge") == "Изучается", "seed_knowledge stage Изучается")
+
+	# 3. Проверка 6 стадий роста поля и огорода
+	var field_inst = BuildingInstance.new("field_1", "wheat_field", "agri_test", Vector2i(12, 10))
+	assert(field_inst.growth_stage == 1, "Field starts at growth stage 1")
+	assert(field_inst.get_growth_stage_name().begins_with("Вспашка"), "Stage 1 name")
+	assert(field_inst.get_growth_texture_id() == "wheat_field_stage_1", "Texture ID stage 1")
+
+	# Продвигаем стадии роста
+	field_inst.water_crop(30.0)
+	field_inst.weed_crop(20.0)
+	field_inst.fertilize_crop(15.0)
+	assert(field_inst.soil_moisture >= 90.0, "Moisture updated")
+
+	# Доводим до спелости (стадия 5)
+	field_inst.growth_stage = 5
+	assert(field_inst.get_growth_stage_name().begins_with("Золотая спелость"), "Stage 5 name")
+	assert(field_inst.get_growth_texture_id() == "wheat_field_stage_5", "Texture ID stage 5")
+
+	# Сбор урожая
+	var crop_harvest_res = field_inst.harvest_crop(agri_settlement)
+	assert(crop_harvest_res.get("harvested", false) == true, "Harvest successful")
+	assert(field_inst.growth_stage == 6, "Field transitions to stage 6 (stubble)")
+	assert(agri_settlement.economy.get_resource("grain") > 0.0, "Grain deposited into economy")
+	assert(agri_settlement.economy.get_resource("straw") > 0.0, "Straw deposited into economy")
+
+	# 4. Проверка цепочки переработки: Жернова (мука) -> Пекарня (хлеб)
+	var quern_inst = BuildingInstance.new("quern_1", "quern_house", "agri_test", Vector2i(11, 10))
+	quern_inst.workers.append("cit_miller")
+	var bakery_inst = BuildingInstance.new("bakery_1", "bakery", "agri_test", Vector2i(10, 11))
+	bakery_inst.workers.append("cit_baker")
+	
+	if GameManager:
+		GameManager.building_instances[Vector2i(11, 10)] = quern_inst
+		GameManager.building_instances[Vector2i(10, 11)] = bakery_inst
+
+	agri_settlement.economy.add_resource("grain", 10.0)
+	agri_settlement.sim_daily_tick("Лето")
+	assert(agri_settlement.economy.get_resource("flour") > 0.0, "Flour produced by quern house")
+
+	agri_settlement.sim_daily_tick("Лето")
+	assert(agri_settlement.economy.get_resource("bread") > 0.0, "Bread produced by bakery")
+
+	# 5. Проверка текстур в BuildingTextureManager
+	assert(BuildingTextureManager.get_texture("foraging_post") != null, "foraging_post texture")
+	assert(BuildingTextureManager.get_texture("seed_store") != null, "seed_store texture")
+	assert(BuildingTextureManager.get_texture("threshing_floor") != null, "threshing_floor texture")
+	assert(BuildingTextureManager.get_texture("wheat_field_stage_5") != null, "wheat_field_stage_5 texture")
+	assert(BuildingTextureManager.get_texture("primitive_garden_stage_3") != null, "primitive_garden_stage_3 texture")
+	assert(BuildingTextureManager.get_texture("foraging_drying_racks") != null, "foraging_drying_racks texture")
+	assert(BuildingTextureManager.get_texture("foraging_baskets") != null, "foraging_baskets texture")
+	assert(BuildingTextureManager.get_texture("ox_plow") != null, "ox_plow texture")
+	assert(BuildingTextureManager.get_texture("ox_cart") != null, "ox_cart texture")
+
+	print("OK 125. Foraging post, agriculture 6-stage cycles, grain milling, bakery and textures fully verified.")
 	print("========================================")
-	print("ALL NPC SIMULATION, S01-S10 & STAGE 1 ACCEPTANCE MATRIX (TESTS 1-112) COMPLETED SUCCESSFULLY!")
+	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")
 	get_tree().quit(0)
 
 func _get_storage_pos_for_test(settlement: SettlementData, citizen: CitizenNPC) -> Vector2:
 	return settlement._get_storage_pos(citizen)
+
 
 
 

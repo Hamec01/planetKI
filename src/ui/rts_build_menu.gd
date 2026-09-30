@@ -242,10 +242,13 @@ func _create_building_card(b_id: String, b_info: Dictionary, economy: RefCounted
 	# Стоимость с пиктограммами
 	var cost_items = []
 	var res_icons = {"wood": "🪵", "stone": "🪨", "food": "🍗", "metal": "⛏", "kubriki": "🪙", "knowledge": "📜"}
-	for r in b_info["cost"]:
+	for r in b_info.get("cost", {}):
 		var ic = res_icons.get(r, r)
 		cost_items.append("%s %d" % [ic, b_info["cost"][r]])
-	cost_items.append("⏳ %d дн." % b_info["build_days"])
+	if int(b_info.get("build_days", 0)) > 0:
+		cost_items.append("⏳ %d дн." % b_info["build_days"])
+	else:
+		cost_items.append("✨ Мгновенная разметка зоны")
 	
 	var cost_lbl = Label.new()
 	cost_lbl.text = " | ".join(cost_items)

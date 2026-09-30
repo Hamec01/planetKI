@@ -8,7 +8,19 @@ var resources: Dictionary = {
 	"wood": 25.0,
 	"stone": 10.0,
 	"metal": 0.0,
-	"knowledge": 0.0
+	"knowledge": 0.0,
+	"grain": 0.0,
+	"seeds": 15.0,
+	"flour": 0.0,
+	"bread": 0.0,
+	"straw": 0.0,
+	"berries": 10.0,
+	"roots": 5.0,
+	"herbs": 5.0,
+	"mushrooms": 0.0,
+	"leather": 5.0,
+	"bone": 4.0,
+	"clay": 0.0
 }
 
 # Вторичные показатели государства/племени
@@ -21,11 +33,11 @@ var faith: float = 50.0        # 0 - 100 (религиозность)
 const FOOD_CONSUMPTION_PER_POP_DAILY: float = 0.08 # ~2.4 единицы еды в месяц на человека
 
 func get_resource(res_name: String) -> float:
-	return resources.get(res_name, 0.0)
+	return float(resources.get(res_name, 0.0))
 
 func add_resource(res_name: String, amount: float) -> void:
-	if resources.has(res_name):
-		resources[res_name] = max(0.0, resources[res_name] + amount)
+	resources[res_name] = maxf(0.0, float(resources.get(res_name, 0.0)) + amount)
+
 
 func can_afford(cost: Dictionary) -> bool:
 	for res in cost:

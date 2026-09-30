@@ -1,10 +1,9 @@
 class_name BuildingDetailPanel
 extends PanelContainer
 
-const BuildingInstanceScript = preload("res://src/simulation/building_instance.gd")
-const BuildingSystemScript = preload("res://src/simulation/building_system.gd")
 @warning_ignore("unused_signal")
 signal building_mode_changed(building_inst: RefCounted, new_mode: String)
+
 @warning_ignore("unused_signal")
 signal building_upgrade_unlocked(building_inst: RefCounted, upgrade_id: String)
 @warning_ignore("unused_signal")
@@ -312,7 +311,7 @@ func _render_overview() -> void:
 	vbox.add_child(desc_lbl)
 	
 	var mode_name = current_building.active_mode
-	for m in BuildingSystemScript.get_modes_for_building(current_building.type):
+	for m in BuildingSystem.get_modes_for_building(current_building.type):
 		if m["id"] == current_building.active_mode:
 			mode_name = m["name"]
 			break
@@ -332,6 +331,46 @@ func _render_overview() -> void:
 	stats_lbl.add_theme_font_size_override("font_size", 11)
 	stats_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
 	vbox.add_child(stats_lbl)
+	
+	# --- ПАНЕЛЬ ДЕЙСТВИЙ (ПЕРЕМЕСТИТЬ / СНЕСТИ) ---
+	var actions_hbox = HBoxContainer.new()
+	actions_hbox.add_theme_constant_override("separation", 10)
+	
+	var reloc_btn = Button.new()
+	reloc_btn.text = "📦 Переместить здание"
+	reloc_btn.custom_minimum_size = Vector2(160, 28)
+	reloc_btn.add_theme_font_size_override("font_size", 11)
+	reloc_btn.pressed.connect(func():
+		var b_pos = current_building.pos
+		var b_type = current_building.type
+		close_panel()
+		EventBus.start_building_relocation.emit(b_pos, b_type)
+		EventBus.notification_toast.emit("Режим перемещения", "Выберите новую свободную клетку на карте (ЛКМ). ПКМ — отмена.", "info")
+	)
+	actions_hbox.add_child(reloc_btn)
+	
+	var demolish_btn = Button.new()
+	demolish_btn.text = "🗑️ Разрушить (Снос)"
+	demolish_btn.custom_minimum_size = Vector2(160, 28)
+	demolish_btn.add_theme_font_size_override("font_size", 11)
+	demolish_btn.pressed.connect(func():
+		var b_pos = current_building.pos
+		var b_name = b_info.get("name", current_building.type)
+		if current_settlement:
+			var res = current_settlement.demolish_building_with_salvage(b_pos, true)
+			if res.get("success", false):
+				var salvage = res.get("salvage", {})
+				var mat_strs = []
+				for k in salvage:
+					mat_strs.append("+%.0f %s" % [salvage[k], k])
+				var mat_txt = ", ".join(mat_strs) if mat_strs.size() > 0 else "без возврата"
+				EventBus.notification_toast.emit("Здание снесено", "«%s» разобрано. Возвращено: %s" % [b_name, mat_txt], "warning")
+			else:
+				EventBus.notification_toast.emit("Ошибка сноса", res.get("reason", "Не удалось снести"), "warning")
+		close_panel()
+	)
+	actions_hbox.add_child(demolish_btn)
+	vbox.add_child(actions_hbox)
 	
 	card.add_child(vbox)
 	overview_vbox.add_child(card)
@@ -594,20 +633,20 @@ func _render_overview() -> void:
 		res_vbox.add_child(res_title)
 		
 		# Комфорт и Теснота
-		var cap_lbl = Label.new()
-		var cur_res = current_building.residents.size()
-		var max_res = current_building.get_max_residents()
-		var comf_cap = current_building.get_comfort_capacity()
+		var res_cap_lbl = Label.new()
+		var res_cur_cnt = current_building.residents.size()
+		var res_max_cnt = current_building.get_max_residents()
+		var res_comf_cnt = current_building.get_comfort_capacity()
 		var crowd_text = ""
 		if current_building.is_crowded():
 			var pen_pct = int(current_building.get_crowding_penalty() * 100)
 			crowd_text = "  ⚠️ ТЕСНОТА! (Штраф к отдыху: -%d%%)" % pen_pct
 		else:
 			crowd_text = "  ✅ Условия комфортные"
-		cap_lbl.text = "Вместимость: %d / %d чел. (Комфортно: %d)%s" % [cur_res, max_res, comf_cap, crowd_text]
-		cap_lbl.add_theme_font_size_override("font_size", 11)
-		cap_lbl.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3) if current_building.is_crowded() else Color(0.5, 0.9, 0.6))
-		res_vbox.add_child(cap_lbl)
+		res_cap_lbl.text = "Вместимость: %d / %d чел. (Комфортно: %d)%s" % [res_cur_cnt, res_max_cnt, res_comf_cnt, crowd_text]
+		res_cap_lbl.add_theme_font_size_override("font_size", 11)
+		res_cap_lbl.add_theme_color_override("font_color", Color(1.0, 0.4, 0.3) if current_building.is_crowded() else Color(0.5, 0.9, 0.6))
+		res_vbox.add_child(res_cap_lbl)
 		
 		# Глава семьи
 		var head_name = "Не определён"
@@ -623,7 +662,7 @@ func _render_overview() -> void:
 		
 		# Список постоянных жильцов
 		var occupants_title = Label.new()
-		occupants_title.text = "Постоянные жильцы (%d):" % cur_res
+		occupants_title.text = "Постоянные жильцы (%d):" % res_cur_cnt
 		occupants_title.add_theme_font_size_override("font_size", 11)
 		occupants_title.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
 		res_vbox.add_child(occupants_title)
@@ -653,10 +692,10 @@ func _render_overview() -> void:
 			guests_title.add_theme_color_override("font_color", Color(0.9, 0.8, 0.6))
 			res_vbox.add_child(guests_title)
 			for g_id in current_building.guests:
-				var cit = current_settlement.population.get_citizen_by_id(g_id)
-				if cit != null:
+				var guest_cit = current_settlement.population.get_citizen_by_id(g_id)
+				if guest_cit != null:
 					var g_lbl = Label.new()
-					g_lbl.text = "  🧳 %s (%d лет) — [Гость] (%s)" % [cit.name, cit.age, cit.last_status_reason]
+					g_lbl.text = "  🧳 %s (%d лет) — [Гость] (%s)" % [guest_cit.name, guest_cit.age, guest_cit.last_status_reason]
 					g_lbl.add_theme_font_size_override("font_size", 10)
 					g_lbl.add_theme_color_override("font_color", Color(0.9, 0.85, 0.7))
 					res_vbox.add_child(g_lbl)
@@ -676,7 +715,7 @@ func _render_overview() -> void:
 		# Частные улучшения дома
 		var up_names = []
 		for u_id in current_building.unlocked_upgrades:
-			var u_info = BuildingSystemScript.get_upgrade(u_id)
+			var u_info = BuildingSystem.get_upgrade(u_id)
 			up_names.append(u_info.get("name", u_id))
 		var up_str = ", ".join(up_names) if up_names.size() > 0 else "нет"
 		
@@ -689,7 +728,7 @@ func _render_overview() -> void:
 		# Активное улучшение
 		if current_building.has_pending_upgrade():
 			var pend_id = current_building.pending_upgrade.get("id", "")
-			var pend_def = BuildingSystemScript.get_upgrade(pend_id)
+			var pend_def = BuildingSystem.get_upgrade(pend_id)
 			var pend_name = pend_def.get("name", pend_id)
 			var pend_box = HBoxContainer.new()
 			pend_box.add_theme_constant_override("separation", 8)
@@ -715,6 +754,142 @@ func _render_overview() -> void:
 			
 		res_card.add_child(res_vbox)
 		overview_vbox.add_child(res_card)
+
+	# --- СЕЛЬСКОХОЗЯЙСТВЕННАЯ ДЕЛЯНКА / ПОЛЕ / ОГОРОД / САД ---
+	if current_building.is_agricultural():
+		var agri_card = PanelContainer.new()
+		var a_sbox = StyleBoxFlat.new()
+		a_sbox.bg_color = Color(0.10, 0.16, 0.12, 0.96)
+		a_sbox.border_color = Color(0.4, 0.85, 0.35, 0.85)
+		a_sbox.set_border_width_all(2)
+		a_sbox.set_corner_radius_all(8)
+		a_sbox.set_content_margin_all(10)
+		agri_card.add_theme_stylebox_override("panel", a_sbox)
+		
+		var a_vbox = VBoxContainer.new()
+		a_vbox.add_theme_constant_override("separation", 6)
+		
+		var a_title = Label.new()
+		a_title.text = "🌾 Состояние посева и почвенный баланс"
+		a_title.add_theme_font_size_override("font_size", 13)
+		a_title.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4))
+		a_vbox.add_child(a_title)
+		
+		# Стадия роста
+		var stg_name = current_building.get_growth_stage_name()
+		var stg_lbl = Label.new()
+		stg_lbl.text = "🌱 Текущая фаза: %s" % stg_name
+		stg_lbl.add_theme_font_size_override("font_size", 11)
+		stg_lbl.add_theme_color_override("font_color", Color(0.9, 1.0, 0.7))
+		a_vbox.add_child(stg_lbl)
+		
+		# Прогресс-бар стадии
+		var stg_bar = ProgressBar.new()
+		stg_bar.min_value = 0.0
+		stg_bar.max_value = 6.0
+		stg_bar.value = float(current_building.growth_stage) + current_building.growth_progress
+		stg_bar.custom_minimum_size = Vector2(0, 16)
+		stg_bar.show_percentage = false
+		a_vbox.add_child(stg_bar)
+		
+		# Показатели почвы: Влажность, Плодородие, Сорняки
+		var agri_stats_lbl = Label.new()
+		agri_stats_lbl.text = "💧 Влажность почвы: %.0f%%  •  🌱 Плодородие: %.0f%%  •  🌿 Сорняки: %.0f%%" % [
+			current_building.soil_moisture, current_building.soil_fertility, current_building.weeds_level
+		]
+		agri_stats_lbl.add_theme_font_size_override("font_size", 11)
+		agri_stats_lbl.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
+		a_vbox.add_child(agri_stats_lbl)
+		
+		# Кнопки ручного ухода и сбора
+		var agri_care_hbox = HBoxContainer.new()
+		agri_care_hbox.add_theme_constant_override("separation", 8)
+		
+		var water_btn = Button.new()
+		water_btn.text = "💧 Полить (+25%)"
+		water_btn.add_theme_font_size_override("font_size", 10)
+		water_btn.pressed.connect(func():
+			current_building.water_crop(25.0)
+			EventBus.notification_toast.emit("Полив", "Почва делянки полита водой!", "info")
+			refresh_all_tabs()
+		)
+		agri_care_hbox.add_child(water_btn)
+		
+		var weed_btn = Button.new()
+		weed_btn.text = "🌿 Прополоть (-30%)"
+		weed_btn.add_theme_font_size_override("font_size", 10)
+		weed_btn.pressed.connect(func():
+			current_building.weed_crop(30.0)
+			EventBus.notification_toast.emit("Прополка", "Сорняки удалены с делянки!", "info")
+			refresh_all_tabs()
+		)
+		agri_care_hbox.add_child(weed_btn)
+		
+		var fert_btn = Button.new()
+		fert_btn.text = "💩 Удобрить (+35%)"
+		fert_btn.add_theme_font_size_override("font_size", 10)
+		fert_btn.pressed.connect(func():
+			current_building.fertilize_crop(35.0)
+			EventBus.notification_toast.emit("Удобрение", "Внесены органические удобрения!", "good")
+			refresh_all_tabs()
+		)
+		agri_care_hbox.add_child(fert_btn)
+		
+		var harvest_btn = Button.new()
+		harvest_btn.text = "🌾 Собрать урожай"
+		harvest_btn.disabled = (current_building.growth_stage != 5)
+		harvest_btn.add_theme_font_size_override("font_size", 10)
+		harvest_btn.pressed.connect(func():
+			var harvest_res = current_building.harvest_crop(current_settlement)
+			if harvest_res.get("harvested", false):
+				EventBus.notification_toast.emit("Жатва завершена", "Собрано %.1f ед. урожая!" % harvest_res.get("yield", 0.0), "good")
+			else:
+				EventBus.notification_toast.emit("Жатва", harvest_res.get("reason", "Не созрело"), "warning")
+			refresh_all_tabs()
+		)
+		agri_care_hbox.add_child(harvest_btn)
+		
+		a_vbox.add_child(agri_care_hbox)
+		agri_card.add_child(a_vbox)
+		overview_vbox.add_child(agri_card)
+
+	# --- КАРТОЧКА ЗНАНИЙ ПРИРОДЫ И ЗЕМЛЕДЕЛИЯ ---
+	if current_building.type in ["foraging_post", "seed_store", "primitive_garden", "primitive_field", "wheat_field", "threshing_floor", "quern_house", "bakery", "orchard"]:
+		var know_card = PanelContainer.new()
+		var k_sbox = StyleBoxFlat.new()
+		k_sbox.bg_color = Color(0.12, 0.15, 0.22, 0.95)
+		k_sbox.border_color = Color(0.7, 0.8, 0.35, 0.8)
+		k_sbox.set_border_width_all(1)
+		k_sbox.set_corner_radius_all(6)
+		k_sbox.set_content_margin_all(8)
+		know_card.add_theme_stylebox_override("panel", k_sbox)
+		
+		var k_vbox = VBoxContainer.new()
+		k_vbox.add_theme_constant_override("separation", 4)
+		
+		var k_title = Label.new()
+		k_title.text = "📖 Накопленный опыт и аграрные знания племени:"
+		k_title.add_theme_font_size_override("font_size", 11)
+		k_title.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+		k_vbox.add_child(k_title)
+		
+		var pk_stg = current_settlement.get_knowledge_stage_name("plant_knowledge") if "get_knowledge_stage_name" in current_settlement else "Наблюдается"
+		var sk_stg = current_settlement.get_knowledge_stage_name("seed_knowledge") if "get_knowledge_stage_name" in current_settlement else "Неизвестно"
+		var ck_stg = current_settlement.get_knowledge_stage_name("cultivation_knowledge") if "get_knowledge_stage_name" in current_settlement else "Неизвестно"
+		var fk_stg = current_settlement.get_knowledge_stage_name("food_processing_knowledge") if "get_knowledge_stage_name" in current_settlement else "Неизвестно"
+		var wk_stg = current_settlement.get_knowledge_stage_name("water_management_knowledge") if "get_knowledge_stage_name" in current_settlement else "Неизвестно"
+		
+		var k_desc = Label.new()
+		k_desc.text = "• Знание растений: %s  • Селекция семян: %s\n• Окультуривание почвы: %s  • Обработка муки и хлеба: %s\n• Управление водой и орошение: %s" % [
+			pk_stg, sk_stg, ck_stg, fk_stg, wk_stg
+		]
+		k_desc.add_theme_font_size_override("font_size", 10)
+		k_desc.add_theme_color_override("font_color", Color(0.85, 0.95, 0.9))
+		k_vbox.add_child(k_desc)
+		
+		know_card.add_child(k_vbox)
+		overview_vbox.add_child(know_card)
+
 
 func _render_workers() -> void:
 	for c in workers_vbox.get_children():
@@ -860,7 +1035,7 @@ func _render_modes() -> void:
 	for c in modes_vbox.get_children():
 		c.queue_free()
 		
-	var modes = BuildingSystemScript.get_modes_for_building(current_building.type)
+	var modes = BuildingSystem.get_modes_for_building(current_building.type)
 	for m in modes:
 		var card = PanelContainer.new()
 		var sbox = StyleBoxFlat.new()
@@ -912,7 +1087,7 @@ func _render_upgrades() -> void:
 	for c in upgrades_grid.get_children():
 		c.queue_free()
 		
-	var upgrades = BuildingSystemScript.get_upgrades_for_building(current_building.type)
+	var upgrades = BuildingSystem.get_upgrades_for_building(current_building.type)
 	var econ = current_settlement.economy
 	
 	for u in upgrades:

@@ -78,7 +78,6 @@ static func _trigger(event_id: String, total_days: int) -> void:
 	last_event_day = total_days
 	var ev_data = EventDB.get_event(event_id)
 	if not ev_data.is_empty():
-		GameManager.toggle_pause()
 		EventBus.event_triggered.emit(ev_data)
 
 static func resolve_choice(event_id: String, choice_index: int) -> void:
@@ -120,4 +119,3 @@ static func resolve_choice(event_id: String, choice_index: int) -> void:
 	)
 	
 	EventBus.event_resolved.emit(event_id, choice_index, effects)
-	GameManager.toggle_pause()
