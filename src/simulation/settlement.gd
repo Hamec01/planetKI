@@ -2123,19 +2123,19 @@ func _conduct_funeral_rites(c: CitizenNPC) -> void:
 		# Назначение могильщика для физической процессии погребения
 		var undertaker: CitizenNPC = null
 		for cit in population.citizens:
-			if cit.is_alive and cit != c and cit.cohort in ["adult", "elder"]:
+			if cit.is_alive and cit != c and not cit.custom_data.get("player_controlled", false) and cit.cohort in ["adult", "elder"]:
 				if (cit.family_id != "" and cit.family_id == c.family_id) or cit.spouse_id == c.citizen_id or cit.guardian_id == c.citizen_id:
 					undertaker = cit
 					break
 		if undertaker == null:
 			for cit in population.citizens:
-				if cit.is_alive and cit != c and cit.cohort in ["adult", "youth", "elder"]:
+				if cit.is_alive and cit != c and not cit.custom_data.get("player_controlled", false) and cit.cohort in ["adult", "youth", "elder"]:
 					if cit.job_id in ["idle", "guard", "elder"] or cit.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
 						undertaker = cit
 						break
 		if undertaker == null:
 			for cit in population.citizens:
-				if cit.is_alive and cit != c and cit.cohort in ["adult", "youth", "elder"]:
+				if cit.is_alive and cit != c and not cit.custom_data.get("player_controlled", false) and cit.cohort in ["adult", "youth", "elder"]:
 					undertaker = cit
 					break
 					
@@ -2173,7 +2173,7 @@ func _conduct_funeral_rites(c: CitizenNPC) -> void:
 				cit.add_memory("grief", "death", c.citizen_id, 2.0, "Похоронил близкого соплеменника (%s) на родовом кладбище" % c.name, false)
 				cit.show_emote("sadness", 5.0, 4, true)
 				cit.loyalty = maxf(10.0, cit.loyalty - 6.0)
-				if cit != undertaker:
+				if cit != undertaker and not cit.custom_data.get("player_controlled", false):
 					cit.task_id = "funeral_march"
 					cit.target_id = c.citizen_id
 					cit.target_coord = grave_coord
@@ -2208,7 +2208,7 @@ func _check_pending_burials() -> void:
 					var g_inst = c.custom_data.get("pending_grave_inst", null)
 					var new_undertaker: CitizenNPC = null
 					for cit in population.citizens:
-						if cit.is_alive and cit.cohort in ["adult", "youth", "elder"]:
+						if cit.is_alive and not cit.custom_data.get("player_controlled", false) and cit.cohort in ["adult", "youth", "elder"]:
 							if cit.task_id == "" or cit.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING]:
 								new_undertaker = cit
 								break

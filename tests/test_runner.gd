@@ -227,7 +227,13 @@ func _ready() -> void:
 	print("OK 11. WildlifeManager initialized with %d hares and %d deer." % [hares_count, deer_count])
 
 	# 12. Проверка ИИ животных: обнаружение угрозы и бегство (FLEEING)
+	# Берём зверя, которому есть куда бежать от угрозы справа (деревья и валуны — настоящие препятствия)
 	var test_animal = wild_mgr.animals.values()[0]
+	for cand_animal in wild_mgr.animals.values():
+		var a_tile = GameManager.nav_grid.world_to_tile(cand_animal.pos)
+		if GameManager.nav_grid.is_tile_walkable(a_tile + Vector2i(-1, 0)) and GameManager.nav_grid.is_tile_walkable(a_tile + Vector2i(-2, 0)) and GameManager.nav_grid.is_tile_walkable(a_tile + Vector2i(-1, -1)) and GameManager.nav_grid.is_tile_walkable(a_tile + Vector2i(-1, 1)):
+			test_animal = cand_animal
+			break
 	var initial_animal_pos = test_animal.pos
 	var initial_state = test_animal.state
 	
@@ -5569,7 +5575,13 @@ func _ready() -> void:
 	var walker_npc = CitizenNPC.new("walk134", "Встречный Добрило", "m", 30, "adult")
 	walker_npc.settlement_id = s134.id
 	walker_npc.social_cooldown = 999.0
-	var near_tile = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 4)
+	# Встречный стоит там, куда от вождя есть путь
+	var near_tile = GameManager.nav_grid.world_to_tile(ruler134.pos)
+	for try134 in range(30):
+		var cand_near = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 4)
+		if cand_near != near_tile and not GameManager.nav_grid.find_path(ruler134.pos, GameManager.nav_grid.tile_to_world_center(cand_near)).is_empty():
+			near_tile = cand_near
+			break
 	walker_npc.pos = GameManager.nav_grid.tile_to_world_center(near_tile)
 	s134.population.citizens.append(walker_npc)
 	var talked_to: Array = []

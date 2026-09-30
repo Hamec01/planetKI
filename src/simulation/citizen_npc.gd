@@ -1784,6 +1784,13 @@ func receive_civilization_event(event_data: Dictionary, choices_history: Array =
 func receive_world_event(event_type: String, event_params: Dictionary) -> void:
 	if not is_alive:
 		return
+	var state_before = state
+	_receive_world_event_impl(event_type, event_params)
+	# Вождём под управлением игрока ИИ-реакции не двигают (бегство, траур, праздник)
+	if custom_data.get("player_controlled", false):
+		state = state_before
+
+func _receive_world_event_impl(event_type: String, event_params: Dictionary) -> void:
 		
 	match event_type:
 		"citizen_died":
@@ -1877,6 +1884,9 @@ func receive_world_event(event_type: String, event_params: Dictionary) -> void:
 				shout("Вождь ведёт нас к гибели! Пора всё менять!")
 
 func _trigger_reaction_action(action_name: String, event_data: Dictionary) -> void:
+	# Вождём управляет игрок: чувства и память остаются, но действие за него не выбирается
+	if custom_data.get("player_controlled", false):
+		return
 	active_social_action = action_name
 	match action_name:
 		"celebrate":
