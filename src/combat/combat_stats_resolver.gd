@@ -115,6 +115,11 @@ static func calculate_citizen_stats(citizen) -> Dictionary:
 	
 	var S: float = float(citizen.get("strength_level")) if citizen.get("strength_level") != null else 0.0
 	var E: float = float(citizen.get("endurance_level")) if citizen.get("endurance_level") != null else 0.0
+	var A: float = float(citizen.get("agility_level")) if citizen.get("agility_level") != null else 0.0
+	# Очки характеристик героя-вождя складываются с развитыми трудом уровнями
+	S += float(citizen.get("bonus_strength")) if citizen.get("bonus_strength") != null else 0.0
+	E += float(citizen.get("bonus_endurance")) if citizen.get("bonus_endurance") != null else 0.0
+	A += float(citizen.get("bonus_agility")) if citizen.get("bonus_agility") != null else 0.0
 	var G: float = float(citizen.get("encounter_growth_points")) if citizen.get("encounter_growth_points") != null else 0.0
 	G = clampf(G, 0.0, 20.0)
 	
@@ -195,13 +200,16 @@ static func calculate_citizen_stats(citizen) -> Dictionary:
 	var weapon_skill_speed_bonus = float(weapon_skill_level) * skill_cfg["speed_bonus"]
 	weapon_skill_speed_bonus = minf(weapon_skill_speed_bonus, 0.25) # максимум 0.25
 	var eff_R = maxf(0.1, R)
-	var attack_interval = (base_interval * (1.0 - weapon_skill_speed_bonus)) / eff_R
+	# Ловкость ускоряет удары (до -20% интервала)
+	var agility_speed = minf(0.2, A * 0.01)
+	var attack_interval = (base_interval * (1.0 - weapon_skill_speed_bonus - agility_speed)) / eff_R
 	attack_interval = maxf(0.6, attack_interval) # минимум 0.6 с
 	
 	# 8. Точность
 	# базовая точность оружия + навык, clamp 5–95%
 	var base_acc = 0.65 if is_ranged else 0.75
-	var accuracy = base_acc + float(weapon_skill_level) * skill_cfg["acc_pct"]
+	var accuracy_bonus = float(citizen.get("accuracy_bonus")) if citizen.get("accuracy_bonus") != null else 0.0
+	var accuracy = base_acc + float(weapon_skill_level) * skill_cfg["acc_pct"] + A * 0.005 + accuracy_bonus
 	accuracy = clampf(accuracy, 0.05, 0.95)
 	
 	# 9. Пробитие брони
@@ -229,6 +237,7 @@ static func calculate_citizen_stats(citizen) -> Dictionary:
 		"R": R,
 		"S": S,
 		"E": E,
+		"A": A,
 		"G": G,
 		"weapon_skill_level": weapon_skill_level,
 		"weapon_id": weapon_id,

@@ -122,6 +122,22 @@ var agility_level: int = 0
 var stamina_current: float = 100.0
 var stamina_max: float = 100.0
 
+# Бонусы, которые накладывают герой-вождь (очки характеристик) и его навыки.
+# CombatStatsResolver читает их при расчёте HP, выносливости, урона и точности.
+var bonus_strength: int = 0
+var bonus_endurance: int = 0
+var bonus_agility: int = 0
+var explicit_hp_modifiers: float = 0.0
+var explicit_stamina_modifiers: float = 0.0
+var allowed_other_damage_bonus: float = 0.0
+var accuracy_bonus: float = 0.0
+var beast_damage_bonus: float = 0.0
+
+const EXHAUSTED_STAMINA: float = 15.0
+
+func is_exhausted() -> bool:
+	return stamina_current < EXHAUSTED_STAMINA
+
 # 2. Оружейная техника (0..20 уровни)
 var weapon_skills: Dictionary = {
 	"sword_xp": 0.0, "sword_level": 0,
@@ -610,16 +626,16 @@ func get_vitality_multiplier() -> float:
 	return mult
 
 func get_effective_strength() -> float:
-	return maxf(0.2, (float(strength_level) + 1.0) * get_vitality_multiplier())
+	return maxf(0.2, (float(strength_level + bonus_strength) + 1.0) * get_vitality_multiplier())
 
 func get_effective_endurance() -> float:
-	return maxf(0.2, (float(endurance_level) + 1.0) * get_vitality_multiplier())
+	return maxf(0.2, (float(endurance_level + bonus_endurance) + 1.0) * get_vitality_multiplier())
 
 func get_effective_agility() -> float:
-	return maxf(0.2, (float(agility_level) + 1.0) * get_vitality_multiplier())
+	return maxf(0.2, (float(agility_level + bonus_agility) + 1.0) * get_vitality_multiplier())
 
 func get_effective_max_carry() -> float:
-	var base = max_carry + (float(strength_level) * 0.5)
+	var base = max_carry + (float(strength_level + bonus_strength) * 0.5)
 	return maxf(2.0, base * get_vitality_multiplier())
 
 func get_physical_status_descriptors() -> Array[String]:
@@ -2030,6 +2046,9 @@ func get_work_speed_multiplier() -> float:
 		mult *= float(effects["work_speed_mult"])
 	var diligence = float(traits.get("diligence", 50.0))
 	mult *= 1.0 + (diligence - 50.0) / 200.0
+	# Выбившийся из сил работает заметно медленнее
+	if is_exhausted():
+		mult *= 0.6
 	# Мастерство: каждый уровень профессии ускоряет работу на 3% (до +30%)
 	if job_id != "" and job_id != "idle":
 		mult *= 1.0 + float(mini(10, get_profession_level(job_id))) * 0.03

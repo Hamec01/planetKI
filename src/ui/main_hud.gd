@@ -87,6 +87,7 @@ func _ready() -> void:
 	_setup_top_bar_icons()
 	_setup_top_left_notification_badges()
 	_setup_bottom_rts_dock_bar()
+	_setup_hero_bar()
 	_setup_toast_system()
 	_setup_map_mode_selector()
 	_setup_cursor_context_menu()
@@ -119,6 +120,17 @@ var civilization_event_modal: Control = null
 var event_registry_panel: Control = null
 var traditions_modal: Control = null
 var elder_council_modal: ElderCouncilModal = null
+# Режим «Путь вождя»: вместо панели правления — панель героя
+var hero_mode: bool = false
+var mode_toggle_btn: Button = null
+var hero_bar: PanelContainer = null
+var hero_panel: HeroPanel = null
+var hero_level_lbl: Label = null
+var hero_points_lbl: Label = null
+var hero_xp_bar: ProgressBar = null
+var hero_hp_bar: ProgressBar = null
+var hero_stamina_bar: ProgressBar = null
+var _hero_bar_timer: float = 0.0
 var badge_council_btn: Button = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
@@ -157,6 +169,10 @@ func _setup_top_left_notification_badges() -> void:
 			event_registry_panel.toggle_tab(2)
 	)
 	
+	mode_toggle_btn = _create_badge_button("⚔ Путь вождя [V]", "Переключиться на управление самим вождём: инвентарь, персонаж, навыки", func():
+		set_hero_mode(not hero_mode)
+	)
+	notification_badges_container.add_child(mode_toggle_btn)
 	notification_badges_container.add_child(badge_decisions_btn)
 	notification_badges_container.add_child(badge_incidents_btn)
 	notification_badges_container.add_child(badge_chronicle_btn)
@@ -276,6 +292,18 @@ func _unhandled_input(event: InputEvent) -> void:
 					GameManager.set_speed(50.0)
 				else:
 					GameManager.set_speed(10.0)
+			KEY_V:
+				set_hero_mode(not hero_mode)
+				get_viewport().set_input_as_handled()
+			KEY_I:
+				if hero_mode:
+					_open_hero_tab(HeroPanel.TAB_INVENTORY)
+			KEY_C:
+				if hero_mode:
+					_open_hero_tab(HeroPanel.TAB_CHARACTER)
+			KEY_K:
+				if hero_mode:
+					_open_hero_tab(HeroPanel.TAB_SKILLS)
 			KEY_U:
 				if settlement_roster_modal:
 					settlement_roster_modal.toggle()
@@ -447,6 +475,134 @@ func _setup_bottom_rts_dock_bar() -> void:
 		hbox.add_child(btn)
 		dock_buttons[item_id] = btn
 
+# --- РЕЖИМ «ПУТЬ ВОЖДЯ»: ПАНЕЛЬ ГЕРОЯ ВМЕСТО ПАНЕЛИ ПРАВЛЕНИЯ ---
+
+func _make_hero_bar_progress(color: Color, tip: String) -> ProgressBar:
+	var bar = ProgressBar.new()
+	bar.custom_minimum_size = Vector2(150, 18)
+	bar.show_percentage = false
+	bar.tooltip_text = tip
+	var fill = StyleBoxFlat.new()
+	fill.bg_color = color
+	fill.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("fill", fill)
+	var bg = StyleBoxFlat.new()
+	bg.bg_color = Color(0.05, 0.06, 0.09, 0.95)
+	bg.border_color = Color(0.4, 0.45, 0.55, 0.8)
+	bg.set_border_width_all(1)
+	bg.set_corner_radius_all(4)
+	bar.add_theme_stylebox_override("background", bg)
+	var lbl = Label.new()
+	lbl.name = "Value"
+	lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 10)
+	bar.add_child(lbl)
+	return bar
+
+func _setup_hero_bar() -> void:
+	hero_bar = PanelContainer.new()
+	hero_bar.name = "HeroBar"
+	add_child(hero_bar)
+	hero_bar.anchor_left = 0.0
+	hero_bar.anchor_right = 1.0
+	hero_bar.anchor_top = 1.0
+	hero_bar.anchor_bottom = 1.0
+	hero_bar.offset_top = -52.0
+	hero_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var sbox = StyleBoxFlat.new()
+	sbox.bg_color = Color(0.10, 0.08, 0.06, 0.98)
+	sbox.border_color = Color(0.95, 0.55, 0.25, 1.0)
+	sbox.border_width_top = 2
+	sbox.set_content_margin_all(6)
+	sbox.content_margin_left = 14
+	sbox.content_margin_right = 14
+	hero_bar.add_theme_stylebox_override("panel", sbox)
+	var hbox = HBoxContainer.new()
+	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	hbox.add_theme_constant_override("separation", 10)
+	hero_bar.add_child(hbox)
+	for item in [["🎒 Инвентарь [I]", HeroPanel.TAB_INVENTORY], ["🧍 Персонаж [C]", HeroPanel.TAB_CHARACTER], ["✨ Навыки [K]", HeroPanel.TAB_SKILLS]]:
+		var btn = Button.new()
+		btn.text = item[0]
+		btn.custom_minimum_size = Vector2(120, 36)
+		btn.add_theme_font_size_override("font_size", 12)
+		var tab_idx = item[1]
+		btn.pressed.connect(func(): _open_hero_tab(tab_idx))
+		hbox.add_child(btn)
+	var sep = VSeparator.new()
+	hbox.add_child(sep)
+	hero_level_lbl = Label.new()
+	hero_level_lbl.add_theme_font_size_override("font_size", 13)
+	hero_level_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	hbox.add_child(hero_level_lbl)
+	hero_xp_bar = _make_hero_bar_progress(Color(0.85, 0.7, 0.2), "Опыт до следующего уровня")
+	hbox.add_child(hero_xp_bar)
+	hero_hp_bar = _make_hero_bar_progress(Color(0.75, 0.18, 0.18), "Здоровье вождя")
+	hbox.add_child(hero_hp_bar)
+	hero_stamina_bar = _make_hero_bar_progress(Color(0.25, 0.65, 0.3), "Выносливость: тратится в бою, работе и пути, восстанавливается на отдыхе")
+	hbox.add_child(hero_stamina_bar)
+	hero_points_lbl = Label.new()
+	hero_points_lbl.add_theme_font_size_override("font_size", 11)
+	hero_points_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	hbox.add_child(hero_points_lbl)
+	hero_bar.visible = false
+
+func set_hero_mode(enabled: bool) -> void:
+	hero_mode = enabled
+	if bottom_dock_bar:
+		bottom_dock_bar.visible = not enabled
+	if hero_bar:
+		hero_bar.visible = enabled
+	if enabled:
+		# Меню правления закрываются, чтобы не мешать
+		if rts_build_menu and rts_build_menu.visible:
+			rts_build_menu.toggle_menu()
+		if map_mode_panel:
+			map_mode_panel.visible = false
+		_update_hero_bar()
+	elif hero_panel:
+		hero_panel.visible = false
+	if mode_toggle_btn:
+		mode_toggle_btn.text = "🏛 Правление [V]" if enabled else "⚔ Путь вождя [V]"
+		mode_toggle_btn.tooltip_text = "Вернуться к управлению поселением" if enabled else "Переключиться на управление самим вождём: инвентарь, персонаж, навыки"
+
+func _open_hero_tab(tab: int) -> void:
+	if hero_panel == null:
+		hero_panel = HeroPanel.new()
+		hero_panel.name = "HeroPanel"
+		add_child(hero_panel)
+	hero_panel.open_tab(tab)
+
+func _set_bar(bar: ProgressBar, cur: float, maxv: float, fmt: String) -> void:
+	bar.max_value = maxf(1.0, maxv)
+	bar.value = clampf(cur, 0.0, bar.max_value)
+	var lbl: Label = bar.get_node("Value")
+	lbl.text = fmt % [int(cur), int(maxv)]
+
+func _update_hero_bar() -> void:
+	if hero_bar == null:
+		return
+	var s = GameManager.get_player_settlement()
+	if not (s is SettlementData) or s.hero == null:
+		return
+	var ruler = PlayerHero.get_ruler(s)
+	var hero: PlayerHero = s.hero
+	hero_level_lbl.text = "⭐ Ур. %d" % hero.level
+	_set_bar(hero_xp_bar, hero.xp, PlayerHero.xp_to_next(hero.level), "Опыт %d / %d")
+	if ruler:
+		_set_bar(hero_hp_bar, ruler.health, ruler.max_health, "❤ %d / %d")
+		_set_bar(hero_stamina_bar, ruler.stamina_current, ruler.stamina_max, "⚡ %d / %d")
+	else:
+		_set_bar(hero_hp_bar, 0.0, 1.0, "❤ %d / %d (вождь погиб)")
+	var pts: Array[String] = []
+	if hero.unspent_attr_points > 0:
+		pts.append("+%d хар." % hero.unspent_attr_points)
+	if hero.unspent_skill_points > 0:
+		pts.append("+%d навык" % hero.unspent_skill_points)
+	hero_points_lbl.text = "  ".join(pts)
+
 func _on_menu_item_clicked(item_id: String) -> void:
 	if item_id == "map_modes":
 		map_mode_panel.visible = not map_mode_panel.visible
@@ -614,6 +770,11 @@ func _on_notification_toast(title_text: String, message_text: String, toast_type
 var _clock_refresh_timer: float = 0.0
 
 func _process(delta: float) -> void:
+	if hero_mode:
+		_hero_bar_timer -= delta
+		if _hero_bar_timer <= 0.0:
+			_hero_bar_timer = 0.2
+			_update_hero_bar()
 	_clock_refresh_timer += delta
 	if _clock_refresh_timer >= 0.25:
 		_clock_refresh_timer = 0.0

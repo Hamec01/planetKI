@@ -36,6 +36,15 @@ var appointed_ids: Array[String] = [] # Призванные вождём в с�
 var regent_id: String = "" # Правая рука — верховный старейшина
 var delegated_spheres: Array[String] = [] # Сферы, решения по которым поручены Правой руке
 var journal: Array[Dictionary] = [] # Записи о решениях Правой руки
+# Как вождь меняет прежние решения: "council" — созывает совет и тот голосует,
+# "autocracy" — единолично объявляет указ без созыва
+var governance: String = "council"
+var revision_cooldowns: Dictionary = {} # instance_id -> день, раньше которого совет не соберётся снова по этому вопросу
+var revision_log: Array[Dictionary] = [] # Созывы совета и указы вождя
+
+const MIN_VOTERS: int = 3
+const REVOTE_COOLDOWN_DAYS: int = 5
+const DECREE_MIN_TRIBE_LOYALTY: float = 35.0
 
 func _init(p_settlement_id: String = "") -> void:
 	settlement_id = p_settlement_id
@@ -353,6 +362,146 @@ func add_journal_entry(entry: Dictionary) -> void:
 	if journal.size() > JOURNAL_LIMIT:
 		journal.resize(JOURNAL_LIMIT)
 
+# --- ПЕРЕСМОТР РЕШЕНИЙ: СОВЕТ ИЛИ УКАЗ ---
+
+const GOVERNANCE_NAMES: Dictionary = {
+	"council": "🏛 Созывать совет (старейшины голосуют)",
+	"autocracy": "👑 Единоличная власть (указ без созыва)"
+}
+
+# Смена порядка правления ощутима: старейшины не любят, когда их отстраняют
+func set_governance(s: SettlementData, mode: String) -> void:
+	if not GOVERNANCE_NAMES.has(mode) or mode == governance:
+		return
+	governance = mode
+	for m in get_members(s):
+		if mode == "autocracy":
+			m.loyalty = maxf(0.0, m.loyalty - 10.0)
+			m.add_memory("council_sidelined", "ruler", m.citizen_id, 2.0, "Вождь стал править единолично, не спрашивая совет")
+		else:
+			m.loyalty = minf(100.0, m.loyalty + 4.0)
+			m.add_memory("council_restored", "ruler", m.citizen_id, 1.5, "Вождь вернул совету право голоса")
+	var msg = "Вождь правит единолично: прежние решения меняются указом. Старейшины недовольны." if mode == "autocracy" else "Вождь вернул совету право голоса: пересмотр решений — через созыв старейшин."
+	EventBus.notification_toast.emit("⚖️ Порядок правления", msg, "warning" if mode == "autocracy" else "good")
+	GameManager.add_history_entry(GameManager.current_year, "Порядок правления", msg, "Власть и закон")
+
+# Как проголосует старейшина: довод «за» = насколько новый вариант ему ближе прежнего
+# + преданность вождю + личное расположение к нему + красноречие вождя (навык)
+func get_vote(s: SettlementData, m: CitizenNPC, old_choice: Dictionary, new_choice: Dictionary, persuasion: float) -> Dictionary:
+	var new_eval = score_choice(m, new_choice)
+	var old_eval = score_choice(m, old_choice)
+	var ruler = PlayerHero.get_ruler(s)
+	var ruler_affinity = m.get_relationship_affinity(ruler.citizen_id) if ruler else 0.0
+	var support = (float(new_eval["score"]) - float(old_eval["score"])) + (m.loyalty - 50.0) * 0.3 + ruler_affinity * 0.2 + persuasion
+	var yes = support > 0.0
+	var reason = new_eval["reason"] if yes else old_eval["reason"]
+	if yes and m.loyalty >= 70.0 and float(new_eval["score"]) <= float(old_eval["score"]):
+		reason = "доверяет вождю"
+	elif not yes and m.loyalty < 35.0:
+		reason = "не доверяет вождю"
+	return {"citizen_id": m.citizen_id, "name": m.name, "yes": yes, "support": support, "reason": reason}
+
+# Можно ли сейчас созвать совет по этому решению
+func can_convene(s: SettlementData, instance_id: String) -> Dictionary:
+	var n = get_members(s).size()
+	if n < MIN_VOTERS:
+		return {"ok": false, "reason": "Для созыва нужно не меньше %d старейшин в совете (сейчас %d). Призовите ещё." % [MIN_VOTERS, n]}
+	var today = GameManager.total_simulation_days if GameManager else 0
+	var ready_day = int(revision_cooldowns.get(instance_id, 0))
+	if today < ready_day:
+		return {"ok": false, "reason": "Совет уже отверг этот пересмотр. Созвать снова можно через %d дн." % (ready_day - today)}
+	return {"ok": true, "reason": ""}
+
+# Попытка изменить прежнее решение. cem — менеджер событий цивилизации.
+# Возвращает {"ok", "method", "reason", "ballots", "yes", "no"}
+func request_revision(s: SettlementData, cem: CivilizationEventManager, instance_id: String, new_choice_id: String) -> Dictionary:
+	var ev: Dictionary = cem.event_instances.get(instance_id, {})
+	if ev.is_empty() or not cem.is_revisable(ev):
+		return {"ok": false, "reason": "Это решение нельзя пересмотреть: дело уже свершилось"}
+	var old_id = String(ev.get("chosen_choice_id", ""))
+	if old_id == new_choice_id:
+		return {"ok": false, "reason": "Этот вариант и так действует"}
+	var old_ch = cem.get_choice(ev, old_id)
+	var new_ch = cem.get_choice(ev, new_choice_id)
+	if new_ch.is_empty():
+		return {"ok": false, "reason": "Нет такого варианта"}
+	var hero: PlayerHero = s.hero
+	var entry = {
+		"instance_id": instance_id,
+		"title": ev.get("title", ""),
+		"from_title": old_ch.get("title", old_id),
+		"to_title": new_ch.get("title", new_choice_id),
+		"method": governance,
+		"year": GameManager.current_year,
+		"day": GameManager.total_simulation_days
+	}
+	if governance == "council":
+		var conv = can_convene(s, instance_id)
+		if not conv["ok"]:
+			return {"ok": false, "reason": conv["reason"]}
+		var ballots: Array[Dictionary] = []
+		var yes_count = 0
+		for m in get_members(s):
+			var b = get_vote(s, m, old_ch, new_ch, hero.get_council_persuasion() if hero else 0.0)
+			ballots.append(b)
+			if b["yes"]:
+				yes_count += 1
+		var no_count = ballots.size() - yes_count
+		var passed = yes_count * 2 > ballots.size()
+		entry["ballots"] = ballots
+		entry["yes"] = yes_count
+		entry["no"] = no_count
+		entry["passed"] = passed
+		_add_revision_log(entry)
+		if hero:
+			hero.add_xp(s, 15.0, "Созыв совета: %s" % ev.get("title", ""))
+		if not passed:
+			# Совет не согласен: решение остаётся прежним, пока старейшины не изменят мнение
+			revision_cooldowns[instance_id] = GameManager.total_simulation_days + REVOTE_COOLDOWN_DAYS
+			s.economy.loyalty = maxf(0.0, s.economy.loyalty - 1.0)
+			EventBus.notification_toast.emit("🏛 Совет отверг пересмотр", "«%s»: за — %d, против — %d. Решение остаётся прежним." % [ev.get("title", ""), yes_count, no_count], "warning")
+			return {"ok": false, "method": "council", "reason": "Совет против: за %d, против %d" % [yes_count, no_count], "ballots": ballots, "yes": yes_count, "no": no_count}
+		for b in ballots:
+			var voter = s.population.find_citizen(b["citizen_id"])
+			if voter:
+				voter.add_memory("council_vote", "ruler", instance_id, 1.0, "Голосовал(а) %s пересмотра «%s»" % ["за" if b["yes"] else "против", ev.get("title", "")])
+		cem.apply_revision(instance_id, new_choice_id, "council", {"yes": yes_count, "no": no_count})
+		return {"ok": true, "method": "council", "reason": "", "ballots": ballots, "yes": yes_count, "no": no_count}
+	# Единоличный указ: племя может не признать вождя, если не доверяет ему
+	var threshold = DECREE_MIN_TRIBE_LOYALTY - (hero.get_decree_threshold_relief() if hero else 0.0)
+	if s.economy.loyalty < threshold:
+		s.economy.stability = maxf(0.0, s.economy.stability - 3.0)
+		entry["passed"] = false
+		entry["refused"] = true
+		_add_revision_log(entry)
+		EventBus.notification_toast.emit("👑 Указ не признан", "Племя не считается с вождём (лояльность %d < %d). «%s» остаётся прежним." % [int(s.economy.loyalty), int(threshold), ev.get("title", "")], "warning")
+		return {"ok": false, "method": "decree", "reason": "Племя не признало указ: лояльность %d, нужно %d" % [int(s.economy.loyalty), int(threshold)]}
+	var anger_mult = hero.get_decree_anger_mult() if hero else 1.0
+	var angered = 0
+	for c in s.population.citizens:
+		if not c.is_alive or c.is_ruler or c.cohort == "child":
+			continue
+		var diff = float(score_choice(c, new_ch)["score"]) - float(score_choice(c, old_ch)["score"])
+		if diff < -8.0:
+			c.loyalty = maxf(0.0, c.loyalty - 3.0 * anger_mult)
+			angered += 1
+	for m in get_members(s):
+		if not get_vote(s, m, old_ch, new_ch, 0.0)["yes"]:
+			m.loyalty = maxf(0.0, m.loyalty - 5.0 * anger_mult)
+			m.add_memory("decree_overrode", "ruler", instance_id, 1.8, "Вождь указом переменил «%s» против воли старейшины" % ev.get("title", ""))
+	entry["passed"] = true
+	entry["angered"] = angered
+	_add_revision_log(entry)
+	if hero:
+		hero.add_xp(s, 10.0, "Указ вождя: %s" % ev.get("title", ""))
+	cem.apply_revision(instance_id, new_choice_id, "decree", {"angered": angered})
+	return {"ok": true, "method": "decree", "reason": "", "angered": angered}
+
+func _add_revision_log(entry: Dictionary) -> void:
+	revision_log.push_front(entry)
+	if revision_log.size() > JOURNAL_LIMIT:
+		revision_log.resize(JOURNAL_LIMIT)
+
 # --- СОХРАНЕНИЕ ---
 
 func serialize() -> Dictionary:
@@ -360,7 +509,10 @@ func serialize() -> Dictionary:
 		"appointed_ids": appointed_ids.duplicate(),
 		"regent_id": regent_id,
 		"delegated_spheres": delegated_spheres.duplicate(),
-		"journal": journal.duplicate(true)
+		"journal": journal.duplicate(true),
+		"governance": governance,
+		"revision_cooldowns": revision_cooldowns.duplicate(),
+		"revision_log": revision_log.duplicate(true)
 	}
 
 func deserialize(data: Dictionary) -> void:
@@ -376,3 +528,11 @@ func deserialize(data: Dictionary) -> void:
 	for e in data.get("journal", []):
 		if e is Dictionary:
 			journal.append(e)
+	governance = String(data.get("governance", "council"))
+	if not GOVERNANCE_NAMES.has(governance):
+		governance = "council"
+	revision_cooldowns = data.get("revision_cooldowns", {}).duplicate()
+	revision_log.clear()
+	for e in data.get("revision_log", []):
+		if e is Dictionary:
+			revision_log.append(e)

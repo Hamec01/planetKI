@@ -91,6 +91,8 @@ var event_reactor: NPCEventReactor = null
 var relationship_graph: NPCRelationshipGraph = null
 # Совет старейшин и Правая рука вождя (поручение решений событий)
 var council: ElderCouncil = null
+# Развитие правителя как героя игрока (уровень, характеристики, навыки, снаряжение)
+var hero: PlayerHero = PlayerHero.new()
 var citizens: Array:
 	get: return population.citizens if population else []
 
@@ -287,6 +289,7 @@ func _init(p_id: String = "", p_name: String = "", p_faction: String = "", p_pos
 	event_reactor = NPCEventReactor.new(self)
 	relationship_graph = NPCRelationshipGraph.new(id)
 	council = ElderCouncil.new(id)
+	hero.apply_to_ruler(self)
 	
 	if not EventBus.order_harvest_resource.is_connected(_on_order_harvest_resource):
 		EventBus.order_harvest_resource.connect(_on_order_harvest_resource)
@@ -2307,6 +2310,7 @@ func update_citizens(delta: float) -> void:
 		var cur_season = GameManager.get_season() if GameManager else "Лето"
 		c.check_autonomous_emotes(delta, cur_season)
 		_apply_weather_and_clothing(c, cur_season, delta)
+		_update_stamina(c, delta)
 
 		# 2b. Таймер устойчивости текущего выбора (Hysteresis / Commitment) (S08)
 		if c.commitment_timer > 0.0:
@@ -3716,7 +3720,10 @@ func update_citizens(delta: float) -> void:
 			if c.work_timer <= 0.0:
 				c.work_timer = 1.2
 				var base_dmg = 15.0
-				if c.job_id in ["guard", "warrior"]:
+				if c.is_ruler:
+					# Вождь бьёт по своим настоящим характеристикам (сила, оружие, навыки героя)
+					base_dmg = float(c.get_combat_stats()["raw_damage"]) * (1.0 + c.beast_damage_bonus)
+				elif c.job_id in ["guard", "warrior"]:
 					base_dmg = 26.0
 				elif c.job_id == "hunter":
 					var camp_inst = _get_hunting_camp_instance(c)
@@ -3728,6 +3735,8 @@ func update_citizens(delta: float) -> void:
 				else:
 					base_dmg = maxf(12.0, float(c.traits.get("bravery", 50.0)) * 0.2 + float(c.traits.get("temper", 20.0)) * 0.2)
 
+				if c.is_exhausted():
+					base_dmg *= 0.6 # выбившийся из сил бьёт слабее
 				var killed = animal.take_damage(base_dmg, c.citizen_id)
 				if not killed and animal.is_alive():
 					# Зверь даёт сдачи защитнику
@@ -3737,6 +3746,9 @@ func update_citizens(delta: float) -> void:
 						continue
 
 				if killed:
+					if c.is_ruler and hero:
+						var threat = float(CombatStatsResolver.calculate_animal_stats(animal.type_id).get("threat", 0.5))
+						hero.add_xp(self, 10.0 + threat * 20.0, "Победа над зверем: %s" % _get_animal_display_name(animal.type_id))
 					var carcass = GameManager.wildlife_manager.create_carcass_from_animal(animal)
 					GameManager.wildlife_manager.animals.erase(c.target_id)
 					if c.job_id == "hunter":
@@ -4650,6 +4662,28 @@ const WARM_CLOTHES_WEAR_OTHER: float = 0.01 # в секунду в тёплые 
 const COLD_ENERGY_DRAIN: float = 0.15 # доп. потеря сил в секунду
 const COLD_HEALTH_DRAIN: float = 0.02 # потеря здоровья в секунду
 
+# --- Выносливость: тратится в бою, работе и пути, восстанавливается на отдыхе ---
+const STAMINA_DRAIN: Dictionary = {
+	CitizenNPC.State.ATTACKING: 6.0,
+	CitizenNPC.State.WORKING: 1.2,
+	CitizenNPC.State.GATHERING: 1.0,
+	CitizenNPC.State.BUTCHERING: 1.0,
+	CitizenNPC.State.CARRYING: 0.9,
+	CitizenNPC.State.MOVING_TO_WORK: 0.4
+}
+const STAMINA_REGEN_REST: float = 6.0
+const STAMINA_REGEN_IDLE: float = 2.0
+
+func _update_stamina(c: CitizenNPC, delta: float) -> void:
+	var change = 0.0
+	if STAMINA_DRAIN.has(c.state):
+		change = -float(STAMINA_DRAIN[c.state])
+	elif c.state in [CitizenNPC.State.SLEEPING, CitizenNPC.State.RESTING]:
+		change = STAMINA_REGEN_REST
+	else:
+		change = STAMINA_REGEN_IDLE
+	c.stamina_current = clampf(c.stamina_current + change * delta, 0.0, c.stamina_max)
+
 # Отправить жителя на склад за новой тёплой одеждой, если старая износилась и запас есть
 func _try_fetch_clothes(c: CitizenNPC) -> bool:
 	if c.warm_clothes >= WARM_CLOTHES_REPLACE_AT or c.cargo_amount > 0.0 or economy.get_resource("clothes") < 1.0:
@@ -5437,6 +5471,7 @@ func serialize() -> Dictionary:
 		"deceased_registry": deceased_registry.duplicate(true),
 		"construction_queue": queue_serialized,
 		"council": council.serialize() if council else {},
+		"hero": hero.serialize(),
 		"population": population.serialize() if population else {}
 	}
 
@@ -5506,6 +5541,9 @@ func deserialize(data: Dictionary) -> void:
 					q_obj["materials_required"] = tb["materials_required"].duplicate()
 	if data.has("population") and population:
 		population.deserialize(data["population"])
+	hero = PlayerHero.new()
+	hero.deserialize(data.get("hero", {}))
+	hero.apply_to_ruler(self)
 
 func get_settlement_footpaths() -> Array[Dictionary]:
 	var footpaths: Array[Dictionary] = []

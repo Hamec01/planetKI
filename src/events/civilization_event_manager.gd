@@ -355,6 +355,18 @@ func trigger_event(ev: Dictionary, context: Dictionary = {}) -> String:
 		resolve_by_council(instance_id)
 	return instance_id
 
+# Личное решение вождя: опыт героя и (навык «Сердце рода») признательность согласных
+func _reward_ruler_for_decision(choice: Dictionary, title: String) -> void:
+	var s = _get_council_settlement()
+	if s == null or s.hero == null:
+		return
+	var heart = s.hero.get_skill_rank("heart_of_clan")
+	if heart > 0:
+		for c in s.population.citizens:
+			if c.is_alive and not c.is_ruler and c.cohort != "child" and float(s.council.score_choice(c, choice)["score"]) >= 8.0:
+				c.loyalty = minf(100.0, c.loyalty + float(heart))
+	s.hero.add_xp(s, 25.0, "Решение вождя: %s" % title)
+
 # --- СОВЕТ СТАРЕЙШИН: решения Правой руки ---
 
 # События решает вождь игрока, поэтому совет берётся из поселения игрока
@@ -444,25 +456,8 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	
 	# 2. Обработка религии
 	if group_name == "religion_base":
-		culture.religion_data["defined"] = true
-		culture.religion_data["type"] = group_value
-		culture.religion_data["established_year"] = cur_year
-		match group_value:
-			"ANIMISM":
-				culture.religion_data["name"] = "Культ духов природы"
-			"MONOTHEISM":
-				var god_name = extra_data.get("deity_name", "Творец Небес")
-				culture.religion_data["name"] = "Вера в %s" % god_name
-				culture.religion_data["deity_name"] = god_name
-			"POLYTHEISM":
-				var pantheon = extra_data.get("pantheon_name", "Великий Пантеон")
-				culture.religion_data["name"] = pantheon
-				culture.religion_data["pantheon_name"] = pantheon
-			"ANCESTOR_WORSHIP":
-				culture.religion_data["name"] = "Почитание предков"
-			"EARLY_RATIONALISM":
-				culture.religion_data["name"] = "Естественный разум"
-				
+		_apply_religion(group_value, extra_data)
+		
 	# 3. Разблокировка специальных зданий
 	var unlock_b = chosen_choice.get("unlock_building", "")
 	if unlock_b != "":
@@ -490,6 +485,7 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 		GameManager.add_history_entry(cur_year, title, "Народ постановил: «%s»" % choice_title, category)
 		# 7. Всплывающее уведомление
 		EventBus.notification_toast.emit("🏛 Выбор народа: %s" % title, "Принято решение: %s" % choice_title, "good")
+		_reward_ruler_for_decision(chosen_choice, title)
 	
 	ev["status"] = "resolved"
 	ev["resolved_day"] = GameManager.total_simulation_days
@@ -507,6 +503,153 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 			choice_index = i
 			break
 	EventBus.event_resolved.emit(template_id, choice_index, {"event": ev, "choice_id": choice_id})
+
+func _apply_religion(group_value: String, extra_data: Dictionary = {}) -> void:
+	var culture: CultureMemory = GameManager.culture_memory
+	culture.religion_data["defined"] = true
+	culture.religion_data["type"] = group_value
+	culture.religion_data["established_year"] = GameManager.current_year
+	match group_value:
+		"ANIMISM":
+			culture.religion_data["name"] = "Культ духов природы"
+		"MONOTHEISM":
+			var god_name = extra_data.get("deity_name", culture.religion_data.get("deity_name", "Творец Небес"))
+			if god_name == "":
+				god_name = "Творец Небес"
+			culture.religion_data["name"] = "Вера в %s" % god_name
+			culture.religion_data["deity_name"] = god_name
+		"POLYTHEISM":
+			var pantheon = extra_data.get("pantheon_name", culture.religion_data.get("pantheon_name", "Великий Пантеон"))
+			if pantheon == "":
+				pantheon = "Великий Пантеон"
+			culture.religion_data["name"] = pantheon
+			culture.religion_data["pantheon_name"] = pantheon
+		"ANCESTOR_WORSHIP":
+			culture.religion_data["name"] = "Почитание предков"
+		"EARLY_RATIONALISM":
+			culture.religion_data["name"] = "Естественный разум"
+
+# ==============================================================================
+# ПЕРЕСМОТР ПРИНЯТЫХ РЕШЕНИЙ (закон, обычай, устройство промысла)
+# ------------------------------------------------------------------------------
+# Пересмотреть можно решение, которое установило длящуюся норму: обычай/закон
+# (группа или традиция), открытую постройку/практику или зону вырубки. Разовые
+# дела (кого-то накормили, кому-то помогли) уже свершились — их не отменить.
+# При пересмотре разовые выгоды нового варианта (еда, шкуры, знания) не выдаются
+# повторно: меняется только сама норма.
+# ==============================================================================
+
+const REVISION_PERSISTENT_KEYS: Array[String] = ["set_logging_zone_near", "set_logging_zone_far", "set_logging_zone_all", "no_logging_zone"]
+
+static func _choice_sets_norm(ev: Dictionary, ch: Dictionary) -> bool:
+	if ev.get("exclusive_group", "") != "" or ch.has("group_value") or ch.has("tradition_id"):
+		return true
+	if ch.get("unlock_building", "") != "" or ch.get("unlock_practice", "") != "":
+		return true
+	for k in ch.get("consequences", {}):
+		if k in REVISION_PERSISTENT_KEYS:
+			return true
+	return false
+
+func is_revisable(ev: Dictionary) -> bool:
+	if ev.get("status", "") != "resolved":
+		return false
+	var chosen = String(ev.get("chosen_choice_id", ""))
+	if chosen in ["", "deferred", "no_intervention"]:
+		return false
+	var choices: Array = ev.get("choices", [])
+	if choices.size() < 2:
+		return false
+	for ch in choices:
+		if _choice_sets_norm(ev, ch):
+			return true
+	return false
+
+func get_choice(ev: Dictionary, choice_id: String) -> Dictionary:
+	for ch in ev.get("choices", []):
+		if ch.get("id", "") == choice_id:
+			return ch
+	return {}
+
+# Действующие (последние по каждому шаблону) решения, которые можно пересмотреть
+func get_revisable_decisions() -> Array[Dictionary]:
+	var latest: Dictionary = {}
+	for inst_id in event_instances:
+		var ev: Dictionary = event_instances[inst_id]
+		if not is_revisable(ev):
+			continue
+		var tid = ev.get("template_id", inst_id)
+		if not latest.has(tid) or int(ev.get("resolved_day", 0)) >= int(latest[tid].get("resolved_day", 0)):
+			latest[tid] = ev
+	var result: Array[Dictionary] = []
+	for tid in latest:
+		result.append(latest[tid])
+	result.sort_custom(func(a, b): return int(a.get("resolved_day", 0)) > int(b.get("resolved_day", 0)))
+	return result
+
+# Применить пересмотр: норма прежнего выбора заменяется нормой нового.
+# method: "council" (решение совета) или "decree" (указ вождя). Возвращает true при успехе.
+func apply_revision(instance_id: String, new_choice_id: String, method: String, details: Dictionary = {}) -> bool:
+	var ev: Dictionary = event_instances.get(instance_id, {})
+	if ev.is_empty() or not is_revisable(ev):
+		return false
+	var old_id = String(ev.get("chosen_choice_id", ""))
+	if old_id == new_choice_id:
+		return false
+	var old_ch = get_choice(ev, old_id)
+	var new_ch = get_choice(ev, new_choice_id)
+	if new_ch.is_empty():
+		return false
+	var culture: CultureMemory = GameManager.culture_memory
+	var template_id = ev.get("template_id", instance_id)
+	var group_name = ev.get("exclusive_group", "")
+	# 1. Прежняя норма перестаёт действовать, новая записывается в культурную память
+	var old_trad = old_ch.get("tradition_id", template_id + "_" + old_id)
+	culture.entries.erase(old_trad)
+	var new_trad = new_ch.get("tradition_id", template_id + "_" + new_choice_id)
+	culture.set_tradition(new_trad, group_name, new_ch.get("group_value", ""), ev.get("title", "Событие"), template_id, new_ch.get("title", ""), ev.get("category", "Общее"), GameManager.current_year, GameManager.current_day)
+	if group_name == "religion_base":
+		_apply_religion(new_ch.get("group_value", ""))
+	# 2. Новые постройки и практики открываются (уже построенное не сносится)
+	if new_ch.get("unlock_building", "") != "":
+		culture.unlock_building(new_ch["unlock_building"])
+	if new_ch.get("unlock_practice", "") != "":
+		culture.unlock_practice(new_ch["unlock_practice"])
+	# 3. Длящиеся последствия нового выбора (зоны вырубки); разовые выгоды не повторяются
+	var persistent: Dictionary = {}
+	var new_cons: Dictionary = new_ch.get("consequences", {})
+	for k in new_cons:
+		if k in REVISION_PERSISTENT_KEYS:
+			persistent[k] = new_cons[k]
+	var s = _get_council_settlement()
+	if not persistent.is_empty() and s:
+		_apply_choice_consequences(ev, new_ch, persistent, s)
+	# 4. Запись в историю решения
+	var revisions: Array = ev.get("revisions", [])
+	var rec = details.duplicate(true)
+	rec["from"] = old_id
+	rec["to"] = new_choice_id
+	rec["from_title"] = old_ch.get("title", old_id)
+	rec["to_title"] = new_ch.get("title", new_choice_id)
+	rec["method"] = method
+	rec["day"] = GameManager.total_simulation_days
+	rec["year"] = GameManager.current_year
+	revisions.append(rec)
+	ev["revisions"] = revisions
+	ev["chosen_choice_id"] = new_choice_id
+	ev.erase("decided_by")
+	event_instances[instance_id] = ev
+	var how = "Совет старейшин поддержал вождя" if method == "council" else "Вождь объявил указ"
+	GameManager.add_history_entry(GameManager.current_year, ev.get("title", "Событие"), "%s: «%s» заменено на «%s»" % [how, rec["from_title"], rec["to_title"]], ev.get("category", "Общее"))
+	EventBus.notification_toast.emit("📜 Решение изменено: %s" % ev.get("title", ""), "%s. Теперь: «%s»" % [how, rec["to_title"]], "good")
+	# 5. Жители узнают о новом решении (reactions_by_choice шаблона)
+	var idx = 0
+	var choices: Array = ev.get("choices", [])
+	for i in range(choices.size()):
+		if choices[i].get("id", "") == new_choice_id:
+			idx = i
+	EventBus.event_resolved.emit(template_id, idx, {"event": ev, "choice_id": new_choice_id, "revision": true})
+	return true
 
 func _find_citizen(pop: RefCounted, cit_id: String) -> CitizenNPC:
 	if not pop or not ("citizens" in pop):

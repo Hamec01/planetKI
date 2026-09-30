@@ -5371,6 +5371,149 @@ func _ready() -> void:
 	assert(council131.get_regent(s131) == null and council131.delegated_spheres.is_empty(), "Right hand's death returns all decisions to the ruler")
 	council131.dismiss_member(s131, sulky131.citizen_id)
 	print("OK 131. Elder council: appoint members, choose the right hand, delegate spheres, character-driven decisions, journal, save/load, revocation.")
+
+	# --------------------------------------------------------------------------
+	# TEST 132: ПЕРЕСМОТР РЕШЕНИЙ — СОЗЫВ СОВЕТА С ГОЛОСОВАНИЕМ ИЛИ УКАЗ ВОЖДЯ
+	# --------------------------------------------------------------------------
+	var s132: SettlementData = GameManager.get_player_settlement()
+	var council132: ElderCouncil = s132.council
+	var cem132 = GameManager.civilization_event_manager
+	council132.set_governance(s132, "council")
+	var law_ev = {
+		"id": "TEST-REV-132", "title": "Обычай костра", "category": "Традиции рода",
+		"description": "Тестовый закон.", "once": false, "priority": 1, "conditions": {},
+		"choices": [
+			{"id": "A", "title": "Хранить обычай предков", "desc": "Завет предков и старейшин неизменен.", "effects_desc": "", "tradition_id": "rev132_a"},
+			{"id": "B", "title": "Ввести новый обычай", "desc": "Новое знание и перемены.", "effects_desc": "", "tradition_id": "rev132_b"}
+		]
+	}
+	cem132.active_event.clear()
+	var hero132: PlayerHero = s132.hero
+	var xp_before_132 = hero132.xp + hero132.level * 1000.0
+	var law_id = cem132.trigger_event(law_ev)
+	cem132.apply_choice(law_id, "A")
+	cem132.active_event.clear()
+	assert(hero132.xp + hero132.level * 1000.0 > xp_before_132, "A personal ruler decision grants hero experience")
+	assert(GameManager.culture_memory.has_tradition("rev132_a"), "Original norm is in force")
+	assert(cem132.is_revisable(cem132.event_instances[law_id]), "A norm-setting decision is revisable")
+	var found132 = false
+	for d132 in cem132.get_revisable_decisions():
+		if d132.get("instance_id", "") == law_id:
+			found132 = true
+	assert(found132, "Revisable decisions list contains the law")
+	# Совет меньше трёх — созвать нельзя
+	for m_old in council132.get_members(s132):
+		if council132.appointed_ids.has(m_old.citizen_id):
+			council132.dismiss_member(s132, m_old.citizen_id)
+	var elders132: Array[CitizenNPC] = []
+	for i in range(4):
+		var e132 = CitizenNPC.new("elder132_%d" % i, "Старец %d" % i, "m", 60 + i, "elder")
+		e132.settlement_id = s132.id
+		e132.traits["tradition"] = 95.0
+		e132.traits["curiosity"] = 10.0
+		e132.loyalty = 50.0
+		elders132.append(e132)
+	s132.population.citizens.append(elders132[0])
+	s132.population.citizens.append(elders132[1])
+	var before_members = council132.get_members(s132).size()
+	if before_members < ElderCouncil.MIN_VOTERS:
+		assert(not council132.can_convene(s132, law_id)["ok"], "Council with fewer than 3 elders cannot be convened")
+	s132.population.citizens.append(elders132[2])
+	s132.population.citizens.append(elders132[3])
+	assert(council132.can_convene(s132, law_id)["ok"], "Council of 3+ elders can be convened")
+	# Старейшины-традиционалисты голосуют против новшества
+	var res_no = council132.request_revision(s132, cem132, law_id, "B")
+	assert(not res_no["ok"] and res_no.get("method", "") == "council", "Traditionalist council rejects the change")
+	assert(int(res_no["no"]) > int(res_no["yes"]), "Most elders voted against")
+	assert(GameManager.culture_memory.has_tradition("rev132_a") and not GameManager.culture_memory.has_tradition("rev132_b"), "Rejected revision leaves the old norm in force")
+	assert(not council132.can_convene(s132, law_id)["ok"], "Rejected question cannot be re-convened immediately")
+	# Мнение совета изменилось — пересмотр проходит
+	for e132 in elders132:
+		e132.traits["tradition"] = 10.0
+		e132.traits["curiosity"] = 95.0
+	council132.revision_cooldowns.erase(law_id)
+	var res_yes = council132.request_revision(s132, cem132, law_id, "B")
+	assert(res_yes["ok"], "Council that now agrees approves the change (%s)" % str(res_yes.get("reason", "")))
+	assert(GameManager.culture_memory.has_tradition("rev132_b") and not GameManager.culture_memory.has_tradition("rev132_a"), "Approved revision replaces the norm")
+	assert(cem132.event_instances[law_id]["chosen_choice_id"] == "B" and cem132.event_instances[law_id]["revisions"].size() == 1, "Revision is recorded on the decision")
+	# Единоличная власть: указ без созыва
+	var loyalty_before_gov = elders132[0].loyalty
+	council132.set_governance(s132, "autocracy")
+	assert(elders132[0].loyalty < loyalty_before_gov, "Elders resent being sidelined by autocracy")
+	s132.economy.loyalty = 20.0
+	var res_refused = council132.request_revision(s132, cem132, law_id, "A")
+	assert(not res_refused["ok"] and cem132.event_instances[law_id]["chosen_choice_id"] == "B", "Tribe ignores the decree of a distrusted ruler")
+	s132.economy.loyalty = 80.0
+	var res_decree = council132.request_revision(s132, cem132, law_id, "A")
+	assert(res_decree["ok"] and res_decree["method"] == "decree", "Trusted ruler changes the law by decree")
+	assert(GameManager.culture_memory.has_tradition("rev132_a") and cem132.event_instances[law_id]["chosen_choice_id"] == "A", "Decree restores the old norm")
+	assert(elders132[0].has_memory("decree_overrode"), "Elders who disagreed remember being overruled")
+	var saved_c132 = council132.serialize()
+	var loaded_c132 = ElderCouncil.new(s132.id)
+	loaded_c132.deserialize(saved_c132)
+	assert(loaded_c132.governance == "autocracy" and loaded_c132.revision_log.size() == council132.revision_log.size(), "Governance and revision log survive save/load")
+	council132.set_governance(s132, "council")
+	print("OK 132. Decision revision: council vote (majority, rejection, cooldown, change of heart) and autocratic decree (tribe may ignore it).")
+
+	# --------------------------------------------------------------------------
+	# TEST 133: ГЕРОЙ-ВОЖДЬ — УРОВНИ, ОЧКИ ХАРАКТЕРИСТИК, НАВЫКИ, СНАРЯЖЕНИЕ, ВЫНОСЛИВОСТЬ
+	# --------------------------------------------------------------------------
+	var hero133: PlayerHero = PlayerHero.new()
+	s132.hero = hero133
+	hero133.apply_to_ruler(s132)
+	var ruler133 = PlayerHero.get_ruler(s132)
+	assert(ruler133 != null and ruler133.is_ruler, "The hero is the ruler citizen")
+	assert(ruler133.bonus_strength == PlayerHero.BASE_ATTR, "Hero starts with base attributes applied to the ruler")
+	var dmg0 = float(ruler133.get_combat_stats()["raw_damage"])
+	var levels = hero133.add_xp(s132, PlayerHero.xp_to_next(1), "Тест")
+	assert(levels == 1 and hero133.level == 2, "Enough XP raises the level")
+	assert(hero133.unspent_attr_points == PlayerHero.POINTS_PER_LEVEL and hero133.unspent_skill_points == PlayerHero.SKILL_POINTS_PER_LEVEL, "Level up grants 3 attribute points and 1 skill point")
+	var str_before = hero133.get_attribute(s132, "strength")
+	for i in range(3):
+		assert(hero133.allocate_point(s132, "strength"), "Point allocated")
+	assert(not hero133.allocate_point(s132, "strength"), "No points left")
+	assert(hero133.get_attribute(s132, "strength") == str_before + 3, "Strength 5 + 3 points = 8")
+	var dmg1 = float(ruler133.get_combat_stats()["raw_damage"])
+	assert(dmg1 > dmg0, "More strength = harder hits (%.2f -> %.2f)" % [dmg0, dmg1])
+	assert(hero133.learn_skill(s132, "mighty_arm"), "Skill learned with a skill point")
+	assert(ruler133.allowed_other_damage_bonus == 0.08 and float(ruler133.get_combat_stats()["raw_damage"]) > dmg1, "Mighty arm raises real damage")
+	assert(not hero133.learn_skill(s132, "hardened_body"), "No skill points left")
+	assert(not hero133.can_learn("beast_bane")["ok"], "High-level skill locked below required level")
+	# Снаряжение со склада племени
+	s132.equipment_stockpile["club"] = 1
+	var eq_res = hero133.equip_from_stockpile(s132, "club")
+	assert(eq_res["ok"] and ruler133.equipment["weapon"] == "club" and not s132.equipment_stockpile.has("club"), "Club taken from the tribe armoury and wielded")
+	assert(float(ruler133.get_combat_stats()["raw_damage"]) > dmg1 * 1.08, "A club hits harder than fists")
+	assert(hero133.unequip(s132, "weapon") and int(s132.equipment_stockpile.get("club", 0)) == 1 and ruler133.equipment["weapon"] == "unarmed", "Unequipped club returns to the armoury")
+	# Выносливость тратится в бою и восстанавливается на отдыхе
+	ruler133.stamina_current = ruler133.stamina_max
+	ruler133.state = CitizenNPC.State.ATTACKING
+	s132._update_stamina(ruler133, 5.0)
+	assert(ruler133.stamina_current < ruler133.stamina_max, "Fighting drains stamina")
+	var st_low = ruler133.stamina_current
+	ruler133.state = CitizenNPC.State.RESTING
+	s132._update_stamina(ruler133, 2.0)
+	assert(ruler133.stamina_current > st_low, "Resting restores stamina")
+	ruler133.state = CitizenNPC.State.IDLE
+	ruler133.stamina_current = 5.0
+	var spd_tired = ruler133.get_work_speed_multiplier()
+	ruler133.stamina_current = ruler133.stamina_max
+	assert(ruler133.get_work_speed_multiplier() > spd_tired, "An exhausted citizen works slower")
+	# Сохранение
+	var hero_saved = hero133.serialize()
+	var hero_loaded = PlayerHero.new()
+	hero_loaded.deserialize(hero_saved)
+	assert(hero_loaded.level == 2 and int(hero_loaded.allocated["strength"]) == 3 and hero_loaded.get_skill_rank("mighty_arm") == 1, "Hero progress survives save/load")
+	# Панель героя строится на всех вкладках
+	var hero_panel = HeroPanel.new()
+	add_child(hero_panel)
+	for tab_i in [HeroPanel.TAB_INVENTORY, HeroPanel.TAB_CHARACTER, HeroPanel.TAB_SKILLS]:
+		hero_panel.visible = false
+		hero_panel.open_tab(tab_i)
+		assert(hero_panel.visible, "Hero panel opens tab %d" % tab_i)
+	assert(hero_panel.skills_box.get_child_count() == PlayerHero.SKILLS.size() + 1, "Skills tab lists every skill")
+	hero_panel.queue_free()
+	print("OK 133. Hero chief: levels (+3 attribute points), strength -> damage, skills, armoury equipment, stamina drain/regen, save/load, hero panel.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

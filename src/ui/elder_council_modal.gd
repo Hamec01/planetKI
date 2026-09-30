@@ -16,6 +16,13 @@ var members_box: VBoxContainer
 var candidates_box: VBoxContainer
 var journal_box: VBoxContainer
 var status_lbl: Label
+var tabs: TabContainer
+var governance_opt: OptionButton
+var governance_hint_lbl: Label
+var decisions_box: VBoxContainer
+var revision_log_box: VBoxContainer
+var _decisions_signature: String = ""
+var _selected_alternatives: Dictionary = {} # instance_id -> выбранный вариант
 var _refresh_timer: float = 0.0
 var _updating: bool = false
 var _lists_signature: String = ""
@@ -117,10 +124,18 @@ func _build_ui() -> void:
 	close_btn.pressed.connect(func(): visible = false)
 	top.add_child(close_btn)
 
+	tabs = TabContainer.new()
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_vbox.add_child(tabs)
+	var council_tab = VBoxContainer.new()
+	council_tab.name = "🏛 Совет"
+	council_tab.add_theme_constant_override("separation", 8)
+	tabs.add_child(council_tab)
+
 	# Карточка Правой руки и поручения
 	var regent_card = PanelContainer.new()
 	regent_card.add_theme_stylebox_override("panel", _make_panel_style(Color(0.14, 0.12, 0.08, 0.95), Color(0.85, 0.68, 0.28, 0.9)))
-	main_vbox.add_child(regent_card)
+	council_tab.add_child(regent_card)
 	var rc_vbox = VBoxContainer.new()
 	rc_vbox.add_theme_constant_override("separation", 4)
 	regent_card.add_child(rc_vbox)
@@ -157,7 +172,7 @@ func _build_ui() -> void:
 	var cols = HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 10)
 	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_vbox.add_child(cols)
+	council_tab.add_child(cols)
 	var left = VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cols.add_child(left)
@@ -174,13 +189,158 @@ func _build_ui() -> void:
 	candidates_box = c[1]
 
 	# Журнал решений Правой руки
-	main_vbox.add_child(_label("📜 Решения Правой руки:", 11, Color(0.7, 0.85, 1.0)))
+	council_tab.add_child(_label("📜 Решения Правой руки:", 11, Color(0.7, 0.85, 1.0)))
 	var j = _scroll_list(110)
-	main_vbox.add_child(j[0])
+	council_tab.add_child(j[0])
 	journal_box = j[1]
+
+	_build_revision_tab()
 
 	status_lbl = _label("", 10, Color(1.0, 0.7, 0.5))
 	main_vbox.add_child(status_lbl)
+
+func _build_revision_tab() -> void:
+	var rev_tab = VBoxContainer.new()
+	rev_tab.name = "📜 Пересмотр решений"
+	rev_tab.add_theme_constant_override("separation", 6)
+	tabs.add_child(rev_tab)
+	var gov_row = HBoxContainer.new()
+	gov_row.add_theme_constant_override("separation", 8)
+	rev_tab.add_child(gov_row)
+	gov_row.add_child(_label("Как вождь меняет прежние решения:", 11, Color(0.8, 0.88, 1.0)))
+	governance_opt = OptionButton.new()
+	governance_opt.add_theme_font_size_override("font_size", 10)
+	var idx = 0
+	for mode in ElderCouncil.GOVERNANCE_NAMES:
+		governance_opt.add_item(ElderCouncil.GOVERNANCE_NAMES[mode], idx)
+		governance_opt.set_item_metadata(idx, mode)
+		idx += 1
+	governance_opt.item_selected.connect(_on_governance_selected)
+	gov_row.add_child(governance_opt)
+	governance_hint_lbl = _label("", 10, Color(0.8, 0.8, 0.75))
+	rev_tab.add_child(governance_hint_lbl)
+	rev_tab.add_child(_label("Действующие решения (обычаи, законы, устройство промысла):", 11, Color(0.7, 0.85, 1.0)))
+	var d = _scroll_list(220)
+	rev_tab.add_child(d[0])
+	decisions_box = d[1]
+	rev_tab.add_child(_label("🗳 Созывы совета и указы:", 11, Color(0.7, 0.85, 1.0)))
+	var l = _scroll_list(110)
+	rev_tab.add_child(l[0])
+	revision_log_box = l[1]
+
+func _refresh_revision_tab(s: SettlementData, council: ElderCouncil) -> void:
+	var cem = GameManager.civilization_event_manager
+	if cem == null:
+		return
+	for i in range(governance_opt.item_count):
+		if governance_opt.get_item_metadata(i) == council.governance:
+			governance_opt.select(i)
+	var n_members = council.get_members(s).size()
+	if council.governance == "council":
+		governance_hint_lbl.text = "Изменение проходит, если «за» больше половины совета. В совете %d (нужно не меньше %d). Отказ совета — решение остаётся, повторный созыв через %d дн." % [n_members, ElderCouncil.MIN_VOTERS, ElderCouncil.REVOTE_COOLDOWN_DAYS]
+	else:
+		var hero: PlayerHero = s.hero
+		var threshold = ElderCouncil.DECREE_MIN_TRIBE_LOYALTY - (hero.get_decree_threshold_relief() if hero else 0.0)
+		governance_hint_lbl.text = "Указ действует сразу, но несогласные теряют лояльность, а старейшины помнят обиду. Племя признаёт указ, если его лояльность не ниже %d (сейчас %d)." % [int(threshold), int(s.economy.loyalty)]
+	var decisions = cem.get_revisable_decisions()
+	var sig_parts: Array[String] = [council.governance, str(n_members), str(council.revision_log.size())]
+	for ev in decisions:
+		sig_parts.append("%s:%s" % [ev.get("instance_id", ""), ev.get("chosen_choice_id", "")])
+	var sig = "|".join(sig_parts)
+	if sig == _decisions_signature:
+		return
+	_decisions_signature = sig
+	for ch in decisions_box.get_children():
+		ch.queue_free()
+	if decisions.is_empty():
+		decisions_box.add_child(_label("Пока нет принятых законов и обычаев, которые можно пересмотреть.", 10, Color(0.75, 0.75, 0.75)))
+	for ev in decisions:
+		_add_decision_row(s, council, cem, ev)
+	for ch in revision_log_box.get_children():
+		ch.queue_free()
+	if council.revision_log.is_empty():
+		revision_log_box.add_child(_label("Решения ещё не пересматривались.", 10, Color(0.75, 0.75, 0.75)))
+	for e in council.revision_log:
+		revision_log_box.add_child(_label(_format_revision_entry(e), 10, Color(0.88, 0.86, 0.78)))
+
+func _add_decision_row(s: SettlementData, council: ElderCouncil, cem: CivilizationEventManager, ev: Dictionary) -> void:
+	var inst_id: String = ev.get("instance_id", "")
+	var cur_id: String = ev.get("chosen_choice_id", "")
+	var cur_ch = cem.get_choice(ev, cur_id)
+	var r = _row_container(false)
+	var v: VBoxContainer = r[1]
+	var who = ""
+	var revs: Array = ev.get("revisions", [])
+	if not revs.is_empty():
+		who = " (изменено: %s)" % ("советом" if revs.back().get("method", "") == "council" else "указом")
+	elif ev.get("decided_by", "") != "":
+		who = " (решил(а) %s)" % ev["decided_by"]
+	v.add_child(_label("%s • %s" % [ev.get("title", ""), ev.get("category", "")], 11, Color(0.95, 0.9, 0.75)))
+	v.add_child(_label("Действует: «%s»%s" % [cur_ch.get("title", cur_id), who], 10, Color(0.7, 0.9, 0.7)))
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	v.add_child(row)
+	var alt_opt = OptionButton.new()
+	alt_opt.add_theme_font_size_override("font_size", 10)
+	alt_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var i = 0
+	var preselect = -1
+	for ch in ev.get("choices", []):
+		if ch.get("id", "") == cur_id:
+			continue
+		alt_opt.add_item(ch.get("title", ch.get("id", "")), i)
+		alt_opt.set_item_metadata(i, ch.get("id", ""))
+		if _selected_alternatives.get(inst_id, "") == ch.get("id", ""):
+			preselect = i
+		i += 1
+	if preselect >= 0:
+		alt_opt.select(preselect)
+	alt_opt.item_selected.connect(func(sel): _selected_alternatives[inst_id] = alt_opt.get_item_metadata(sel))
+	row.add_child(alt_opt)
+	var act_btn = _small_button("🏛 Созвать совет" if council.governance == "council" else "👑 Объявить указ")
+	if council.governance == "council":
+		var conv = council.can_convene(s, inst_id)
+		act_btn.disabled = not conv["ok"]
+		act_btn.tooltip_text = conv["reason"]
+	act_btn.pressed.connect(func():
+		var chosen_alt = String(alt_opt.get_item_metadata(alt_opt.selected)) if alt_opt.selected >= 0 else ""
+		_on_request_revision(inst_id, chosen_alt)
+	)
+	row.add_child(act_btn)
+	decisions_box.add_child(r[0])
+
+func _format_revision_entry(e: Dictionary) -> String:
+	var head = "Год %d • «%s»: «%s» → «%s»" % [int(e.get("year", 0)), e.get("title", ""), e.get("from_title", ""), e.get("to_title", "")]
+	if e.get("method", "") == "council":
+		var votes: Array[String] = []
+		for b in e.get("ballots", []):
+			votes.append("%s %s (%s)" % [b.get("name", ""), "за" if b.get("yes", false) else "против", b.get("reason", "")])
+		return "%s — совет: %s (%d за / %d против). %s" % [head, "ПРИНЯТО" if e.get("passed", false) else "ОТВЕРГНУТО", int(e.get("yes", 0)), int(e.get("no", 0)), "; ".join(votes)]
+	if e.get("refused", false):
+		return "%s — указ НЕ ПРИЗНАН племенем" % head
+	return "%s — указ вождя, недовольных: %d" % [head, int(e.get("angered", 0))]
+
+func _on_governance_selected(idx: int) -> void:
+	if _updating:
+		return
+	var s = _get_settlement()
+	if s:
+		s.council.set_governance(s, String(governance_opt.get_item_metadata(idx)))
+		_decisions_signature = ""
+		refresh()
+
+func _on_request_revision(inst_id: String, new_choice_id: String) -> void:
+	var s = _get_settlement()
+	if s == null or new_choice_id == "":
+		return
+	var res = s.council.request_revision(s, GameManager.civilization_event_manager, inst_id, new_choice_id)
+	_selected_alternatives.erase(inst_id)
+	_decisions_signature = ""
+	if res.get("ok", false):
+		status_lbl.text = "✅ Решение изменено" + ((" советом: %d за / %d против" % [int(res.get("yes", 0)), int(res.get("no", 0))]) if res.get("method", "") == "council" else " указом вождя")
+	else:
+		status_lbl.text = "⚠ " + String(res.get("reason", ""))
+	refresh()
 
 # --- ОБНОВЛЕНИЕ ---
 
@@ -210,6 +370,7 @@ func refresh() -> void:
 		_fill_members(s, council, regent)
 		_fill_candidates(s, council)
 		_fill_journal(council)
+	_refresh_revision_tab(s, council)
 	_updating = false
 
 func _make_signature(s: SettlementData, council: ElderCouncil) -> String:
