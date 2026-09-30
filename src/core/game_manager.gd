@@ -23,6 +23,8 @@ var current_time_period: String = "Утро" # "Утро", "День", "Вече
 
 # Скорость времени и централизованная пауза
 var is_paused: bool = false
+# Режим «Путь вождя» с прямым управлением: игрок сам водит правителя (WASD), камера следует за ним
+var hero_control_active: bool = false
 var user_paused: bool = false
 var modal_pause_count: int = 0
 var game_speed: float = 1.0 # 1.0, 2.0, 4.0, 8.0

@@ -39,6 +39,15 @@ func _process(delta: float) -> void:
 	var focused = get_viewport().gui_get_focus_owner()
 	if focused is LineEdit or focused is TextEdit:
 		return
+	
+	# Прямое управление вождём: WASD водит героя, камера плавно следует за ним
+	if GameManager.hero_control_active:
+		var s = GameManager.get_player_settlement()
+		var ruler = PlayerHero.get_ruler(s) if s is SettlementData else null
+		if ruler:
+			position = position.lerp(ruler.pos, clampf(8.0 * delta, 0.0, 1.0))
+			_clamp_position()
+		return
 		
 	# Перемещение клавиатурой (WASD / Стрелки)
 	var move_vec = Vector2.ZERO

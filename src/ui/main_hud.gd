@@ -131,6 +131,8 @@ var hero_xp_bar: ProgressBar = null
 var hero_hp_bar: ProgressBar = null
 var hero_stamina_bar: ProgressBar = null
 var _hero_bar_timer: float = 0.0
+var hero_controller: HeroController = null
+var dialogue_window: DialogueWindow = null
 var badge_council_btn: Button = null
 var faith_modal: Control = null
 var dev_inspector: Control = null
@@ -277,6 +279,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		if focused is LineEdit or focused is TextEdit:
 			return
 			
+		# Режим «Путь вождя»: WASD, E и F принадлежат герою (ходьба, разговор, еда)
+		if hero_mode and event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_E, KEY_F]:
+			if event.keycode == KEY_E and hero_controller:
+				var npc = hero_controller.try_talk()
+				if npc:
+					_open_dialogue(npc)
+			elif event.keycode == KEY_F and hero_controller:
+				hero_controller.try_eat()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_ESCAPE and dialogue_window and dialogue_window.visible:
+			dialogue_window.close()
+			get_viewport().set_input_as_handled()
+			return
 		match event.keycode:
 			KEY_SPACE:
 				GameManager.toggle_pause()
@@ -523,6 +539,11 @@ func _setup_hero_bar() -> void:
 	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
 	hbox.add_theme_constant_override("separation", 10)
 	hero_bar.add_child(hbox)
+	var hint = Label.new()
+	hint.text = "ПКМ — идти / подойти к жителю • WASD — идти • E — говорить • F — поесть"
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.add_theme_color_override("font_color", Color(0.8, 0.75, 0.6))
+	hbox.add_child(hint)
 	for item in [["🎒 Инвентарь [I]", HeroPanel.TAB_INVENTORY], ["🧍 Персонаж [C]", HeroPanel.TAB_CHARACTER], ["✨ Навыки [K]", HeroPanel.TAB_SKILLS]]:
 		var btn = Button.new()
 		btn.text = item[0]
@@ -551,6 +572,14 @@ func _setup_hero_bar() -> void:
 
 func set_hero_mode(enabled: bool) -> void:
 	hero_mode = enabled
+	if hero_controller == null:
+		hero_controller = HeroController.new()
+		hero_controller.name = "HeroController"
+		add_child(hero_controller)
+		hero_controller.talk_requested.connect(_open_dialogue)
+	hero_controller.set_active(enabled)
+	if not enabled and dialogue_window and dialogue_window.visible:
+		dialogue_window.close()
 	if bottom_dock_bar:
 		bottom_dock_bar.visible = not enabled
 	if hero_bar:
@@ -567,6 +596,21 @@ func set_hero_mode(enabled: bool) -> void:
 	if mode_toggle_btn:
 		mode_toggle_btn.text = "🏛 Правление [V]" if enabled else "⚔ Путь вождя [V]"
 		mode_toggle_btn.tooltip_text = "Вернуться к управлению поселением" if enabled else "Переключиться на управление самим вождём: инвентарь, персонаж, навыки"
+
+func _open_dialogue(npc: CitizenNPC) -> void:
+	if dialogue_window == null:
+		dialogue_window = DialogueWindow.new()
+		dialogue_window.name = "DialogueWindow"
+		add_child(dialogue_window)
+		dialogue_window.closed.connect(func():
+			if hero_controller:
+				hero_controller.in_dialogue = false
+		)
+	if dialogue_window.visible:
+		return
+	if hero_controller:
+		hero_controller.in_dialogue = true
+	dialogue_window.open_with(npc)
 
 func _open_hero_tab(tab: int) -> void:
 	if hero_panel == null:

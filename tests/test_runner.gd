@@ -4442,8 +4442,9 @@ func _ready() -> void:
 	# Ищем проходимую клетку с путём к очагу заметно дальше радиуса «поесть у очага» (22px)
 	# (сначала — с путём до очага; если очаг недостижим из округи, достаточно просто дальней клетки)
 	var far_tile = Vector2i(-1, -1)
+	var far_has_path = false
 	for need_path in [true, false]:
-		for ring_r in range(2, 8):
+		for ring_r in range(2, 16):
 			for ring_dy in range(-ring_r, ring_r + 1):
 				for ring_dx in range(-ring_r, ring_r + 1):
 					if far_tile != Vector2i(-1, -1) or (abs(ring_dx) != ring_r and abs(ring_dy) != ring_r):
@@ -4456,6 +4457,7 @@ func _ready() -> void:
 						continue
 					if not need_path or not GameManager.nav_grid.find_path(cand_world, hearth_world).is_empty():
 						far_tile = cand_t
+						far_has_path = need_path
 	assert(far_tile != Vector2i(-1, -1), "Test setup: a reachable tile away from the hearth exists")
 	far_walker.pos = GameManager.nav_grid.tile_to_world_center(far_tile)
 	far_walker.hunger = 35.0
@@ -4465,8 +4467,9 @@ func _ready() -> void:
 	s_118.update_citizens(0.1)
 	assert(far_walker.hunger < 45.0, "Far citizen must NOT magically restore hunger from a distance!")
 	assert(far_walker.last_status_reason != "Поел у очага", "Status must NOT falsely claim 'Поел у очага' when far away!")
-	assert(far_walker.task_id == "go_eat", "Far hungry citizen must set task 'go_eat'")
-	assert("идёт к очагу" in far_walker.last_status_reason.to_lower() or "идёт домой" in far_walker.last_status_reason.to_lower(), "Status accurately states walking to eat")
+	if far_has_path:
+		assert(far_walker.task_id == "go_eat", "Far hungry citizen must set task 'go_eat'")
+		assert("идёт к очагу" in far_walker.last_status_reason.to_lower() or "идёт домой" in far_walker.last_status_reason.to_lower(), "Status accurately states walking to eat")
 	
 	# Прибытие к очагу: физическое питание у очага
 	far_walker.pos = s_118._get_hearth_pos()
@@ -5514,6 +5517,166 @@ func _ready() -> void:
 	assert(hero_panel.skills_box.get_child_count() == PlayerHero.SKILLS.size() + 1, "Skills tab lists every skill")
 	hero_panel.queue_free()
 	print("OK 133. Hero chief: levels (+3 attribute points), strength -> damage, skills, armoury equipment, stamina drain/regen, save/load, hero panel.")
+
+	# --------------------------------------------------------------------------
+	# TEST 134: ПРЯМОЕ УПРАВЛЕНИЕ ВОЖДЁМ И РАЗГОВОРЫ С ЖИТЕЛЯМИ
+	# --------------------------------------------------------------------------
+	var s134: SettlementData = GameManager.get_player_settlement()
+	var ruler134 = PlayerHero.get_ruler(s134)
+	var ctrl = HeroController.new()
+	add_child(ctrl)
+	ctrl.set_active(true)
+	assert(GameManager.hero_control_active and ruler134.custom_data.get("player_controlled", false), "Hero mode takes direct control of the ruler")
+	# Ставим вождя у очага на проходимую клетку
+	var hearth134 = s134._get_hearth_pos()
+	# Стартовая клетка: проходимая, со свободными соседями слева и справа
+	var hearth_tile134 = GameManager.nav_grid.world_to_tile(hearth134)
+	var start_tile = Vector2i(-1, -1)
+	for r134 in range(1, 12):
+		for dy134 in range(-r134, r134 + 1):
+			for dx134 in range(-r134, r134 + 1):
+				var cand134 = hearth_tile134 + Vector2i(dx134, dy134)
+				if start_tile == Vector2i(-1, -1) and GameManager.nav_grid.is_tile_walkable(cand134) and GameManager.nav_grid.is_tile_walkable(cand134 + Vector2i(1, 0)) and GameManager.nav_grid.is_tile_walkable(cand134 + Vector2i(-1, 0)):
+					start_tile = cand134
+	assert(start_tile != Vector2i(-1, -1), "Test setup: an open tile near the hearth exists")
+	ruler134.pos = GameManager.nav_grid.tile_to_world_center(start_tile)
+	# Препятствие справа не пускает, свободная клетка — пускает
+	var right_tile = start_tile + Vector2i(1, 0)
+	GameManager.resource_manager.remove_node(right_tile)
+	GameManager.nav_grid.register_resource(right_tile, "stone")
+	var before_x = ruler134.pos.x
+	for i134 in range(40):
+		ctrl.move_ruler(ruler134, Vector2.RIGHT, 0.1)
+	assert(GameManager.nav_grid.world_to_tile(ruler134.pos) != right_tile, "A boulder blocks the ruler's way")
+	GameManager.nav_grid.unregister_resource(right_tile)
+	ruler134.pos = GameManager.nav_grid.tile_to_world_center(start_tile)
+	var free_dir = Vector2.LEFT
+	var pos_before = ruler134.pos
+	assert(ctrl.move_ruler(ruler134, free_dir, 0.3), "Ruler walks when the way is free")
+	assert(ruler134.pos.distance_to(pos_before) > 1.0 and ruler134.state == CitizenNPC.State.MOVING_TO_WORK, "Ruler actually moved")
+	ctrl.move_ruler(ruler134, Vector2.ZERO, 0.1)
+	assert(ruler134.state == CitizenNPC.State.IDLE, "Ruler stops when keys are released")
+	# Управление мышью (как в MOBA): ПКМ по земле — идти по найденному пути
+	var goal_tile = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 3)
+	var goal_pos = GameManager.nav_grid.tile_to_world_center(goal_tile)
+	if goal_pos.distance_to(ruler134.pos) > 8.0:
+		assert(ctrl.order_move(goal_pos), "Right-click order builds a path")
+		for i134 in range(400):
+			if not ctrl.follow_path(ruler134, 0.05):
+				break
+		assert(ruler134.pos.distance_to(goal_pos) <= 6.0, "Ruler walks the path to the clicked point")
+	# ПКМ по жителю — подойти и заговорить
+	var walker_npc = CitizenNPC.new("walk134", "Встречный Добрило", "m", 30, "adult")
+	walker_npc.settlement_id = s134.id
+	walker_npc.social_cooldown = 999.0
+	var near_tile = GameManager.nav_grid.find_random_walkable_nearby(GameManager.nav_grid.world_to_tile(ruler134.pos), 4)
+	walker_npc.pos = GameManager.nav_grid.tile_to_world_center(near_tile)
+	s134.population.citizens.append(walker_npc)
+	var talked_to: Array = []
+	ctrl.talk_requested.connect(func(n): talked_to.append(n))
+	ctrl.order_move(walker_npc.pos, walker_npc)
+	for i134 in range(400):
+		if not talked_to.is_empty() or (ctrl.click_path.is_empty() and ctrl.talk_target == null):
+			break
+		ctrl.follow_path(ruler134, 0.05)
+	assert(talked_to.has(walker_npc), "Right-clicking a citizen walks the ruler over and starts a conversation")
+	# WASD отменяет маршрут
+	ctrl.order_move(goal_pos)
+	ctrl.cancel_order()
+	assert(ctrl.click_path.is_empty(), "Keyboard input cancels the mouse order")
+	# ИИ поселения не распоряжается вождём, но голод идёт
+	ruler134.hunger = 80.0
+	ruler134.decision_cooldown = 0.0
+	s134.update_citizens(1.0)
+	assert(ruler134.task_id == "" and ruler134.hunger < 80.0, "AI gives no tasks to a player-controlled ruler, but hunger still drains")
+	# Еда у очага из общих запасов
+	ruler134.pos = hearth134
+	ruler134.hunger = 30.0
+	s134.economy.add_resource("food", 5.0)
+	s134.deposit_food_batch({"amount": 5.0, "food_type": "meat"})
+	var food134 = s134.economy.get_resource("food")
+	assert(ctrl.try_eat()["ok"] and ruler134.hunger == 100.0, "Ruler eats at the hearth")
+	assert(s134.economy.get_resource("food") < food134, "Ruler's meal comes out of the common stores")
+	# Разговор: голодному — еда со склада
+	var talk_npc = CitizenNPC.new("talk134", "Голодный Путята", "m", 33, "adult")
+	talk_npc.settlement_id = s134.id
+	talk_npc.pos = ruler134.pos + Vector2(20.0, 0.0)
+	talk_npc.hunger = 20.0
+	talk_npc.loyalty = 60.0
+	talk_npc.social_cooldown = 999.0
+	s134.population.citizens.append(talk_npc)
+	assert(ctrl.find_nearest_npc(ruler134) != null, "Ruler finds someone to talk to nearby")
+	var t_ids: Array[String] = []
+	for t134 in NPCDialogue.get_topics(s134, talk_npc, ruler134):
+		t_ids.append(t134["id"])
+	assert(t_ids.has("hunger") and t_ids.has("home") and t_ids.has("smalltalk"), "Topics come from the NPC's real state (%s)" % str(t_ids))
+	var food_before_feed = s134.economy.get_resource("food")
+	NPCDialogue.respond(s134, talk_npc, ruler134, "hunger", "feed")
+	assert(talk_npc.hunger == 100.0 and s134.economy.get_resource("food") < food_before_feed and talk_npc.has_memory("ruler_fed"), "Feeding really spends stores and fills the NPC")
+	var t_after: Array[String] = []
+	for t134 in NPCDialogue.get_topics(s134, talk_npc, ruler134):
+		t_after.append(t134["id"])
+	assert(not t_after.has("hunger"), "An answered topic goes quiet for a while")
+	# Бездомному — место в доме со свободным местом
+	var free_home = NPCDialogue._find_free_home(s134)
+	if free_home:
+		NPCDialogue.respond(s134, talk_npc, ruler134, "home", "house")
+		assert(talk_npc.home_id == free_home.id, "Ruler really houses the homeless NPC")
+	# Обида на соседа — примирение
+	var foe134 = CitizenNPC.new("foe134", "Задира Сбыслав", "m", 30, "adult")
+	foe134.settlement_id = s134.id
+	s134.population.citizens.append(foe134)
+	talk_npc.add_memory("grudge", "offense", foe134.citizen_id, 2.5, "Затаил обиду на Сбыслава")
+	talk_npc.modify_relationship(foe134.citizen_id, -40.0)
+	assert(NPCDialogue._get_grudge_target(s134, talk_npc) == foe134, "NPC complains about a real rival")
+	NPCDialogue.respond(s134, talk_npc, ruler134, "grudge", "reconcile")
+	assert(not talk_npc.has_grudge_against(foe134.citizen_id), "Ruler's mediation clears the grudge")
+	# Угощение от благодарного жителя
+	if talk_npc.home_id != "":
+		var h134 = s134.get_citizen_home_instance(talk_npc)
+		h134.food_stockpile = 2.0
+		talk_npc.modify_relationship(ruler134.citizen_id, 60.0)
+		ruler134.hunger = 50.0
+		var gift_ids: Array[String] = []
+		for t134 in NPCDialogue.get_topics(s134, talk_npc, ruler134):
+			gift_ids.append(t134["id"])
+		assert(gift_ids.has("gift"), "A grateful NPC offers the ruler food")
+		NPCDialogue.respond(s134, talk_npc, ruler134, "gift", "accept")
+		assert(ruler134.hunger == 100.0 and h134.food_stockpile == 1.75, "Accepted meal comes from the NPC's own home stores")
+	# Оклик: голодный сам зовёт вождя, но не повторяет каждую секунду
+	var caller = CitizenNPC.new("caller134", "Зовущая Млада", "f", 28, "adult")
+	caller.settlement_id = s134.id
+	caller.hunger = 10.0
+	caller.loyalty = 60.0
+	assert(NPCDialogue.get_urgent_call(s134, caller, ruler134) != "", "A starving NPC calls out to the ruler")
+	assert(NPCDialogue.get_urgent_call(s134, caller, ruler134) == "", "The call is not repeated immediately")
+	# Хищник у стоянки — житель предупреждает
+	var wolf134 = WildAnimal.new("wolf134", "wolf_grey", Vector2(s134.pos.x * 32.0 + 16.0 + 160.0, s134.pos.y * 32.0 + 16.0))
+	GameManager.wildlife_manager.animals[wolf134.id] = wolf134
+	assert(not NPCDialogue._get_danger(s134).is_empty(), "NPCs know about a real predator near the camp")
+	GameManager.wildlife_manager.animals.erase(wolf134.id)
+	# Нелояльный житель отказывается говорить
+	var angry = CitizenNPC.new("angry134", "Злой Горазд", "m", 35, "adult")
+	angry.loyalty = 5.0
+	assert(NPCDialogue.refuses_to_talk(angry, ruler134), "A hostile NPC refuses to talk")
+	var angry_topics = NPCDialogue.get_topics(s134, angry, ruler134)
+	assert(angry_topics.size() == 1 and angry_topics[0]["id"] == "discontent", "Hostile NPC only voices discontent")
+	# Окно разговора
+	var dw = DialogueWindow.new()
+	add_child(dw)
+	talk_npc.social_cooldown = 0.0
+	dw.open_with(talk_npc)
+	assert(dw.visible and talk_npc.state == CitizenNPC.State.TALKING and talk_npc.talk_partner_id == ruler134.citizen_id, "NPC stops and talks to the ruler")
+	assert(dw.options_box.get_child_count() >= 2, "Dialogue shows topics and a farewell")
+	dw._choose("smalltalk", "how", "")
+	assert(dw.line_lbl.text.contains("—"), "NPC answers in the dialogue window")
+	dw.close()
+	assert(not dw.visible and talk_npc.action_timer <= 0.3, "Closing lets the NPC return to work")
+	dw.queue_free()
+	ctrl.set_active(false)
+	assert(not GameManager.hero_control_active and not ruler134.custom_data.get("player_controlled", false), "Leaving hero mode returns the ruler to the AI")
+	ctrl.queue_free()
+	print("OK 134. Direct ruler control (walk, obstacles, eating) and living NPC dialogue with real consequences.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

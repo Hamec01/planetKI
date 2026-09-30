@@ -10,6 +10,8 @@ signal time_period_changed(period_name: String)
 
 # Сигналы NPC и жителей
 signal citizen_selected(citizen: RefCounted)
+# Режим «Путь вождя»: приказ правой кнопкой мыши (идти в точку / подойти к жителю)
+signal hero_move_order(world_pos: Vector2, target_citizen: RefCounted)
 signal citizen_deselected()
 
 # Сигналы ресурсов и экономики

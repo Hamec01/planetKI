@@ -2311,6 +2311,10 @@ func update_citizens(delta: float) -> void:
 		c.check_autonomous_emotes(delta, cur_season)
 		_apply_weather_and_clothing(c, cur_season, delta)
 		_update_stamina(c, delta)
+		# Вождём управляет игрок: ИИ не выбирает ему дел, но тело живёт — голод, силы, холод
+		if c.custom_data.get("player_controlled", false):
+			_update_player_controlled(c, delta)
+			continue
 
 		# 2b. Таймер устойчивости текущего выбора (Hysteresis / Commitment) (S08)
 		if c.commitment_timer > 0.0:
@@ -4662,6 +4666,41 @@ const WARM_CLOTHES_WEAR_OTHER: float = 0.01 # в секунду в тёплые 
 const COLD_ENERGY_DRAIN: float = 0.15 # доп. потеря сил в секунду
 const COLD_HEALTH_DRAIN: float = 0.02 # потеря здоровья в секунду
 
+# Вождь под управлением игрока: голод идёт как у всех, силы тратятся в пути
+# и восстанавливаются, пока он стоит; ест он сам (клавиша F у очага, склада или дома)
+func _update_player_controlled(c: CitizenNPC, delta: float) -> void:
+	c.hunger = maxf(0.0, c.hunger - 0.10 * delta)
+	if c.state == CitizenNPC.State.MOVING_TO_WORK:
+		c.energy = maxf(0.0, c.energy - 0.25 * delta)
+	elif c.state != CitizenNPC.State.TALKING:
+		c.energy = minf(100.0, c.energy + 0.4 * delta)
+	if c.hunger <= 0.0:
+		c.health = maxf(0.0, c.health - 0.05 * delta)
+		if c.health <= 0.0 and c.death_cause == "":
+			c.death_cause = "Умер от голода"
+
+const MEAL_FOOD: float = 0.25
+
+# Вождь ест сам: у своего дома — из домашнего запаса, у очага или склада — из общих запасов
+func hero_eat(c: CitizenNPC) -> Dictionary:
+	if c.hunger >= 90.0:
+		return {"ok": false, "reason": "Вождь сыт"}
+	var home = get_citizen_home_instance(c)
+	# Как у всех жителей: 0.25 ед. пищи — сытный приём еды
+	if home and c.home_pos != Vector2.ZERO and c.pos.distance_to(c.home_pos) <= 40.0 and home.food_stockpile >= MEAL_FOOD:
+		home.consume_food(MEAL_FOOD)
+		c.hunger = 100.0
+		return {"ok": true, "reason": "Поел дома"}
+	var near_hearth = c.pos.distance_to(_get_hearth_pos()) <= 48.0
+	var near_storage = c.pos.distance_to(_get_storage_pos(c)) <= 48.0
+	if not (near_hearth or near_storage):
+		return {"ok": false, "reason": "Есть можно дома, у очага или у склада"}
+	if economy.get_resource("food") < MEAL_FOOD:
+		return {"ok": false, "reason": "В общих запасах нет еды"}
+	consume_food(MEAL_FOOD)
+	c.hunger = 100.0
+	return {"ok": true, "reason": "Поел у очага из общих запасов"}
+
 # --- Выносливость: тратится в бою, работе и пути, восстанавливается на отдыхе ---
 const STAMINA_DRAIN: Dictionary = {
 	CitizenNPC.State.ATTACKING: 6.0,
@@ -4755,7 +4794,7 @@ func _find_chat_partner(citizen: CitizenNPC) -> CitizenNPC:
 	var best_score: float = -9999.0
 	
 	for other in population.citizens:
-		if other == citizen:
+		if other == citizen or other.custom_data.get("player_controlled", false):
 			continue
 		if other.social_cooldown > 0.0:
 			continue
@@ -5152,6 +5191,8 @@ func _try_visit_friend(c: CitizenNPC) -> bool:
 
 # Свободен для досуга: не занят делом (визит на могилу, рыбалка и т.п. тоже идут в RESTING)
 func _is_free_for_leisure(c: CitizenNPC) -> bool:
+	if c.custom_data.get("player_controlled", false):
+		return false # вождя ведёт игрок — ИИ не утаскивает его на прогулки
 	return c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING] or (c.state == CitizenNPC.State.RESTING and c.task_id == "")
 
 func _try_start_dating_walk(c: CitizenNPC) -> bool:

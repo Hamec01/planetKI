@@ -256,7 +256,13 @@ func _get_nature_object_at_position(m_pos: Vector2) -> Dictionary:
 # ==============================================================================
 # ГЛАВНЫЙ ЦИКЛ ОБНОВЛЕНИЯ
 # ==============================================================================
+var hero_move_marker_pos: Vector2 = Vector2.ZERO
+var hero_move_marker_time: float = 0.0
+
 func _process(delta: float) -> void:
+	if hero_move_marker_time > 0.0:
+		hero_move_marker_time = maxf(0.0, hero_move_marker_time - delta)
+		queue_redraw()
 	anim_time += delta
 	redraw_timer += delta
 	
@@ -474,6 +480,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				queue_redraw()
 				return
 				
+	# 00. РЕЖИМ «ПУТЬ ВОЖДЯ»: ПКМ — идти в точку или подойти к жителю (как в MOBA)
+	if GameManager.hero_control_active and placement_building_id == "" and relocation_source_coord == Vector2i(-1, -1):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			var hero_click = get_global_mouse_position()
+			var clicked_npc = _get_citizen_near_position(hero_click, 14.0)
+			if clicked_npc and clicked_npc.is_ruler:
+				clicked_npc = null
+			EventBus.hero_move_order.emit(hero_click, clicked_npc)
+			hero_move_marker_pos = clicked_npc.pos if clicked_npc else hero_click
+			hero_move_marker_time = 0.6
+			get_viewport().set_input_as_handled()
+			queue_redraw()
+			return
+
 	# 0. РЕЖИМ ПЕРЕМЕЩЕНИЯ ЗДАНИЙ
 	if relocation_source_coord != Vector2i(-1, -1):
 		if event is InputEventMouseButton and event.pressed:
@@ -1205,6 +1225,11 @@ func _draw() -> void:
 	# 8. Подсветка выбранного дикого животного
 	if selected_animal_id != "":
 		_draw_selected_animal_highlight()
+
+	# 9. Метка приказа движения вождю (ПКМ в режиме «Путь вождя»)
+	if hero_move_marker_time > 0.0:
+		var k = hero_move_marker_time / 0.6
+		draw_arc(hero_move_marker_pos, 4.0 + (1.0 - k) * 10.0, 0.0, TAU, 20, Color(0.4, 1.0, 0.45, k), 2.0)
 
 # --- ОТРИСОВКА ОДНОГО ПРИРОДНОГО ОБЪЕКТА (ДЕРЕВО / КАМЕНЬ / КУСТ) ---
 func _draw_single_nature_object(n_data: Dictionary, c: Vector2, foot_y: float) -> void:
