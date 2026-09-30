@@ -2874,6 +2874,10 @@ func update_citizens(delta: float) -> void:
 		if c.state in [CitizenNPC.State.IDLE, CitizenNPC.State.WAITING] and c.decision_cooldown <= 0.0 and c.task_id == "":
 			var is_evening = (indiv_hour >= 17.5 and indiv_hour < 22.0)
 			
+			# 0. Тепло важнее досуга: изношенную одежду сначала меняют на новую
+			if _try_fetch_clothes(c):
+				continue
+			
 			# 1. Проверка необходимости очистить осквернённую могилу
 			var has_defiled_grave = false
 			for rec in deceased_registry:
@@ -4166,18 +4170,8 @@ func update_citizens(delta: float) -> void:
 					continue
 
 			# 0a. Износилась тёплая одежда — сходить на склад за новой, пока есть запас
-			if c.warm_clothes < WARM_CLOTHES_REPLACE_AT and c.cargo_amount == 0.0 and economy.get_resource("clothes") >= 1.0:
-				var clothes_p = _get_storage_pos(c)
-				var clothes_path = GameManager.nav_grid.find_path(c.pos, clothes_p) if GameManager.nav_grid else []
-				if not clothes_path.is_empty() or c.pos.distance_to(clothes_p) <= 24.0:
-					c.target_pos = clothes_p
-					c.task_id = "fetch_clothes"
-					c.path = clothes_path
-					c.path_index = 0
-					c.state = CitizenNPC.State.MOVING_TO_WORK
-					c.last_status_reason = "Идёт на склад за тёплой одеждой" if not c.is_freezing else "Замерзает! Идёт на склад за тёплой одеждой"
-					c.decision_cooldown = 1.0
-					continue
+			if _try_fetch_clothes(c):
+				continue
 
 			# 0. Домашняя забота о запасе еды (S06: доставка пищи со склада в дом свободными жителями)
 			if c.home_id != "" and not c.is_guest and c.cohort in ["youth", "adult"] and c.cargo_amount == 0.0 and c.job_id == "idle":
@@ -4655,6 +4649,23 @@ const WARM_CLOTHES_WEAR_WINTER: float = 0.05 # в секунду (≈22 за з�
 const WARM_CLOTHES_WEAR_OTHER: float = 0.01 # в секунду в тёплые сезоны
 const COLD_ENERGY_DRAIN: float = 0.15 # доп. потеря сил в секунду
 const COLD_HEALTH_DRAIN: float = 0.02 # потеря здоровья в секунду
+
+# Отправить жителя на склад за новой тёплой одеждой, если старая износилась и запас есть
+func _try_fetch_clothes(c: CitizenNPC) -> bool:
+	if c.warm_clothes >= WARM_CLOTHES_REPLACE_AT or c.cargo_amount > 0.0 or economy.get_resource("clothes") < 1.0:
+		return false
+	var clothes_p = _get_storage_pos(c)
+	var clothes_path = GameManager.nav_grid.find_path(c.pos, clothes_p) if GameManager.nav_grid else []
+	if clothes_path.is_empty() and c.pos.distance_to(clothes_p) > 24.0:
+		return false
+	c.target_pos = clothes_p
+	c.task_id = "fetch_clothes"
+	c.path = clothes_path
+	c.path_index = 0
+	c.state = CitizenNPC.State.MOVING_TO_WORK
+	c.last_status_reason = "Замерзает! Идёт на склад за тёплой одеждой" if c.is_freezing else "Идёт на склад за тёплой одеждой"
+	c.decision_cooldown = 1.0
+	return true
 
 # Одежда изнашивается; зимой житель без тёплой одежды мёрзнет, если он не под крышей дома
 func _apply_weather_and_clothing(c: CitizenNPC, season: String, delta: float) -> void:
