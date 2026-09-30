@@ -5274,9 +5274,10 @@ func _ready() -> void:
 	assert(not cold130.is_freezing, "Nobody freezes in summer")
 	# Изношенная одежда -> поход на склад за новой
 	cold130.social_cooldown = 999.0
-	cold130.job_id = "guard" # занятый житель: авто-трудоустройство не перебивает поход за одеждой
+	cold130.job_id = "sage" # занятый житель (не стражник — тот днём отсыпается): авто-трудоустройство не перебивает поход за одеждой
 	s126.population.citizens.append(cold130)
 	s126.economy.resources["clothes"] = 2.0
+	cold130.pos = _get_storage_pos_for_test(s126, cold130)
 	cold130.health = 100.0
 	cold130.hunger = 100.0
 	cold130.energy = 100.0
