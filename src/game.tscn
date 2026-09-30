@@ -6,7 +6,6 @@
 [ext_resource type="Script" uid="uid://c7pvfcwfd1mwb" path="res://src/ui/main_hud.gd" id="4_hud"]
 [ext_resource type="Script" uid="uid://q6qpyp63edxa" path="res://src/ui/settlement_panel.gd" id="5_settlement"]
 [ext_resource type="Script" uid="uid://cn4abq8gqdamb" path="res://src/ui/faction_view.gd" id="6_faction"]
-[ext_resource type="Script" uid="uid://dv5l80u65rb5v" path="res://src/ui/events_dialog.gd" id="7_events"]
 [ext_resource type="Script" uid="uid://bujgduqgs5aol" path="res://src/ui/battle_modal.gd" id="8_battle"]
 [ext_resource type="Script" uid="uid://8da5ni2ek2bj" path="res://src/map/water_render_layer.gd" id="9_water_layer"]
 
@@ -590,62 +589,6 @@ size_flags_horizontal = 3
 size_flags_vertical = 3
 bbcode_enabled = true
 text = "Параметры звездной системы..."
-
-[node name="EventsDialog" type="PanelContainer" parent="UI" unique_id=732042865]
-visible = false
-custom_minimum_size = Vector2(620, 440)
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -310.0
-offset_top = -220.0
-offset_right = 310.0
-offset_bottom = 220.0
-grow_horizontal = 2
-grow_vertical = 2
-script = ExtResource("7_events")
-
-[node name="Margin" type="MarginContainer" parent="UI/EventsDialog" unique_id=1102199199]
-layout_mode = 2
-theme_override_constants/margin_left = 22
-theme_override_constants/margin_top = 22
-theme_override_constants/margin_right = 22
-theme_override_constants/margin_bottom = 22
-
-[node name="VBox" type="VBoxContainer" parent="UI/EventsDialog/Margin" unique_id=389394869]
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="Title" type="Label" parent="UI/EventsDialog/Margin/VBox" unique_id=2013660624]
-layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.88, 0.45, 1)
-theme_override_font_sizes/font_size = 20
-text = "📜 Голодная зима"
-
-[node name="Speaker" type="Label" parent="UI/EventsDialog/Margin/VBox" unique_id=910535562]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.7, 0.82, 0.95, 1)
-theme_override_font_sizes/font_size = 14
-text = "— Старейшина Иара"
-
-[node name="HSeparator" type="HSeparator" parent="UI/EventsDialog/Margin/VBox" unique_id=427381838]
-layout_mode = 2
-
-[node name="Text" type="Label" parent="UI/EventsDialog/Margin/VBox" unique_id=1953255307]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.9, 0.93, 0.98, 1)
-text = "Вождь, амбары почти пусты..."
-autowrap_mode = 3
-
-[node name="Spacer" type="Control" parent="UI/EventsDialog/Margin/VBox" unique_id=1472945705]
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="ChoicesBox" type="VBoxContainer" parent="UI/EventsDialog/Margin/VBox" unique_id=1702670873]
-layout_mode = 2
-theme_override_constants/separation = 10
 
 [node name="BattleModal" type="PanelContainer" parent="UI" unique_id=1483282455]
 visible = false

@@ -248,7 +248,6 @@ func start_new_game(p_seed: String = "") -> void:
 		civilization_event_manager.reset()
 	else:
 		civilization_event_manager = CivilizationEventManagerScript.new()
-	EventManager.reset()
 	
 	# Добавляем стартовую запись в историю
 	add_history_entry(current_year, "Рождение племени", "Малая община людей зажгла первый костёр и основала стоянку в неизведанных землях.", "Начало")

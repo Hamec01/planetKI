@@ -287,6 +287,7 @@ func _populate_jobs() -> void:
 		{"id": "miner", "name": "Рудокопы", "prod": "+0.5 ⚒/дн", "icon_key": "miner", "fallback": "⛏"},
 		{"id": "builder", "name": "Строители", "prod": "+0.5 к скорости", "icon_key": "builder", "fallback": "🔨"},
 		{"id": "craftsman", "name": "Ремесленники", "prod": "+0.8 🪙/дн", "icon_key": "craftsman", "fallback": "🏺"},
+		{"id": "tanner", "name": "Скорняки", "prod": "шкуры → 🧥 тёплая одежда", "icon_key": "tanner", "fallback": "🧥"},
 		{"id": "sage", "name": "Мудрецы", "prod": "+0.8 📜/дн", "icon_key": "sage", "fallback": "📜"},
 		{"id": "priest", "name": "Жрецы", "prod": "+0.5 🕯/дн", "icon_key": "priest", "fallback": "🕯"},
 		{"id": "guard", "name": "Стражники", "prod": "+2.0 к защите", "icon_key": "weapon_spear", "fallback": "🛡"}

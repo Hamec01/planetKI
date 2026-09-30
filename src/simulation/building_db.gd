@@ -235,6 +235,18 @@ const BUILDINGS: Dictionary = {
 		"produces": {"metal": 0.5},
 		"description": "Сбор самородной меди и болотной руды для первых металлических наконечников."
 	},
+	"tannery": {
+		"id": "tannery",
+		"name": "Скорняжня",
+		"epoch": 1,
+		"category": "production",
+		"cost": {"wood": 20, "stone": 6},
+		"build_days": 15,
+		"housing": 0,
+		"max_workers": 2,
+		"job_name": "Скорняк",
+		"description": "Выделка шкур и меха от охотников в тёплую одежду. Скорняк сам носит сырьё со склада и сдаёт готовую одежду. Зимой без тёплой одежды жители мёрзнут: теряют силы и здоровье."
+	},
 	"craft_workshop": {
 		"id": "craft_workshop",
 		"name": "Мастерская ремёсел",
@@ -419,6 +431,7 @@ static func get_job_id_for_building(b_type: String) -> String:
 		"stone_quarry": return "quarryman"
 		"ore_pit": return "miner"
 		"craft_workshop", "carpenter_workshop", "pottery_workshop", "forge": return "craftsman"
+		"tannery": return "tanner"
 		"elders_house": return "elder"
 		"shrine", "cemetery": return "priest"
 		"watchtower": return "guard"

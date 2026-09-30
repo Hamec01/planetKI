@@ -3304,6 +3304,7 @@ func _ready() -> void:
 	wc_105.job_id = "woodcutter"
 	wc_105.settlement_id = s_105.id
 	wc_105.pos = Vector2(10 * 32.0 + 16, 10 * 32.0 + 16)
+	wc_105.social_cooldown = 999.0 # случайная беседа с соседом не должна перебивать проверку
 	s_105.population.citizens.append(wc_105)
 	s_105.priority_harvest_coords.clear()
 	s_105.priority_harvest_coords.append(tree_coord_105)
@@ -4449,6 +4450,8 @@ func _ready() -> void:
 				break
 	far_walker.pos = GameManager.nav_grid.tile_to_world_center(far_tile)
 	far_walker.hunger = 35.0
+	# Исключаем честный подарок еды от соседа в разговоре: проверяем именно «еду у очага издалека»
+	far_walker.social_cooldown = 999.0
 	s_118.population.citizens.append(far_walker)
 	s_118.update_citizens(0.1)
 	assert(far_walker.hunger < 45.0, "Far citizen must NOT magically restore hunger from a distance!")
@@ -4523,8 +4526,20 @@ func _ready() -> void:
 	s_118.population.citizens.append(friend1)
 	s_118.population.citizens.append(friend2)
 	
+	# Дарить нечего — подарка «из воздуха» не бывает
+	friend1.warm_clothes = 50.0
+	friend2.warm_clothes = 50.0
+	s_118._start_social_dialog(friend1, friend2)
+	assert(not friend1.has_memory("gift"), "Nothing to give -> no gift is invented")
+	# У дарителя крепкая одежда, друг мёрзнет в изношенной — отдаёт часть тепла
+	friend1.warm_clothes = 100.0
+	friend2.warm_clothes = 5.0
+	friend1.social_cooldown = 0.0
+	friend2.social_cooldown = 0.0
 	s_118._start_social_dialog(friend1, friend2)
 	assert(friend1.has_memory("gift"), "Generous empathetic citizen records gift memory")
+	assert(friend1.warm_clothes == 50.0 and friend2.warm_clothes == 55.0, "The warm cloak really passes from giver to receiver")
+	assert(friend2.has_memory("gift_received"), "Receiver remembers the gift")
 	
 	print("OK 118. Physical burial procession, gravestone inspect metadata, cemetery remembrance, truthful eating at hearth, and living social simulation verified.")
 
@@ -5071,6 +5086,7 @@ func _ready() -> void:
 	h126.energy = 100.0
 	h126.pos = Vector2(s126.pos.x * 32.0 + 16.0, s126.pos.y * 32.0 + 16.0)
 	h126.home_pos = h126.pos
+	h126.social_cooldown = 999.0
 	s126.population.citizens.append(h126)
 	var deer126 = WildAnimal.new("deer126", "deer_stag", h126.pos + Vector2(8.0, 0.0))
 	var car126 = GameManager.wildlife_manager.create_carcass_from_animal(deer126)
@@ -5177,6 +5193,95 @@ func _ready() -> void:
 	assert(old128.job_id == "idle" and old128.home_id == "", "Natural death frees home and workplace")
 	assert(old128.death_cause != "", "Natural death records its cause")
 	print("OK 128. Work XP & mastery speed, faith as social stat, natural deaths go through the full death pipeline.")
+
+	# --------------------------------------------------------------------------
+	# TEST 129: СКОРНЯК — ШКУРЫ СО СКЛАДА -> СКОРНЯЖНЯ -> ТЁПЛАЯ ОДЕЖДА НА СКЛАД
+	# --------------------------------------------------------------------------
+	assert(BuildingDB.get_job_id_for_building("tannery") == "tanner", "Tannery employs tanners")
+	assert(ProfessionRegistry.get_behavior("tanner") is TannerProfession, "Tanner behaviour is registered")
+	assert(ProfessionRegistry.get_behavior("hunter") is HunterProfession, "Hunter behaviour lives in its own module")
+	assert(ProfessionRegistry.get_behavior("quarryman") is MiningProfession and ProfessionRegistry.get_behavior("miner") is MiningProfession, "Quarryman and miner share the mining module")
+	var tan_tile = s126.pos + Vector2i(2, -2)
+	GameManager.get_or_create_building_instance(tan_tile, "tannery", s126.id)
+	var tanner129 = CitizenNPC.new("tanner129", "Кожемяка Никита", "m", 30, "adult")
+	tanner129.settlement_id = s126.id
+	tanner129.job_id = "tanner"
+	tanner129.workplace_coord = tan_tile
+	tanner129.hunger = 100.0
+	tanner129.energy = 100.0
+	tanner129.pos = _get_storage_pos_for_test(s126, tanner129)
+	tanner129.home_pos = tanner129.pos
+	tanner129.social_cooldown = 999.0
+	s126.population.citizens.append(tanner129)
+	GameManager.current_hour = 11.0
+	s126.economy.resources["clothes"] = 0.0
+	s126.economy.resources["leather"] = 3.0
+	s126.economy.resources["fur"] = 1.0
+	tanner129.state = CitizenNPC.State.IDLE
+	tanner129.decision_cooldown = 0.0
+	s126.update_citizens(0.1)
+	assert(tanner129.task_id == "fetch_hides", "Tanner goes to the warehouse for hides (task=%s, reason=%s)" % [tanner129.task_id, tanner129.last_status_reason])
+	tanner129.path.clear()
+	s126.update_citizens(0.1)
+	assert(s126.economy.get_resource("fur") == 0.0 and s126.economy.get_resource("leather") == 2.0, "Fur + hide recipe takes 1 fur and 1 hide from the warehouse")
+	assert(tanner129.cargo_amount == 2.0 and tanner129.task_id == "tan_hides", "Tanner carries the raw hides to the tannery")
+	tanner129.pos = GameManager.nav_grid.tile_to_world_center(tan_tile)
+	tanner129.path.clear()
+	s126.update_citizens(0.1)
+	assert(tanner129.state == CitizenNPC.State.WORKING, "Tanner works in the tannery")
+	tanner129.work_timer = 0.0
+	s126.update_citizens(0.1)
+	assert(tanner129.cargo_type == "clothes" and tanner129.cargo_amount == 1.0, "Hides become one set of warm clothes in hand")
+	assert(s126.economy.get_resource("clothes") == 0.0, "Clothes are not credited before delivery")
+	tanner129.pos = _get_storage_pos_for_test(s126, tanner129)
+	tanner129.path.clear()
+	s126.update_citizens(0.1)
+	assert(s126.economy.get_resource("clothes") == 1.0, "Delivered clothes are credited to the warehouse")
+	assert(tanner129.get_profession_xp("tanner") > 0.0, "Tanning trains the tanner profession")
+	s126.economy.resources["clothes"] = 999.0
+	tanner129.state = CitizenNPC.State.IDLE
+	tanner129.decision_cooldown = 0.0
+	s126.update_citizens(0.1)
+	assert(tanner129.task_id == "" and s126.economy.get_resource("leather") == 2.0, "Tanner does not burn hides when everyone already has clothes")
+	print("OK 129. Tanner turns hunters' hides and fur into warm clothes through physical fetch, work and delivery.")
+
+	# --------------------------------------------------------------------------
+	# TEST 130: ЗИМА — БЕЗ ТЁПЛОЙ ОДЕЖДЫ НА УЛИЦЕ МЁРЗНУТ; НОВУЮ БЕРУТ СО СКЛАДА
+	# --------------------------------------------------------------------------
+	var cold130 = CitizenNPC.new("cold130", "Зябкий Мороз", "m", 30, "adult")
+	cold130.settlement_id = s126.id
+	cold130.warm_clothes = 5.0
+	cold130.pos = h126.pos + Vector2(200.0, 0.0)
+	var energy_before_130 = cold130.energy
+	var hp_before_130 = cold130.health
+	s126._apply_weather_and_clothing(cold130, "Зима", 10.0)
+	assert(cold130.is_freezing, "Without warm clothes outdoors in winter a citizen freezes")
+	assert(cold130.energy < energy_before_130 and cold130.health < hp_before_130, "Freezing drains energy and health")
+	var warm130 = CitizenNPC.new("warm130", "Тепло Одетый", "m", 30, "adult")
+	warm130.warm_clothes = 80.0
+	var warm_hp_130 = warm130.health
+	s126._apply_weather_and_clothing(warm130, "Зима", 10.0)
+	assert(not warm130.is_freezing and warm130.health == warm_hp_130, "Warm clothes protect from the cold")
+	assert(warm130.warm_clothes < 80.0, "Clothes wear out in winter")
+	s126._apply_weather_and_clothing(cold130, "Лето", 10.0)
+	assert(not cold130.is_freezing, "Nobody freezes in summer")
+	# Изношенная одежда -> поход на склад за новой
+	cold130.social_cooldown = 999.0
+	cold130.job_id = "guard" # занятый житель: авто-трудоустройство не перебивает поход за одеждой
+	s126.population.citizens.append(cold130)
+	s126.economy.resources["clothes"] = 2.0
+	cold130.health = 100.0
+	cold130.hunger = 100.0
+	cold130.energy = 100.0
+	cold130.state = CitizenNPC.State.IDLE
+	cold130.decision_cooldown = 0.0
+	s126.update_citizens(0.1)
+	assert(cold130.task_id == "fetch_clothes", "Citizen with worn-out clothes goes to fetch new ones (task=%s)" % cold130.task_id)
+	cold130.pos = _get_storage_pos_for_test(s126, cold130)
+	cold130.path.clear()
+	s126.update_citizens(0.1)
+	assert(cold130.warm_clothes == 100.0 and s126.economy.get_resource("clothes") == 1.0, "New clothes are taken from the warehouse stock")
+	print("OK 130. Winter cold drains unclothed citizens outdoors; worn clothes are replaced from the warehouse.")
 	print("========================================")
 	print("ALL NPC SIMULATION, S01-S10, FORAGING & AGRICULTURE MATRIX (TESTS 1-125) COMPLETED SUCCESSFULLY!")
 	print("========================================")

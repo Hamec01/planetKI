@@ -6,7 +6,6 @@ extends Node2D
 @onready var main_hud: MainHUD = $MainHUD
 @onready var settlement_panel: SettlementPanel = $UI/SettlementPanel
 @onready var faction_view: FactionView = $UI/FactionView
-@onready var events_dialog: EventsDialog = $UI/EventsDialog
 @onready var battle_modal: BattleModal = $UI/BattleModal
 
 func _ready() -> void:

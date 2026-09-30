@@ -102,6 +102,9 @@ var subphase: String = ""
 var hunger: float = 100.0 # 100 = сыт, 0 = умирает от голода
 var energy: float = 100.0 # 100 = бодр, 0 = валится с ног
 var loyalty: float = 85.0
+# Тёплая одежда (прочность 0..100): изнашивается, зимой без неё на улице житель мёрзнет
+var warm_clothes: float = 60.0
+var is_freezing: bool = false
 var morale: float:
 	get: return loyalty
 	set(val): loyalty = clampf(val, 0.0, 100.0)
@@ -306,6 +309,8 @@ func add_work_xp(activity: String, hours: float) -> void:
 			s_rate = 0.2; e_rate = 1.8; a_rate = 2.0; prof_key = "hunter"; prof_rate = 2.0
 		"combat_training":
 			s_rate = 1.0; e_rate = 1.5; a_rate = 1.5
+		"crafting":
+			s_rate = 0.3; e_rate = 0.5; a_rate = 1.2; prof_key = job_id if job_id != "idle" else ""; prof_rate = 3.0
 			
 	# Начисление силы, выносливости и ловкости (порог L: 200 * L^2)
 	strength_xp += s_rate * usable_hours
@@ -513,6 +518,7 @@ func set_job_by_player(new_job: String) -> void:
 		"builder": "строитель",
 		"farmer": "земледелец",
 		"craftsman": "ремесленник",
+		"tanner": "скорняк",
 		"sage": "мудрец",
 		"priest": "жрец",
 		"guard": "стражник",
@@ -829,7 +835,7 @@ func check_autonomous_emotes(delta: float, season: String = "Лето") -> void:
 	elif energy < 30.0 and state == State.SLEEPING:
 		show_emote("sleepy", 3.0, 3)
 		return
-	elif season == "Зима" and home_id == "":
+	elif season == "Зима" and is_freezing:
 		if randf() < 0.05:
 			show_emote("cold", 3.5, 3)
 			return
@@ -965,6 +971,7 @@ func serialize() -> Dictionary:
 		"health": health,
 		"hunger": hunger,
 		"energy": energy,
+		"warm_clothes": warm_clothes,
 		"loyalty": loyalty,
 		"experience": experience.duplicate(),
 		"skills": skills.duplicate(),
@@ -1061,6 +1068,7 @@ func deserialize(data: Dictionary) -> void:
 	health = data.get("health", 100.0)
 	hunger = data.get("hunger", 100.0)
 	energy = data.get("energy", 100.0)
+	warm_clothes = float(data.get("warm_clothes", 60.0))
 	loyalty = data.get("loyalty", 85.0)
 	experience = data.get("experience", {}).duplicate()
 	skills = data.get("skills", experience).duplicate()

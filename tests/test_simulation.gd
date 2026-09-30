@@ -14,8 +14,6 @@ const ArmyData = preload("res://src/simulation/army_system.gd")
 const GeneralGenerator = preload("res://src/combat/general_generator.gd")
 const BattleInstance = preload("res://src/combat/battle_instance.gd")
 const FactionData = preload("res://src/simulation/faction.gd")
-const EventDB = preload("res://src/events/event_db.gd")
-const EventManager = preload("res://src/events/event_manager.gd")
 const AIController = preload("res://src/ai/ai_controller.gd")
 
 const GameManagerScript = preload("res://src/core/game_manager.gd")

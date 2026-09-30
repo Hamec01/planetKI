@@ -665,8 +665,16 @@ func _update_ui() -> void:
 			var fur_amt = econ.get_resource("fur")
 			var bone_amt = econ.get_resource("bone")
 			var feathers_amt = econ.get_resource("feathers")
-			hunt_goods_label.text = "🟫 %d  🐾 %d  🦴 %d" % [int(leather_amt), int(fur_amt), int(bone_amt)]
-			hunt_goods_label.tooltip_text = "Добыча охотников на складе\nШкуры: %d\nМех: %d\nКости: %d\nПерья: %d" % [int(leather_amt), int(fur_amt), int(bone_amt), int(feathers_amt)]
+			var clothes_amt = econ.get_resource("clothes")
+			var freezing_count = 0
+			for fc in s.population.citizens:
+				if fc.is_alive and fc.is_freezing:
+					freezing_count += 1
+			hunt_goods_label.text = "🟫 %d  🐾 %d  🦴 %d  🧥 %d" % [int(leather_amt), int(fur_amt), int(bone_amt), int(clothes_amt)]
+			if freezing_count > 0:
+				hunt_goods_label.text += "  🥶 %d" % freezing_count
+			hunt_goods_label.modulate = Color(0.7, 0.85, 1.3) if freezing_count > 0 else Color.WHITE
+			hunt_goods_label.tooltip_text = "Добыча охотников и одежда на складе\nШкуры: %d\nМех: %d\nКости: %d\nПерья: %d\nТёплая одежда: %d\nМёрзнут сейчас: %d (нужна скорняжня и шкуры)" % [int(leather_amt), int(fur_amt), int(bone_amt), int(feathers_amt), int(clothes_amt), freezing_count]
 		
 		var kub_inc = float(inc.get("kubriki", 0.0))
 		kubriki_label.text = "🪙 %d" % int(econ.get_resource("kubriki"))

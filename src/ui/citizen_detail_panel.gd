@@ -133,6 +133,7 @@ func _build_ui() -> void:
 	job_opt.add_item("📜 Мудрец", 9); job_opt.set_item_metadata(9, "sage")
 	job_opt.add_item("🕯 Жрец", 10); job_opt.set_item_metadata(10, "priest")
 	job_opt.add_item("🛡 Стражник", 11); job_opt.set_item_metadata(11, "guard")
+	job_opt.add_item("🧥 Скорняк", 12); job_opt.set_item_metadata(12, "tanner")
 	
 	job_opt.item_selected.connect(func(idx):
 		if current_citizen == null or _updating_job_ui:
@@ -388,6 +389,7 @@ func _get_job_display_name(j_id: String) -> String:
 		"builder": return "Строитель"
 		"farmer": return "Земледелец"
 		"craftsman": return "Ремесленник"
+		"tanner": return "Скорняк"
 		"sage": return "Мудрец"
 		"priest": return "Жрец"
 		"guard": return "Стражник"

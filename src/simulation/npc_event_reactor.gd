@@ -82,11 +82,16 @@ func _on_event_resolved(event_id: String, choice_index: int, results: Dictionary
 	if settlement == null:
 		return
 		
-	var ev_data = {
-		"id": event_id,
-		"resolved_choice": choice_index,
-		"results": results
-	}
+	# Реакции на исход решения берутся из шаблона события; общие npc_reactions уже сработали
+	# при появлении события, повторно их не применяем
+	var ev_data: Dictionary = results.get("event", {}).duplicate()
+	ev_data.erase("npc_reactions")
+	ev_data["id"] = event_id
+	ev_data["resolved_choice"] = choice_index
+	ev_data["results"] = results
+	var s_id = ev_data.get("settlement_id", "")
+	if s_id != "" and settlement.id != s_id:
+		return
 	
 	var citizens_list = _get_citizens()
 	for c in citizens_list:

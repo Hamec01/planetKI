@@ -24,7 +24,7 @@ signal person_born(settlement_id: String)
 signal person_died(settlement_id: String, reason: String)
 
 # Сигналы событий
-signal event_triggered(event_data: Dictionary)
+# Решение по событию цивилизации принято (results: {"event": данные события, "choice_id": id выбора})
 signal event_resolved(event_id: String, choice_index: int, results: Dictionary)
 signal civilization_event_triggered(event_data: Dictionary)
 

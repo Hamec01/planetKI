@@ -22,6 +22,7 @@ var resources: Dictionary = {
 	"fur": 0.0,
 	"bone": 4.0,
 	"feathers": 0.0,
+	"clothes": 0.0,
 	"clay": 0.0
 }
 

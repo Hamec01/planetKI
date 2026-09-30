@@ -27,11 +27,6 @@ func _init() -> void:
 	assert(s.construction_queue[0]["id"] == "granary", "Remaining should be granary")
 	print("SUCCESS: Construction queue reordering and cancellation verified!")
 	
-	# 3. Тестирование EventDB и EventManager
-	var ev_count = EventDB.EVENTS.size()
-	assert(ev_count >= 10, "EventDB should have >= 10 narrative events")
-	print("SUCCESS: EventDB has %d narrative events!" % ev_count)
-	
 	# 4. Тестирование ItemTextureManager
 	var food_icon = ItemTextureManager.get_icon("food")
 	var wood_icon = ItemTextureManager.get_icon("wood")

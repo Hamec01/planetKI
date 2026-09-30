@@ -125,7 +125,7 @@ func is_building_unlocked(building_id: String) -> bool:
 	var base_buildings = [
 		"hut", "great_lodge", "woodcutter_camp", "foraging_post", "fishing_spot",
 		"primitive_field", "granary", "hunting_camp", "stone_quarry", "ore_pit",
-		"training_grounds", "palisade", "watchtower", "elders_house", "carpenter_workshop", "forge"
+		"training_grounds", "palisade", "watchtower", "elders_house", "carpenter_workshop", "forge", "tannery"
 	]
 	if building_id in base_buildings:
 		return true

@@ -63,6 +63,8 @@ static func load_all() -> void:
 	_load_if_exists("hunt_campfire", "res://Assets/buildings/dom_ohotnika/hunt_campfire.png")
 	_load_if_exists("hunt_weapon_rack", "res://Assets/buildings/dom_ohotnika/hunt_weapon_rack.png")
 	_load_if_exists("hunt_fur_rack", "res://Assets/buildings/dom_ohotnika/hunt_fur_rack.png")
+	# Скорняжня: своей картинки пока нет, показываем стойку сушки шкур
+	_load_if_exists("tannery", "res://Assets/buildings/dom_ohotnika/hunt_fur_rack.png")
 	_load_if_exists("hunt_butcher_table", "res://Assets/buildings/dom_ohotnika/hunt_butcher_table.png")
 	_load_if_exists("hunt_dogs", "res://Assets/buildings/dom_ohotnika/hunt_dogs.png")
 	_load_if_exists("grave", "res://Assets/buildings/grave.png")

@@ -434,6 +434,14 @@ func apply_choice(instance_id: String, choice_id: String, extra_data: Dictionary
 	if active_event.get("instance_id", "") == instance_id:
 		active_event.clear()
 	choice_applied.emit(instance_id, choice_id)
+	# Жители узнают о решении: срабатывают reactions_by_choice шаблона (одобрение, ропот, память)
+	var choice_index = 0
+	var ev_choices: Array = ev.get("choices", [])
+	for i in range(ev_choices.size()):
+		if ev_choices[i].get("id", "") == choice_id:
+			choice_index = i
+			break
+	EventBus.event_resolved.emit(template_id, choice_index, {"event": ev, "choice_id": choice_id})
 
 func _find_citizen(pop: RefCounted, cit_id: String) -> CitizenNPC:
 	if not pop or not ("citizens" in pop):
