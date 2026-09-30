@@ -1,7 +1,8 @@
+# Нарезка листа Короля: python3 cut_king_sheet.py <исходный_лист.webp|png> -> king_sheet.png (16x15 кадров 64x36, фон убран)
 from PIL import Image
 import numpy as np
 from collections import deque
-im=np.array(Image.open('king_sheet_1.webp').convert('RGB')).astype(np.int32)
+im=np.array(Image.open(__import__('sys').argv[1] if len(__import__('sys').argv) > 1 else 'king_sheet_1.webp').convert('RGB')).astype(np.int32)
 H,W,_=im.shape
 ROWS,COLS=15,16
 CW=W//COLS
@@ -22,7 +23,10 @@ for r in range(ROWS):
         if gray_bg:
             sat = cell.max(axis=2)-cell.min(axis=2)
             # серый фон: близко по цвету И почти без насыщенности; тёплые кожа/ткань не трогаем
-            dist = np.where(sat < 10, dist, 999.0) * (70.0/18.0)
+            val = cell.max(axis=2)
+            # фон и светлый нейтральный ореол вокруг фигуры: без насыщенности и не темнее фона
+            halo = (sat < 14) & (val >= bg.max() - 14)
+            dist = np.where(halo, 0.0, np.where(sat < 10, dist * (70.0/18.0), 999.0))
         # заливка от краёв по пикселям, близким к фону
         bgmask=np.zeros((h,w),bool)
         q=deque()
@@ -43,7 +47,10 @@ for r in range(ROWS):
         fg=~bgmask
         edge=fg & (np.roll(bgmask,1,0)|np.roll(bgmask,-1,0)|np.roll(bgmask,1,1)|np.roll(bgmask,-1,1))
         a_edge=np.clip((dist-40)/80.0,0,1)*255
-        alpha[edge]=np.maximum(a_edge[edge],60)
+        alpha[edge]=a_edge[edge]
+        # второй слой кромки (соседи краевых пикселей) тоже частично прозрачен, если близок к фону
+        edge2=fg & ~edge & (np.roll(edge,1,0)|np.roll(edge,-1,0)|np.roll(edge,1,1)|np.roll(edge,-1,1))
+        alpha[edge2]=np.minimum(255, np.clip((dist[edge2]-25)/60.0,0,1)*255 + 40)
         # убрать мелкие отдельные точки (метки сетки) — компоненты меньше 14 пикселей
         lab=np.zeros((h,w),np.int32); n=0; sizes={}
         for y in range(h):
@@ -62,6 +69,11 @@ for r in range(ROWS):
             if sz<14: alpha[lab==k]=0
         # снять зелёный/серый отсвет на кромке
         rgb=cell.astype(np.float32)
+        # «вычитаем» фон из полупрозрачных пикселей кромки: c = (c - (1-a)*bg) / a
+        af=(alpha/255.0)[...,None]
+        semi=(alpha>0)&(alpha<255)
+        un=(rgb-(1.0-af)*bg[None,None,:])/np.maximum(af,0.15)
+        rgb=np.where(semi[...,None], np.clip(un,0,255), rgb)
         if bg[1]>bg[0]+30:  # зелёный фон
             m=edge
             mx=np.maximum(rgb[...,0],rgb[...,2])

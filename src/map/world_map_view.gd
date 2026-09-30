@@ -1254,10 +1254,11 @@ func _draw() -> void:
 	for entry in visible_armies:
 		_draw_army_overlays(entry["army"], entry["faction"], font)
 
-	# 4. Информационные плашки над поселениями
-	for s_id in GameManager.settlements:
-		var s: SettlementData = GameManager.settlements[s_id]
-		_draw_settlement_hub_overlay(s, font)
+	# 4. Информационные плашки над поселениями (стратегия — в Режиме Короля скрыты)
+	if not GameManager.hero_control_active:
+		for s_id in GameManager.settlements:
+			var s: SettlementData = GameManager.settlements[s_id]
+			_draw_settlement_hub_overlay(s, font)
 
 	# 5. Эффекты стрел, урона и искр
 	_draw_combat_effects()
