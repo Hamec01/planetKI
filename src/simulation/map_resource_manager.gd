@@ -216,6 +216,41 @@ func release_node(coord: Vector2i, citizen_id: String) -> void:
 
 var growing_trees: Dictionary = {} # coord -> {"timer": float, "mature_species": String}
 
+# Standing wood becomes ground logs, never inventory, until physically picked up.
+func strike_tree(coord: Vector2i, strength: float) -> bool:
+	if not nodes.has(coord) or strength <= 0: return false
+	var n: Dictionary = nodes[coord]
+	if n.get("category", "") != "wood" or n.get("depleted", false) or n.get("tree_stage", "standing") != "standing": return false
+	var cut = minf(float(n["amount"]), strength)
+	n["amount"] -= cut
+	n["ground_wood"] = float(n.get("ground_wood", 0)) + cut
+	n["chop_hits"] = int(n.get("chop_hits", 0)) + 1
+	n["last_chop_time"] = GameManager.sim_time_total
+	if n["amount"] <= 0:
+		n["tree_stage"] = "falling"
+		n["fall_start"] = GameManager.sim_time_total
+		n["amount"] = n["ground_wood"]
+		n["ground_wood"] = 0.0
+		n["blocks"] = false
+		if GameManager.nav_grid: GameManager.nav_grid.unregister_resource(coord)
+	return true
+
+func collect_tree_logs(coord: Vector2i, capacity: float) -> float:
+	if not nodes.has(coord) or capacity <= 0: return 0.0
+	var n: Dictionary = nodes[coord]
+	var stage = String(n.get("tree_stage", "standing"))
+	if stage == "falling" and GameManager.sim_time_total - float(n["fall_start"]) >= 1.2:
+		n["tree_stage"] = "logs"
+		stage = "logs"
+	if stage != "logs": return 0.0
+	var collected = minf(capacity, float(n["amount"]))
+	n["amount"] -= collected
+	if n["amount"] <= 0:
+		n["tree_stage"] = "stump"
+		n["depleted_sprite"] = "stump_fresh"
+		_on_node_depleted(coord, n)
+	return collected
+
 func harvest_from_node(coord: Vector2i, request_amount: float) -> float:
 	if not nodes.has(coord):
 		return 0.0
@@ -382,6 +417,9 @@ func update_regrowth(delta: float) -> void:
 			var timer = float(node.get("regrowth_timer", 300.0)) - delta
 			node["regrowth_timer"] = timer
 			if timer <= 0.0:
+				node["tree_stage"] = "standing"
+				node["chop_hits"] = 0
+				node["ground_wood"] = 0.0
 				node["depleted"] = false
 				node["amount"] = node["max_amount"]
 				node["reserved_by"] = ""
@@ -406,6 +444,8 @@ func serialize() -> Array[Dictionary]:
 			"reserved_by": n.get("reserved_by", ""),
 			"sprite": n.get("original_sprite", "")
 		}
+		for key in ["tree_stage", "ground_wood", "chop_hits", "last_chop_time", "fall_start"]:
+			if n.has(key): item[key] = n[key]
 		if growing_trees.has(coord):
 			item["growing_tree"] = growing_trees[coord].duplicate()
 		list.append(item)
@@ -418,7 +458,7 @@ func deserialize(data_list: Array) -> void:
 		var coord = Vector2i(c_arr[0], c_arr[1])
 		# Порода, перешедшая в следующую стадию выработки (скала -> плиты -> россыпь)
 		var saved_sprite: String = item.get("sprite", "")
-		if saved_sprite != "" and RESOURCE_NATURE_CONFIG.has(saved_sprite) and RESOURCE_NATURE_CONFIG[saved_sprite]["category"] in ["stone", "metal"]:
+		if saved_sprite != "" and RESOURCE_NATURE_CONFIG.has(saved_sprite) and RESOURCE_NATURE_CONFIG[saved_sprite]["category"] in ["stone", "metal", "wood"]:
 			if not nodes.has(coord) or nodes[coord].get("original_sprite", "") != saved_sprite:
 				_create_node(coord, saved_sprite)
 		if nodes.has(coord):
@@ -427,5 +467,11 @@ func deserialize(data_list: Array) -> void:
 			n["depleted"] = item.get("depleted", false)
 			n["regrowth_timer"] = item.get("regrowth_timer", 0.0)
 			n["reserved_by"] = item.get("reserved_by", "")
+			for key in ["tree_stage", "ground_wood", "chop_hits", "last_chop_time", "fall_start"]:
+				if item.has(key): n[key] = item[key]
+			if n.get("tree_stage", "standing") != "standing":
+				n["blocks"] = false
+				if GameManager.nav_grid: GameManager.nav_grid.unregister_resource(coord)
+			if n.get("tree_stage", "") == "stump": n["depleted_sprite"] = "stump_fresh"
 			if item.has("growing_tree"):
 				growing_trees[coord] = item["growing_tree"].duplicate()

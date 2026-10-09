@@ -41,6 +41,7 @@ func pick_task(s: SettlementData, c: CitizenNPC, _delta: float) -> bool:
 
 	# Проверяем топор (если лагерь еще не построен или инструменты пусты — лесоруб использует общинный рабочий топор)
 	var camp = s.get_active_woodcutter_camp()
+	if camp: camp.refill_axes_from_stockpile(s)
 	if not c.has_tool("axe"):
 		if camp and camp.has_available_tool("axe"):
 			var tool = camp.take_tool("axe")
@@ -228,8 +229,9 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 		c.last_status_reason = "Посадил молодой саженец"
 		EventBus.notification_toast.emit("Посадка леса", "Лесорубы посеяли молодое дерево", "good")
 	else:
-		# УДАР ТОПОРОМ: физический износ топора и постепенная рубка (2.0 древесины за удар с учетом сил)
-		if not c.equipped_tool.is_empty():
+		var resource_node: Dictionary = GameManager.resource_manager.nodes.get(c.target_coord, {}) if GameManager.resource_manager else {}
+		var stage = String(resource_node.get("tree_stage", "standing"))
+		if stage == "standing" and not c.equipped_tool.is_empty():
 			c.wear_tool(0.06)
 			if not c.has_tool("axe"):
 				c.state = CitizenNPC.State.WAITING
@@ -248,7 +250,15 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 				var diff = tree_center - c.pos
 				if diff.length_squared() > 0.001:
 					c.facing_dir = diff.normalized()
-			h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, strike_harvest)
+			if stage == "standing":
+				GameManager.resource_manager.strike_tree(c.target_coord, strike_harvest)
+				c.work_timer = 1.4
+				c.last_status_reason = "Дерево падает — ждёт перед подбором брёвен" if resource_node.get("tree_stage", "") == "falling" else "Рубит ствол: летят щепки, углубляется зарубка"
+				return true
+			h_amount = GameManager.resource_manager.collect_tree_logs(c.target_coord, c.max_carry - c.cargo_amount)
+			if stage == "falling" and h_amount <= 0:
+				c.work_timer = 0.3
+				return true
 
 		if h_amount > 0.0:
 			c.cargo_type = "wood"

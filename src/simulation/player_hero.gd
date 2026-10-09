@@ -246,8 +246,10 @@ func equip_from_stockpile(s: SettlementData, item_id: String) -> Dictionary:
 		return {"ok": false, "reason": "Этот предмет нельзя надеть"}
 	if int(s.equipment_stockpile.get(item_id, 0)) <= 0:
 		return {"ok": false, "reason": "На складе этого нет"}
-	if slot == "shield" and EquipmentDB.get_weapon(ruler.equipment.get("weapon", "unarmed")).get("is_ranged", false):
-		return {"ok": false, "reason": "С луком щит не удержать"}
+	if slot == "shield" and ComposerAssets.two_handed(String(ruler.equipment.get("weapon", "unarmed"))):
+		return {"ok": false, "reason": "Для этого оружия нужны обе руки"}
+	if slot == "weapon" and ComposerAssets.two_handed(item_id):
+		unequip(s, "shield")
 	unequip(s, slot)
 	s.equipment_stockpile[item_id] = int(s.equipment_stockpile[item_id]) - 1
 	if int(s.equipment_stockpile[item_id]) <= 0:

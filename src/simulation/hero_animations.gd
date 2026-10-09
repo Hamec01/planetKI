@@ -19,8 +19,8 @@ extends RefCounted
 const SHEET_PATHS: Array[String] = ["res://Assets/hero/king_sheet.png", "res://art/hero/king_sheet.png"]
 const CELL: Vector2 = Vector2(64.0, 36.0)
 const COLS: int = 16
-# Размер Короля в мире: высота клетки листа (персонаж ~27 из 36 px -> ~11.5 px мира, чуть выше жителей)
-const WORLD_CELL_H: float = 15.5
+# Размер Короля в мире: высота клетки листа (персонаж ~32 из 36 px -> ~7.8 px мира, как взрослые жители)
+const WORLD_CELL_H: float = 8.8
 const FOOT_Y: float = 33.0 # где в клетке стоят ноги (px)
 
 static func _range(a: int, b: int) -> Array:
@@ -53,22 +53,22 @@ const ACTIONS: Dictionary = {
 static var FRAMES: Dictionary = {
 	"idle": _range(16, 25),
 	"walk": _range(0, 11),
-	"punch": _range(26, 35),
-	"chop": _range(37, 47),
+	"punch": _range(32, 35),
+	"chop": _range(36, 47),
 	"mine": _range(48, 57),
-	"gather": _range(65, 71),
-	"pick_flowers": _range(65, 71),
-	"fish": _range(77, 84),
-	"butcher": _range(85, 97),
-	"build": _range(98, 109),
+	"gather": _range(64, 71),
+	"pick_flowers": _range(64, 71),
+	"fish": _range(76, 84),
+	"butcher": _range(85, 95),
+	"build": _range(96, 107),
 	"eat": _range(110, 119),
-	"deposit": _range(136, 142),
-	"rest": _range(138, 148),
-	"talk": _range(152, 167),
-	"give": _range(168, 179),
-	"attack": _range(196, 207),
-	"hit": _range(208, 213),
-	"death": _range(218, 221)
+	"deposit": _range(160, 171),
+	"rest": _range(120, 127),
+	"talk": _range(128, 143),
+	"give": _range(160, 175),
+	"attack": _range(176, 187),
+	"hit": _range(192, 197),
+	"death": _range(198, 215)
 }
 # Скорость циклов (кадров/сек)
 const LOOP_FPS: Dictionary = {"idle": 5.0, "walk": 14.0, "talk": 7.0, "rest": 4.0, "fish": 4.0}

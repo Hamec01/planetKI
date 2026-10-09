@@ -109,6 +109,15 @@ func has_available_tool(tool_type: String = "axe") -> bool:
 			return true
 	return false
 
+func refill_axes_from_stockpile(s: SettlementData) -> void:
+	if type != "woodcutter_camp" or has_available_tool("axe"): return
+	for item_id in ["work_axe", "copper_work_axe", "battle_axe"]:
+		if int(s.equipment_stockpile.get(item_id, 0)) <= 0: continue
+		s.equipment_stockpile[item_id] -= 1
+		if s.equipment_stockpile[item_id] <= 0: s.equipment_stockpile.erase(item_id)
+		tool_inventory.append({"id":"%s_%s_%d" % [id,item_id,Time.get_ticks_usec()],"type":"axe","name":EquipmentDB.get_weapon(item_id).get("name","Топор"),"source_item":item_id,"durability":100.0,"max_durability":100.0,"assigned_to":""})
+		return
+
 func take_tool(tool_type: String = "axe", citizen_id: String = "") -> Dictionary:
 	for t in tool_inventory:
 		if t.get("type", "") == tool_type and t.get("assigned_to", "") == "" and float(t.get("durability", 0.0)) > 0.0:

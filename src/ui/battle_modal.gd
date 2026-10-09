@@ -14,8 +14,8 @@ extends PanelContainer
 var active_battle: BattleInstance = null
 
 var arena_container: Control
-var attacker_sprite: AnimatedSprite2D
-var defender_sprite: AnimatedSprite2D
+var attacker_sprite: ComposerActor
+var defender_sprite: ComposerActor
 var fx_sprite: AnimatedSprite2D
 
 func _ready() -> void:
@@ -47,15 +47,15 @@ func _setup_animated_arena() -> void:
 	arena_panel.add_child(arena_container)
 	
 	# Спрайт атакующего
-	attacker_sprite = AnimatedSprite2D.new()
-	attacker_sprite.position = Vector2(170, 95)
-	attacker_sprite.scale = Vector2(1.5, 1.5)
+	attacker_sprite = ComposerActor.new()
+	attacker_sprite.position = Vector2(170, 145)
+	attacker_sprite.scale = Vector2(11, 11)
 	arena_container.add_child(attacker_sprite)
 	
 	# Спрайт обороняющегося
-	defender_sprite = AnimatedSprite2D.new()
-	defender_sprite.position = Vector2(530, 95)
-	defender_sprite.scale = Vector2(-1.5, 1.5) # Отзеркален влево
+	defender_sprite = ComposerActor.new()
+	defender_sprite.position = Vector2(530, 145)
+	defender_sprite.scale = Vector2(-11, 11)
 	arena_container.add_child(defender_sprite)
 	
 	# Спрайт эффектов удара (FX)
@@ -86,26 +86,13 @@ func _setup_units_sprites() -> void:
 		return
 		
 	# Загрузка спрайтов генералов / отрядов
-	var att_gen = active_battle.attacker_army.general.get("name", "")
-	var att_unit_id = "brock" if ("Брок" in att_gen or "Дружина" in active_battle.attacker_army.name) else "warrior"
-	var att_sf = UnitAnimationManager.get_unit_frames(att_unit_id)
-	if att_sf:
-		attacker_sprite.sprite_frames = att_sf
-		_play_anim(attacker_sprite, "idle", "breathing")
-		
-	var def_gen = active_battle.defender_army.general.get("name", "")
-	var def_unit_id = "gwen" if "Гвен" in def_gen else "boss"
-	var def_sf = UnitAnimationManager.get_unit_frames(def_unit_id)
-	if def_sf:
-		defender_sprite.sprite_frames = def_sf
-		_play_anim(defender_sprite, "idle", "breathing")
+	attacker_sprite.configure("army_general_"+active_battle.attacker_army.id,"general")
+	defender_sprite.configure("army_general_"+active_battle.defender_army.id,"general")
+	_play_anim(attacker_sprite,"idle")
+	_play_anim(defender_sprite,"idle")
 
-func _play_anim(sprite: AnimatedSprite2D, anim_name: String, fallback: String = "breathing") -> void:
-	if sprite.sprite_frames:
-		if sprite.sprite_frames.has_animation(anim_name):
-			sprite.play(anim_name)
-		elif sprite.sprite_frames.has_animation(fallback):
-			sprite.play(fallback)
+func _play_anim(sprite: ComposerActor, anim_name: String, _fallback: String = "breathing") -> void:
+	sprite.play_action(anim_name)
 
 func _refresh() -> void:
 	if active_battle == null:

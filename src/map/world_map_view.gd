@@ -1287,6 +1287,9 @@ func _draw() -> void:
 
 # --- ОТРИСОВКА ОДНОГО ПРИРОДНОГО ОБЪЕКТА (ДЕРЕВО / КАМЕНЬ / КУСТ) ---
 func _draw_single_nature_object(n_data: Dictionary, c: Vector2, foot_y: float) -> void:
+	var coord = Vector2i(floori(c.x / TILE_SIZE), floori(c.y / TILE_SIZE))
+	if GameManager.resource_manager and ComposerTrees.draw_tree(self, GameManager.resource_manager.nodes.get(coord, {}), Vector2(c.x, foot_y), GameManager.sim_time_total):
+		return
 	var n_tex: Texture2D = n_data["tex"]
 	var orig_size = n_tex.get_size()
 	var aspect = orig_size.x / maxf(1.0, orig_size.y)
@@ -2132,6 +2135,8 @@ func _draw_single_citizen_body(c: CitizenNPC) -> void:
 			return
 			
 		var p_dead = c.pos
+		if ComposerAssets.draw_citizen(self,c,GameManager.sim_time_total):
+			return
 		var tex_dead = c.get_texture()
 		var sz_dead = Vector2(9.5, 9.5)
 		draw_circle(p_dead + Vector2(0, 0.5), 4.5, Color(0, 0, 0, 0.25))
@@ -2161,6 +2166,8 @@ func _draw_single_citizen_body(c: CitizenNPC) -> void:
 
 	# Тень под ногами строго центрирована на c.pos (сбалансированная под новый размер)
 	draw_circle(p + Vector2(0, 0.5), char_size.x * 0.20, Color(0, 0, 0, 0.26))
+	if ComposerAssets.draw_citizen(self,c,GameManager.sim_time_total):
+		return
 
 	# Поза действия поверх обычного портрета — чтобы было видно, что житель реально рубит/несёт,
 	# а не просто покачивается. Не привязана к расе/полу, только к текущему занятию.
@@ -2544,6 +2551,12 @@ func _draw_single_army_formation(a: ArmyData, f: FactionData) -> void:
 		var f_off = formation_offsets[k]
 		var soldier_pos = p + f_off
 		var s_type = "warrior" if k % 3 == 0 else ("spearman" if k % 3 == 1 else "archer")
+		if ComposerAssets.ready_pack():
+			var soldier = ComposerAssets.proxy("army_%s_%d" % [a.id,k],s_type)
+			soldier.pos = soldier_pos
+			var clip = "bow_attack" if s_type == "archer" else "spear_attack" if s_type == "spearman" else "sword_attack"
+			ComposerAssets.draw_citizen(self,soldier,GameManager.sim_time_total,clip if a.in_combat else "walk" if a.is_moving else "idle")
+			continue
 		var s_tex = CharacterTextureManager.get_character_for_job(s_type, k * 7)
 		
 		var s_bob = sin(anim_time * 8.0 + k) * 0.6 if a.is_moving or a.in_combat else 0.0
@@ -2556,6 +2569,11 @@ func _draw_single_army_formation(a: ArmyData, f: FactionData) -> void:
 			draw_circle(soldier_pos, 1.6, f.color)
 			
 	# Фигурка Генерала в центре строя
+	if ComposerAssets.ready_pack():
+		var general = ComposerAssets.proxy("army_general_"+a.id,"general")
+		general.pos = p
+		ComposerAssets.draw_citizen(self,general,GameManager.sim_time_total,"walk" if a.is_moving else "idle")
+		return
 	var gen_tex = CharacterTextureManager.get_character_for_job("general", 1)
 	var gen_bob = sin(anim_time * 7.0) * 0.8 if a.is_moving else 0.0
 	var gen_rect = Rect2(p.x - 6, p.y - 12 + gen_bob, 12, 12)

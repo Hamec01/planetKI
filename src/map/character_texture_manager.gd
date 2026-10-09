@@ -98,6 +98,8 @@ static func load_all() -> void:
 	is_loaded = true
 
 static func get_character_for_job(job_id: String, seed_val: int = 0, race_id: String = "", gender: String = "") -> Texture2D:
+	var native = ComposerAssets.head_texture(ComposerAssets.proxy("portrait_%s_%d" % [race_id,seed_val],"villager",gender))
+	if native: return native
 	load_all()
 	var effective_race = race_id
 	if effective_race == "":
@@ -128,6 +130,10 @@ static func get_character_for_job(job_id: String, seed_val: int = 0, race_id: St
 	return tex
 
 static func get_role_texture(race_id: String, role_name: String) -> Texture2D:
+	var person = ComposerAssets.proxy("role_"+race_id+role_name,"villager","f" if role_name.ends_with("_f") or role_name in ["grandma","mother_baby"] else "m")
+	person.cohort = "child" if "child" in role_name else "youth" if "teen" in role_name else "elder" if "elder" in role_name else "adult"
+	var native = ComposerAssets.head_texture(person)
+	if native: return native
 	load_all()
 	var race_dict = race_textures.get(race_id, race_textures["north"])
 	return race_dict.get(role_name, null)

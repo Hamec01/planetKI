@@ -387,7 +387,17 @@ func _work_node(s: SettlementData, hero: PlayerHero, ruler: CitizenNPC, kind: St
 		ruler.add_work_xp("gathering", 0.3)
 	HeroAnimations.play(ruler, {"chop": "chop", "mine": "mine", "gather": "gather", "fish": "fish"}.get(kind, "gather"))
 	amount = minf(amount, (hero.get_bag_capacity(s) - hero.get_bag_weight()) / float(PlayerHero.BAG_ITEMS[item]["weight"]))
-	var got = GameManager.resource_manager.harvest_from_node(coord, amount)
+	if kind == "chop" and node.get("tree_stage", "standing") == "standing":
+		if not weapon.contains("axe"):
+			ruler.last_status_reason = "Для рубки нужен топор со склада снаряжения"
+			cancel_action()
+			return
+		GameManager.resource_manager.strike_tree(coord,amount)
+		ruler.last_status_reason = "Рубит ствол; древесина остаётся у дерева до подбора"
+		return
+	if kind == "chop" and node.get("tree_stage", "") == "falling" and GameManager.sim_time_total-float(node["fall_start"]) < 1.2:
+		return
+	var got = GameManager.resource_manager.collect_tree_logs(coord, amount) if kind == "chop" else GameManager.resource_manager.harvest_from_node(coord, amount)
 	hero.bag_add(s, item, got)
 	if got > 0.0:
 		_award(s, kind)

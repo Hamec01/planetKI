@@ -41,6 +41,7 @@ var is_ruler: bool = false    # Правитель не стареет и воз
 var cohort: String = "adult" # "child", "youth", "adult", "elder"
 var race_id: String = "north" # "desert", "savanna", "north"
 var appearance_role: String = "villager_brown_m"
+var visual_appearance_id: String = "" # Stable Composer identity, independent of profession.
 var seed_val: int = 0
 
 # --- ПРОФЕССИЯ И ПРИВЯЗКИ ---
@@ -500,6 +501,9 @@ func _is_appearance_valid_for_gender() -> bool:
 	return true
 
 func get_texture() -> Texture2D:
+	var composer_portrait = ComposerAssets.head_texture(self)
+	if composer_portrait != null:
+		return composer_portrait
 	if cached_texture != null:
 		return cached_texture
 	CharacterTextureManager.load_all()
@@ -570,6 +574,10 @@ func set_job_by_player(new_job: String) -> void:
 func set_job(new_job: String) -> void:
 	if job_id == new_job:
 		return
+	if job_id == "woodcutter" and not equipped_tool.is_empty():
+		for b in GameManager.building_instances.values():
+			if b is BuildingInstance: b.return_tool(String(equipped_tool.get("id", "")),float(equipped_tool.get("durability", 0)))
+		equipped_tool = {}
 	job_id = new_job
 	cached_texture = null
 	decision_cooldown = 0.0
@@ -976,6 +984,7 @@ func serialize() -> Dictionary:
 		"cohort": cohort,
 		"race_id": race_id,
 		"appearance_role": appearance_role,
+		"visual_appearance_id": visual_appearance_id,
 		"job_id": job_id,
 		"preferred_job": preferred_job,
 		"workplace_id": workplace_id,
@@ -1057,6 +1066,7 @@ func deserialize(data: Dictionary) -> void:
 	cohort = data.get("cohort", "adult")
 	race_id = data.get("race_id", "north")
 	appearance_role = data.get("appearance_role", "villager_brown_m")
+	visual_appearance_id = data.get("visual_appearance_id", "")
 	job_id = data.get("job_id", "idle")
 	preferred_job = data.get("preferred_job", "")
 	workplace_id = data.get("workplace_id", "")

@@ -6,6 +6,12 @@ static var _cache: Dictionary = {}
 static func get_icon(name: String) -> Texture2D:
 	if _cache.has(name):
 		return _cache[name]
+	var module_id = String(ComposerAssets.WEAPONS.get(name,ComposerAssets.ARMOR.get(name,ComposerAssets.HATS.get(name,{"axe":"weapons_4","woodcutter":"weapons_4","sword":"weapons_2","bow":"weapons_0","spear":"weapons_1","shield":"weapons_6","wooden_shield":"weapons_6","reinforced_wooden_shield":"weapons_6","mace":"weapons_5","pickaxe":"work_tools_0"}.get(name,"")))))
+	if module_id != "":
+		var native_icon = ComposerAssets.icon(module_id)
+		if native_icon:
+			_cache[name] = native_icon
+			return native_icon
 		
 	var path = _resolve_path(name)
 	if path != "" and ResourceLoader.exists(path):
