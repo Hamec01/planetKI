@@ -55,8 +55,6 @@ static func _evaluate_ai_decisions(faction: FactionData, settlement: SettlementD
 			
 	# 5. Выбор следующего исследования если не выбрано
 	if faction.current_research_tech == "":
-		var available = ["trapping_hunting", "flint_knapping", "food_preservation", "primitive_agriculture", "shamanic_rites"]
-		for t in available:
-			if not faction.unlocked_techs.has(t):
-				faction.current_research_tech = t
+		for t in TechTree.TECHNOLOGIES:
+			if faction.set_research(t):
 				break

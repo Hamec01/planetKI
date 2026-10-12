@@ -1,0 +1,755 @@
+{
+  "version": 1,
+  "atlasSize": [
+    1536,
+    1024
+  ],
+  "groundPivot": [
+    0,
+    0
+  ],
+  "items": [
+    {
+      "id": "great_lodge__great_hearth",
+      "buildingId": "great_lodge",
+      "upgradeId": "great_hearth",
+      "name": "Большой общий очаг",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        10,
+        90,
+        392,
+        212
+      ],
+      "worldWidth": 460,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__partitions",
+      "buildingId": "great_lodge",
+      "upgradeId": "partitions",
+      "name": "Спальные перегородки",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        429,
+        17,
+        311,
+        297
+      ],
+      "worldWidth": 600,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__nursery_corner",
+      "buildingId": "great_lodge",
+      "upgradeId": "nursery_corner",
+      "name": "Детский угол",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        779,
+        94,
+        356,
+        206
+      ],
+      "worldWidth": 420,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__caretaker_quarters",
+      "buildingId": "great_lodge",
+      "upgradeId": "caretaker_quarters",
+      "name": "Место опекуна",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        1179,
+        82,
+        340,
+        225
+      ],
+      "worldWidth": 360,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__elders_quarters",
+      "buildingId": "great_lodge",
+      "upgradeId": "elders_quarters",
+      "name": "Место старших",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        13,
+        347,
+        343,
+        290
+      ],
+      "worldWidth": 440,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__knowledge_circle",
+      "buildingId": "great_lodge",
+      "upgradeId": "knowledge_circle",
+      "name": "Круг знаний",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        386,
+        420,
+        401,
+        202
+      ],
+      "worldWidth": 700,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__clan_totems",
+      "buildingId": "great_lodge",
+      "upgradeId": "clan_totems",
+      "name": "Родовые знаки",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        839,
+        322,
+        238,
+        351
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__clan_council",
+      "buildingId": "great_lodge",
+      "upgradeId": "clan_council",
+      "name": "Круг рода",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        1141,
+        401,
+        383,
+        255
+      ],
+      "worldWidth": 850,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__communal_store",
+      "buildingId": "great_lodge",
+      "upgradeId": "communal_store",
+      "name": "Общие запасы",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        14,
+        690,
+        364,
+        301
+      ],
+      "worldWidth": 500,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "great_lodge__infirmary_corner",
+      "buildingId": "great_lodge",
+      "upgradeId": "infirmary_corner",
+      "name": "Место ухода",
+      "atlas": "lodge_upgrades",
+      "sourceRect": [
+        377,
+        746,
+        393,
+        227
+      ],
+      "worldWidth": 650,
+      "placement": "interior",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_baskets",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_baskets",
+      "name": "Склад корзин",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        23,
+        160,
+        380,
+        342
+      ],
+      "worldWidth": 400,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_sorting_table",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_sorting_table",
+      "name": "Стол сортировки растений",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        407,
+        126,
+        376,
+        390
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_drying_racks",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_drying_racks",
+      "name": "Сушильные рамки",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        793,
+        39,
+        360,
+        486
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_storage_pit",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_storage_pit",
+      "name": "Яма-хранилище",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        1160,
+        151,
+        365,
+        366
+      ],
+      "worldWidth": 600,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_route_markers",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_route_markers",
+      "name": "Знаки маршрутов",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        31,
+        523,
+        329,
+        422
+      ],
+      "worldWidth": 300,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_seed_sorting",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_seed_sorting",
+      "name": "Сортировка семян",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        370,
+        625,
+        398,
+        329
+      ],
+      "worldWidth": 450,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_test_plot",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_test_plot",
+      "name": "Опытная грядка",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        766,
+        618,
+        372,
+        341
+      ],
+      "worldWidth": 600,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "foraging_post__forage_grain_station",
+      "buildingId": "foraging_post",
+      "upgradeId": "forage_grain_station",
+      "name": "Обработка зерна",
+      "atlas": "forage_upgrades",
+      "sourceRect": [
+        1145,
+        627,
+        380,
+        341
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_tracking",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_tracking",
+      "name": "Стойка следопыта",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        13,
+        58,
+        368,
+        275
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_butchering_area",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_butchering_area",
+      "name": "Площадка разделки",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        412,
+        2,
+        319,
+        323
+      ],
+      "worldWidth": 600,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_master_butcher",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_master_butcher",
+      "name": "Стол мастера разделки",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        791,
+        50,
+        351,
+        290
+      ],
+      "worldWidth": 550,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_weapon_rack",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_weapon_rack",
+      "name": "Стойка оружия",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        1203,
+        15,
+        318,
+        331
+      ],
+      "worldWidth": 450,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_target",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_target",
+      "name": "Тренировочная мишень",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        51,
+        341,
+        244,
+        320
+      ],
+      "worldWidth": 300,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_mentor",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_mentor",
+      "name": "Место наставника",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        398,
+        399,
+        349,
+        226
+      ],
+      "worldWidth": 700,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_dogs",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_dogs",
+      "name": "Загон охотничьих собак",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        777,
+        341,
+        379,
+        319
+      ],
+      "worldWidth": 850,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_outpost",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_outpost",
+      "name": "Дальняя стоянка",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        1187,
+        345,
+        340,
+        315
+      ],
+      "worldWidth": 700,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_trophies",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_trophies",
+      "name": "Мастерская трофеев",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        12,
+        685,
+        356,
+        299
+      ],
+      "worldWidth": 500,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "hunting_camp__hunt_smokehouse",
+      "buildingId": "hunting_camp",
+      "upgradeId": "hunt_smokehouse",
+      "name": "Коптильная яма",
+      "atlas": "hunt_upgrades",
+      "sourceRect": [
+        387,
+        650,
+        401,
+        321
+      ],
+      "worldWidth": 600,
+      "placement": "yard",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__digging_stick",
+      "buildingId": "agriculture",
+      "upgradeId": "digging_stick",
+      "name": "Палка-копалка",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        63,
+        90,
+        251,
+        348
+      ],
+      "worldWidth": 160,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__stone_hoe",
+      "buildingId": "agriculture",
+      "upgradeId": "stone_hoe",
+      "name": "Каменная мотыга",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        421,
+        97,
+        290,
+        332
+      ],
+      "worldWidth": 180,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__wooden_hoe",
+      "buildingId": "agriculture",
+      "upgradeId": "wooden_hoe",
+      "name": "Деревянная мотыга",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        813,
+        99,
+        277,
+        343
+      ],
+      "worldWidth": 170,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__flint_sickle",
+      "buildingId": "agriculture",
+      "upgradeId": "flint_sickle",
+      "name": "Кремнёвый серп",
+      "atlas": "flint_sickle",
+      "sourceRect": [
+        151,
+        78,
+        1001,
+        1109
+      ],
+      "worldWidth": 120,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__threshing_flail",
+      "buildingId": "agriculture",
+      "upgradeId": "threshing_flail",
+      "name": "Цеп для молотьбы",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        48,
+        541,
+        265,
+        322
+      ],
+      "worldWidth": 180,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__winnowing_sieve",
+      "buildingId": "agriculture",
+      "upgradeId": "winnowing_sieve",
+      "name": "Веялка",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        413,
+        571,
+        306,
+        261
+      ],
+      "worldWidth": 130,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__wooden_ard",
+      "buildingId": "agriculture",
+      "upgradeId": "wooden_ard",
+      "name": "Деревянное рало",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        784,
+        538,
+        337,
+        345
+      ],
+      "worldWidth": 600,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    },
+    {
+      "id": "agriculture__ox_yoke",
+      "buildingId": "agriculture",
+      "upgradeId": "ox_yoke",
+      "name": "Ярмо и упряжь",
+      "atlas": "farm_tools",
+      "sourceRect": [
+        1174,
+        607,
+        312,
+        243
+      ],
+      "worldWidth": 500,
+      "placement": "prop",
+      "states": [
+        "complete"
+      ],
+      "layersReady": false,
+      "interactionReady": false
+    }
+  ],
+  "atlasSizes": {
+    "lodge_upgrades": [
+      1536,
+      1024
+    ],
+    "forage_upgrades": [
+      1536,
+      1024
+    ],
+    "hunt_upgrades": [
+      1536,
+      1024
+    ],
+    "farm_tools": [
+      1536,
+      1024
+    ],
+    "flint_sickle": [
+      1254,
+      1254
+    ]
+  }
+}

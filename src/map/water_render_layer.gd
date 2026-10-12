@@ -44,4 +44,25 @@ func _draw() -> void:
 			if tex == null:
 				continue
 			var rect = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+			if tile["biome"] == BiomeDefinitions.BiomeType.DEEP_OCEAN:
+				# Глубина темнеет постепенно: одиночная «яма» среди мелководья не выглядит чёрным квадратом
+				var deep_n = 0
+				var total_n = 0
+				for dy in range(-1, 2):
+					for dx in range(-1, 2):
+						if dx == 0 and dy == 0:
+							continue
+						var ny = y + dy
+						var nx = x + dx
+						if ny < 0 or ny >= tiles.size() or nx < 0 or nx >= tiles[ny].size():
+							continue
+						total_n += 1
+						if tiles[ny][nx]["biome"] == BiomeDefinitions.BiomeType.DEEP_OCEAN:
+							deep_n += 1
+				if total_n > 0 and deep_n < total_n:
+					var shallow = TileTextureManager.get_tile_texture(BiomeDefinitions.BiomeType.SHALLOW_COAST, tile["coord"], false)
+					if shallow:
+						draw_texture_rect(shallow, rect, false)
+						draw_texture_rect(tex, rect, false, Color(1, 1, 1, 0.25 + 0.75 * float(deep_n) / float(total_n)))
+						continue
 			draw_texture_rect(tex, rect, false)

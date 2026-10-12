@@ -186,14 +186,22 @@ func consume_food(request_amount: float) -> float:
 		EventBus.resources_updated.emit(faction_id, economy.resources)
 	return actual_deduct
 
+var _spoiled_unreported: float = 0.0
+var _last_spoil_toast_time: float = -1000.0
+
 func update_food_spoilage(delta: float) -> void:
 	if food_batches.is_empty():
 		return
 	var granary_factor = get_granary_spoilage_factor()
+	var ice_cellar = has_effect_flag("meat_spoilage_zero")
 	var spoiled_total = 0.0
 	var i = food_batches.size() - 1
 	while i >= 0:
 		var b = food_batches[i]
+		# Ледник амбара: мясо в холоде не портится
+		if ice_cellar and String(b.get("food_type", "")) in ["meat", "smoked_meat", "fish"]:
+			i -= 1
+			continue
 		var max_fresh = float(b.get("max_freshness_sec", 3600.0))
 		if max_fresh <= 0.0:
 			max_fresh = 3600.0
@@ -209,7 +217,12 @@ func update_food_spoilage(delta: float) -> void:
 		var is_player = (faction_id == GameManager.player_faction_id or faction_id == "player_tribe" or id == "player_tribe_settlement" or id == "test_s")
 		if is_player:
 			EventBus.resources_updated.emit(faction_id, economy.resources)
-			EventBus.notification_toast.emit("Испорченная пища", "На складе испортилось %.1f ед. запасов пищи" % spoiled_total, "warning")
+			# Одна сводка за полдня вместо потока одинаковых уведомлений
+			_spoiled_unreported += spoiled_total
+			if GameManager.sim_time_total - _last_spoil_toast_time >= 300.0:
+				EventBus.notification_toast.emit("Испорченная пища", "За полдня на складе испортилось %.1f ед. пищи. Амбар с настилом и сушка снижают порчу." % _spoiled_unreported, "warning")
+				_spoiled_unreported = 0.0
+				_last_spoil_toast_time = GameManager.sim_time_total
 
 	# Домашняя порча пищи в хижинах (снижается на 50% при наличии кладовой hut_pantry)
 	if GameManager and GameManager.building_instances:
@@ -319,7 +332,104 @@ func get_granary_spoilage_factor() -> float:
 		var b_info = BuildingDB.get_building(b_id)
 		if b_info.has("food_spoilage_reduction"):
 			factor *= b_info["food_spoilage_reduction"]
+	# Настилы, защита от грызунов (амбар) и сушка/копчение (технология)
+	factor *= clampf(1.0 - get_bonus("spoilage_reduction"), 0.1, 1.0)
 	return factor
+
+# --- ЭФФЕКТЫ ИЗУЧЕННЫХ УЛУЧШЕНИЙ ЗДАНИЙ И ОТКРЫТЫХ ТЕХНОЛОГИЙ ---
+# Улучшения охотничьего лагеря, хижин и Большого дома уже работают через прямые проверки по ID,
+# поэтому их словари effects здесь не суммируются (иначе бонус удвоится).
+const HANDCODED_UPGRADE_TYPES: Array[String] = ["hunting_camp", "hut"]
+const HANDCODED_UPGRADE_IDS: Array[String] = ["woodcutter_forestry", "great_hearth", "partitions", "nursery_corner", "caretaker_quarters", "knowledge_circle", "clan_totems", "clan_council", "communal_store"]
+# Технологии называют эффекты иначе, чем улучшения — сводим к общим ключам
+const TECH_EFFECT_ALIASES: Dictionary = {"wood_bonus": "woodcutting_speed", "stone_bonus": "stone_speed", "hunter_bonus": "hunt_yield", "health_bonus": "healing_flat", "diplomacy_bonus": "diplo_prestige"}
+
+var _bonus_cache: Dictionary = {}
+var _bonus_cache_sig: String = ""
+# Долговременные эффекты решений событий (например, hunter_damage от обряда охотников)
+var event_bonuses: Dictionary = {}
+
+func add_event_bonus(key: String, value: float) -> void:
+	event_bonuses[key] = float(event_bonuses.get(key, 0.0)) + value
+	_bonus_cache_sig = "" # сбросить кэш
+
+# Сумма числового эффекта key по всем изученным улучшениям зданий поселения и технологиям фракции
+func get_bonus(key: String) -> float:
+	var f_sig = GameManager.factions.get(faction_id, null) if GameManager else null
+	var sig = "%d|%d|%d" % [BuildingInstance.upgrade_revision, GameManager.building_instances.size() if GameManager else 0, f_sig.unlocked_techs.size() if f_sig else 0]
+	if sig != _bonus_cache_sig:
+		_bonus_cache.clear()
+		_bonus_cache_sig = sig
+	if _bonus_cache.has(key):
+		return _bonus_cache[key]
+	var total = _compute_bonus(key) + float(event_bonuses.get(key, 0.0))
+	_bonus_cache[key] = total
+	return total
+
+func _compute_bonus(key: String) -> float:
+	var total = 0.0
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b == null or b.settlement_id != id or b.unlocked_upgrades.is_empty():
+				continue
+			if HANDCODED_UPGRADE_TYPES.has(b.type):
+				continue
+			for u_id in b.unlocked_upgrades:
+				if HANDCODED_UPGRADE_IDS.has(u_id):
+					continue
+				var eff = BuildingSystem.get_upgrade(u_id).get("effects", {})
+				var v = eff.get(key, null)
+				if v is float or v is int:
+					total += float(v)
+	var f = GameManager.factions.get(faction_id, null) if GameManager else null
+	if f:
+		for t_id in f.unlocked_techs:
+			var t_eff = TechTree.get_tech(t_id).get("effects", {})
+			for ek in t_eff:
+				if TECH_EFFECT_ALIASES.get(ek, ek) == key and (t_eff[ek] is float or t_eff[ek] is int):
+					total += float(t_eff[ek])
+	return total
+
+# Есть ли у поселения флаг-эффект (например, unlock_stone_walls) от изученного улучшения или технологии
+func has_effect_flag(key: String) -> bool:
+	get_bonus("") # синхронизирует сигнатуру кэша
+	var ck = "flag:" + key
+	if not _bonus_cache.has(ck):
+		_bonus_cache[ck] = _compute_flag(key)
+	return _bonus_cache[ck]
+
+func _compute_flag(key: String) -> bool:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id:
+				for u_id in b.unlocked_upgrades:
+					if BuildingSystem.get_upgrade(u_id).get("effects", {}).get(key, false) == true:
+						return true
+	var f = GameManager.factions.get(faction_id, null) if GameManager else null
+	if f:
+		for t_id in f.unlocked_techs:
+			if TechTree.get_tech(t_id).get("effects", {}).get(key, false) == true:
+				return true
+	return false
+
+# Изучено ли улучшение хоть в одном здании поселения
+func has_settlement_upgrade(u_id: String) -> bool:
+	if GameManager and GameManager.building_instances:
+		for b in GameManager.building_instances.values():
+			if b and b.settlement_id == id and b.is_upgrade_unlocked(u_id):
+				return true
+	return false
+
+# Множитель лечения: место ухода в Большом доме, травы шаманов, кров для стариков
+func get_heal_multiplier(c: CitizenNPC) -> float:
+	var mult = 1.0 + get_bonus("healing_speed") + get_bonus("healing_flat") / 50.0
+	if c.cohort == "elder" and has_effect_flag("elder_shelter"):
+		mult += 0.25
+	return mult
+
+# Сколько житель реально уносит за ходку с учётом тачек/повозок плотника
+func get_carry_capacity(c: CitizenNPC) -> float:
+	return c.max_carry * (1.0 + get_bonus("carry_capacity"))
 
 func has_active_woodcutter_camp() -> bool:
 	if GameManager and GameManager.building_instances:
@@ -1141,6 +1251,9 @@ func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dicti
 		
 	if GameManager.tile_buildings.has(target_coord) or (GameManager.planet_data.has("tiles") and GameManager.planet_data["tiles"][target_coord.y][target_coord.x].get("is_water", false)):
 		return {"success": false, "reason": "❌ Нельзя перенести на занятую клетку или воду"}
+	var reloc_id = String(b_data.get("id", b_inst.type if b_inst else ""))
+	if BuildingSystem.overlaps_existing(target_coord, reloc_id, Vector2.ZERO, source_coord):
+		return {"success": false, "reason": "❌ Здание перекроет соседнюю постройку"}
 		
 	var b_type = b_inst.type if b_inst else b_data.get("id", "")
 	var saved_offset_arr = b_data.get("visual_offset", [0.0, 0.0])
@@ -1180,6 +1293,7 @@ func request_relocation(source_coord: Vector2i, target_coord: Vector2i) -> Dicti
 		"instance_id": new_inst.instance_id,
 		"visual_offset": [saved_offset.x, saved_offset.y]
 	}
+	clear_building_site(target_coord, b_type, saved_offset)
 	
 	active_relocations[rel_id] = {
 		"relocation_id": rel_id,
@@ -1310,13 +1424,40 @@ func handle_citizen_death(deceased_id: String) -> void:
 		if c.guardian_id == deceased_id:
 			reassign_guardianship(c)
 
-func find_available_tile_for_building() -> Vector2i:
+# Расчистка площадки под постройку: природа под основанием убирается, древесина и камень — на склад
+func clear_building_site(coord: Vector2i, b_id: String, offset: Vector2 = Vector2.ZERO) -> Dictionary:
+	var salvage: Dictionary = {}
+	if not GameManager:
+		return salvage
+	for t in BuildingSystem.get_covered_tiles(coord, b_id, offset):
+		if GameManager.resource_manager and GameManager.resource_manager.nodes.has(t):
+			var node: Dictionary = GameManager.resource_manager.nodes[t]
+			var cat = String(node.get("category", ""))
+			var amt = float(node.get("amount", 0.0)) * 0.5
+			# Клетка самой закладки расчищается без выхода (как и раньше); соседние деревья и валуны
+			# под крупным основанием дают половину запаса
+			if t != coord and not node.get("depleted", false) and amt > 0.0 and cat in ["wood", "stone"]:
+				salvage[cat] = float(salvage.get(cat, 0.0)) + amt
+			GameManager.resource_manager.remove_node(t)
+		var tiles = GameManager.planet_data.get("tiles", [])
+		if t.y >= 0 and t.y < tiles.size() and t.x >= 0 and t.x < tiles[t.y].size():
+			tiles[t.y][t.x]["nature_object"] = "none"
+	for r in salvage:
+		deposit_resource(r, salvage[r], "Расчистка площадки")
+	if not salvage.is_empty() and is_player_settlement():
+		var parts: Array[String] = []
+		for r in salvage:
+			parts.append("%d %s" % [int(salvage[r]), RESOURCE_NAMES_RU.get(r, r)])
+		EventBus.notification_toast.emit("Расчистка площадки", "Под стройку убраны деревья и камни: " + ", ".join(parts), "info")
+	return salvage
+
+func find_available_tile_for_building(b_id: String = "") -> Vector2i:
 	if not GameManager.planet_data.has("tiles"):
 		return Vector2i(-1, -1)
 	var tiles = GameManager.planet_data["tiles"]
 	
 	# Поиск по расширяющимся кольцам суши вокруг стоянки
-	for r in range(1, 6):
+	for r in range(1, 11):
 		for dy in range(-r, r + 1):
 			for dx in range(-r, r + 1):
 				if maxi(abs(dx), abs(dy)) != r:
@@ -1325,7 +1466,8 @@ func find_available_tile_for_building() -> Vector2i:
 				if c.y >= 0 and c.y < tiles.size() and c.x >= 0 and c.x < tiles[0].size():
 					var t = tiles[c.y][c.x]
 					if not t.get("is_water", false) and not GameManager.tile_buildings.has(c) and c != pos:
-						return c
+						if b_id == "" or not BuildingSystem.overlaps_existing(c, b_id):
+							return c
 	return Vector2i(-1, -1)
 
 func init_starter_buildings_on_map() -> void:
@@ -1344,7 +1486,7 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		return false
 
 	if target_coord == Vector2i(-1, -1):
-		target_coord = find_available_tile_for_building()
+		target_coord = find_available_tile_for_building(building_id)
 	if target_coord == Vector2i(-1, -1):
 		return false
 
@@ -1373,12 +1515,8 @@ func start_construction(building_id: String, target_coord: Vector2i = Vector2i(-
 		"visual_offset": [visual_offset.x, visual_offset.y]
 	}
 	
-	# Расчистка природного объекта / пня на строительной клетке (P01.10)
-	if GameManager and GameManager.resource_manager and GameManager.resource_manager.nodes.has(target_coord):
-		GameManager.resource_manager.remove_node(target_coord)
-	var tiles = GameManager.planet_data.get("tiles", []) if GameManager and GameManager.planet_data else []
-	if target_coord.y >= 0 and target_coord.y < tiles.size() and target_coord.x >= 0 and target_coord.x < tiles[0].size():
-		tiles[target_coord.y][target_coord.x]["nature_object"] = "none"
+	# Расчистка площадки под всем основанием постройки (P01.10): деревья и камни уходят на склад
+	clear_building_site(target_coord, building_id, visual_offset)
 	
 	# Немедленно пробуждаем свободных рабочих и строителей для начала работ
 	if population:
@@ -1565,7 +1703,8 @@ func calculate_daily_production(season: String) -> Dictionary:
 	
 	# Жрецы
 	var priests = assigned_jobs.get("priest", 0)
-	prod["faith"] = prod.get("faith", 0.0) + priests * 0.5
+	# Священный огонь святилища усиливает обряды жрецов
+	prod["faith"] = prod.get("faith", 0.0) + priests * 0.5 * (1.0 + get_bonus("faith_generation"))
 	prod["loyalty"] = prod.get("loyalty", 0.0) + priests * 0.1
 	
 	return prod
@@ -1632,6 +1771,22 @@ func sim_daily_tick(season: String) -> void:
 					b.food_stockpile = minf(b.food_stockpile_max, b.food_stockpile + 0.5)
 	check_family_private_improvements()
 
+	# 3a. Мыши и сырость портят посевной фонд; настил, кувшины и мышеловки семенного хранилища спасают его
+	if economy.get_resource("seeds") > 0.0:
+		var seed_loss = 0.01
+		if has_settlement_upgrade("seed_raised_floor"):
+			seed_loss *= 0.7
+		if has_settlement_upgrade("seed_sealed_jars"):
+			seed_loss *= 0.5
+		if has_settlement_upgrade("seed_rodent_traps"):
+			seed_loss *= 0.1
+		var cm = GameManager.culture_memory if GameManager else null
+		if cm and cm.discovered_practices.has("preserve_seeds"):
+			seed_loss *= 0.6
+		if cm and cm.discovered_practices.has("unlock_rodent_protection"):
+			seed_loss *= 0.5
+		economy.resources["seeds"] = maxf(0.0, economy.get_resource("seeds") * (1.0 - seed_loss))
+
 	# 3b. Симуляция сельского хозяйства, полей, огородов, стоянок собирателей, мельниц и пекарен
 	if GameManager and GameManager.building_instances:
 		for b in GameManager.building_instances.values():
@@ -1651,15 +1806,33 @@ func sim_daily_tick(season: String) -> void:
 					if keeper_count > 0:
 						add_knowledge("seed_knowledge", 0.8 * keeper_count)
 						add_knowledge("storage_knowledge", 0.5 * keeper_count)
+				elif b.type == "irrigation_ditch":
+					# Канава поит поля, огороды и сады в радиусе 4 клеток
+					var water = 3.0
+					if b.is_upgrade_unlocked("irrigation_stone_lining"):
+						water += 1.5 # берега не осыпаются, вода не уходит в грунт
+					for fb in GameManager.building_instances.values():
+						if fb and fb.settlement_id == id and fb.is_agricultural() and Vector2(fb.pos).distance_to(Vector2(b.pos)) <= 4.0:
+							fb.water_crop(water)
+							if b.is_upgrade_unlocked("irrigation_sluice_gate") and fb.soil_moisture < 45.0:
+								fb.soil_moisture = 45.0 # шлюзы держат воду в засуху
 				elif b.type == "quern_house":
 					var miller_count = b.workers.size()
 					if miller_count > 0 and economy.get_resource("grain") > 0.0:
 						var grind_rate = 2.0 * miller_count
 						if b.is_upgrade_unlocked("quern_granite_stones"):
 							grind_rate *= 1.4
+						if b.is_upgrade_unlocked("quern_rotary_handle"):
+							grind_rate *= 1.35
 						var processed = minf(economy.get_resource("grain"), grind_rate)
 						economy.resources["grain"] = maxf(0.0, economy.resources["grain"] - processed)
-						economy.add_resource("flour", processed * 0.9)
+						economy.add_resource("flour", processed * (1.0 if b.is_upgrade_unlocked("quern_flour_sifter") else 0.9))
+						# Без вытяжки мучная пыль подтачивает здоровье мельников
+						if not b.is_upgrade_unlocked("quern_dust_ventilation"):
+							for w_id in b.workers:
+								var miller = get_citizen_by_id(w_id)
+								if miller and miller.is_alive:
+									miller.health = maxf(1.0, miller.health - 1.0)
 						add_knowledge("food_processing_knowledge", 0.5 * miller_count)
 				elif b.type == "bakery":
 					var baker_count = b.workers.size()
@@ -1667,17 +1840,33 @@ func sim_daily_tick(season: String) -> void:
 						var bake_rate = 2.5 * baker_count
 						if b.is_upgrade_unlocked("bake_domed_oven"):
 							bake_rate *= 1.5
+						if b.is_upgrade_unlocked("bake_kneading_trough"):
+							bake_rate *= 1.25
 						var flour_used = minf(economy.get_resource("flour"), bake_rate)
 						economy.resources["flour"] = maxf(0.0, economy.resources["flour"] - flour_used)
-						economy.add_resource("bread", flour_used * 1.5)
-						economy.add_resource("food", flour_used * 1.5)
+						var loaf_mult = 1.5
+						if b.is_upgrade_unlocked("bake_wood_rack"):
+							loaf_mult *= 1.1
+						if b.is_upgrade_unlocked("bake_cooling_shelves"):
+							loaf_mult *= 1.1
+						economy.add_resource("bread", flour_used * loaf_mult)
+						economy.add_resource("food", flour_used * loaf_mult)
 						add_knowledge("food_processing_knowledge", 0.8 * baker_count)
 				elif b.type == "threshing_floor":
 					var thresh_count = b.workers.size()
 					if thresh_count > 0:
-						add_knowledge("grain_knowledge", 0.4 * thresh_count)
+						var thresh_mult = 1.0
+						if b.is_upgrade_unlocked("thresh_flails"):
+							thresh_mult *= 1.5
+						if b.is_upgrade_unlocked("thresh_hard_clay"):
+							thresh_mult *= 1.2
+						if b.is_upgrade_unlocked("thresh_winnow_baskets"):
+							thresh_mult *= 1.2
+						if b.is_upgrade_unlocked("thresh_sheaf_canopy"):
+							thresh_mult *= 1.1
+						add_knowledge("grain_knowledge", 0.4 * thresh_count * thresh_mult)
 						# Провеивание и очистка дают немного семян
-						economy.add_resource("seeds", 0.2 * thresh_count)
+						economy.add_resource("seeds", 0.2 * thresh_count * thresh_mult)
 
 
 	# 4. Демография: отношения, семейные союзы и зарождение новой жизни (S07 / P01)
@@ -1732,6 +1921,14 @@ func _update_social_fabric() -> void:
 	if living.is_empty():
 		return
 	
+	# 0. Очаг преданий в доме старейшин: вечерние рассказы о предках укрепляют верность вождю
+	var lore_loyalty = get_bonus("loyalty_boost")
+	if lore_loyalty > 0.0:
+		for c in living:
+			c.loyalty = minf(100.0, c.loyalty + lore_loyalty * 0.04)
+		loyalty_sum = 0.0
+		for c in living:
+			loyalty_sum += c.loyalty
 	# 1. Лояльность племени (HUD) тянется к реальному настроению жителей
 	var avg_loyalty = loyalty_sum / float(living.size())
 	economy.loyalty = clampf(lerpf(economy.loyalty, avg_loyalty, 0.25), 0.0, 100.0)
@@ -1964,6 +2161,9 @@ func _notify_citizen_death(dead: CitizenNPC) -> void:
 func _conduct_funeral_rites(c: CitizenNPC) -> void:
 	if c.is_buried or c.custom_data.get("funeral_in_progress", false):
 		return
+	# Тестовый бой: павшие лежат на поле, кладбище посреди поляны не появляется
+	if GameManager and GameManager.battle_test_mode:
+		return
 		
 	var culture = GameManager.culture_memory if GameManager else null
 	var is_pyre = false
@@ -2160,7 +2360,8 @@ func _conduct_funeral_rites(c: CitizenNPC) -> void:
 			if u_path.is_empty() and GameManager and GameManager.nav_grid:
 				u_path = GameManager.nav_grid.find_path(undertaker.pos, c.pos, true)
 			if u_path.is_empty() and undertaker.pos.distance_to(c.pos) <= 32.0:
-				u_path = [undertaker.pos]
+				var direct_u: Array[Vector2] = [undertaker.pos]
+				u_path = direct_u
 			undertaker.path = u_path
 			undertaker.path_index = 0
 			undertaker.last_status_reason = "Идёт за телом %s для предания земле" % c.name
@@ -2202,6 +2403,8 @@ func _conduct_funeral_rites(c: CitizenNPC) -> void:
 
 func _check_pending_burials() -> void:
 	if not population:
+		return
+	if GameManager and GameManager.battle_test_mode:
 		return
 	for c in population.citizens:
 		if not c.is_alive and not c.is_buried:
@@ -2301,6 +2504,9 @@ func update_citizens(delta: float) -> void:
 		if not c.is_alive or c.health <= 0.0:
 			if c.is_alive:
 				_process_citizen_death(c)
+			continue
+		# Участников тестового боя ведёт BattleTest
+		if c.custom_data.get("in_battle", false):
 			continue
 			
 		# 1. Индивидуальное суточное время
@@ -2445,6 +2651,7 @@ func update_citizens(delta: float) -> void:
 						var heal_rate = 8.0 * (1.0 + float(home_inst.comfort) / 50.0) * (1.0 - penalty)
 						if home_inst.food_stockpile > 0.0:
 							heal_rate *= 1.3
+						heal_rate *= get_heal_multiplier(c)
 						c.health = minf(c.max_health, c.health + heal_rate * delta)
 					if home_inst.is_crowded():
 						c.loyalty = maxf(0.0, c.loyalty - 0.05 * penalty * delta)
@@ -2641,6 +2848,7 @@ func update_citizens(delta: float) -> void:
 					heal_spd *= 1.3
 				if c.hunger > 50.0:
 					heal_spd *= 1.2
+				heal_spd *= get_heal_multiplier(c)
 				c.health = minf(c.max_health, c.health + heal_spd * delta)
 
 			if c.task_id == "recover_at_home":
@@ -3513,7 +3721,7 @@ func update_citizens(delta: float) -> void:
 									var avail = economy.get_resource(c.target_id) + wood_in_camp
 									if needed > 0.0 and avail > 0.0:
 										take_res = c.target_id
-										var want = minf(needed, c.max_carry)
+										var want = minf(needed, get_carry_capacity(c))
 										var from_econ = minf(want, economy.get_resource(take_res))
 										if from_econ > 0.0:
 											economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
@@ -3528,7 +3736,7 @@ func update_citizens(delta: float) -> void:
 										var avail = economy.get_resource(r) + wood_in_camp
 										if needed > 0.0 and avail > 0.0:
 											take_res = r
-											var want = minf(needed, c.max_carry)
+											var want = minf(needed, get_carry_capacity(c))
 											var from_econ = minf(want, economy.get_resource(take_res))
 											if from_econ > 0.0:
 												economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
@@ -3571,7 +3779,7 @@ func update_citizens(delta: float) -> void:
 										var avail = economy.get_resource(c.target_id) + wood_in_camp
 										if needed > 0.0 and avail > 0.0:
 											take_res = c.target_id
-											var want = minf(needed, c.max_carry)
+											var want = minf(needed, get_carry_capacity(c))
 											var from_econ = minf(want, economy.get_resource(take_res))
 											if from_econ > 0.0:
 												economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
@@ -3586,7 +3794,7 @@ func update_citizens(delta: float) -> void:
 											var avail = economy.get_resource(r) + wood_in_camp
 											if needed > 0.0 and avail > 0.0:
 												take_res = r
-												var want = minf(needed, c.max_carry)
+												var want = minf(needed, get_carry_capacity(c))
 												var from_econ = minf(want, economy.get_resource(take_res))
 												if from_econ > 0.0:
 													economy.resources[take_res] = maxf(0.0, economy.resources[take_res] - from_econ)
@@ -3746,7 +3954,8 @@ func update_citizens(delta: float) -> void:
 					base_dmg = 26.0
 				elif c.job_id == "hunter":
 					var camp_inst = _get_hunting_camp_instance(c)
-					base_dmg = 20.0 * (camp_inst.get_hunter_damage_mult() if camp_inst else 1.0)
+					# Стойка оружия лагеря + наконечники стрел кузницы
+					base_dmg = 20.0 * (camp_inst.get_hunter_damage_mult() if camp_inst else 1.0) * (1.0 + get_bonus("hunter_damage") + get_bonus("archer_damage"))
 				elif c.has_tool("axe"):
 					base_dmg = 22.0
 				elif c.has_tool("pickaxe"):
@@ -3872,7 +4081,7 @@ func update_citizens(delta: float) -> void:
 									c.last_status_reason = "Улучшение остановлено: не все материалы на площадке"
 									c.decision_cooldown = 2.0
 								else:
-									up["work_left"] = maxf(0.0, float(up.get("work_left", 4.0)) - 1.5)
+									up["work_left"] = maxf(0.0, float(up.get("work_left", 4.0)) - 1.5 * (1.0 + get_bonus("build_speed")))
 									c.add_work_xp("building", 0.25)
 									if up["work_left"] <= 0.0:
 										var up_id = up["id"]
@@ -3921,6 +4130,13 @@ func update_citizens(delta: float) -> void:
 					c.state = CitizenNPC.State.IDLE
 					c.decision_cooldown = randf_range(2.0, 5.0)
 					c.last_status_reason = "Патрулирует периметр"
+				elif c.job_id == "warrior":
+					# Отработка ударов реально растит силу, выносливость и ловкость;
+					# мишени тренировочного поля ускоряют обучение
+					c.add_work_xp("combat_training", 0.35 * (1.0 + get_bonus("training_speed") + get_bonus("training_xp_gain")))
+					c.state = CitizenNPC.State.IDLE
+					c.decision_cooldown = randf_range(2.0, 4.0)
+					c.last_status_reason = "Отработал удары на тренировочном поле"
 				else:
 					# Ресурсы появляются только из реальных узлов карты, туш и полей —
 					# «работа на месте» без цели ничего не создаёт из воздуха
@@ -4237,7 +4453,8 @@ func update_citizens(delta: float) -> void:
 					if f_path.is_empty() and GameManager.nav_grid:
 						f_path = GameManager.nav_grid.find_path(c.pos, f_node["pos"], true)
 					if f_path.is_empty() and c.pos.distance_to(f_node["pos"]) <= 36.0:
-						f_path = [c.pos]
+						var direct_f: Array[Vector2] = [c.pos]
+						f_path = direct_f
 						
 					if f_path.is_empty():
 						if GameManager.task_service:
@@ -4286,7 +4503,8 @@ func update_citizens(delta: float) -> void:
 				if fish_path.is_empty() and GameManager.nav_grid:
 					fish_path = GameManager.nav_grid.find_path(c.pos, fish_node["pos"], true)
 				if fish_path.is_empty() and c.pos.distance_to(fish_node["pos"]) <= 48.0:
-					fish_path = [c.pos]
+					var direct_fish: Array[Vector2] = [c.pos]
+					fish_path = direct_fish
 					
 				if fish_path.is_empty():
 					c.state = CitizenNPC.State.WAITING
@@ -4360,7 +4578,7 @@ func update_citizens(delta: float) -> void:
 				if c.cohort in ["youth", "adult"] and c.job_id == "idle":
 					var camp_idle = get_active_woodcutter_camp()
 					if camp_idle and camp_idle.local_buffer_wood >= 10.0:
-						var take_amt = camp_idle.take_wood(c.max_carry)
+						var take_amt = camp_idle.take_wood(get_carry_capacity(c))
 						if take_amt > 0.0:
 							c.cargo_type = "wood"
 							c.cargo_amount = take_amt
@@ -4526,7 +4744,8 @@ func _try_assign_construction_task(c: CitizenNPC) -> bool:
 					if s_path.is_empty() and GameManager.nav_grid:
 						s_path = GameManager.nav_grid.find_path(c.pos, site_p, true)
 					if s_path.is_empty() and c.pos.distance_to(site_p) <= 36.0:
-						s_path = [c.pos]
+						var direct_site: Array[Vector2] = [c.pos]
+						s_path = direct_site
 					if s_path.is_empty():
 						DebugLogger.log_warn("Builder", "Строитель %s не нашел путь к стройплощадке %s на %s" % [c.name, b.get("id", ""), q_c])
 						continue
@@ -4769,7 +4988,8 @@ func apply_construction_work(worker: CitizenNPC, coord: Vector2i) -> Dictionary:
 	for r in b.get("materials_required", {}):
 		if float(b.get("materials_delivered", {}).get(r, 0.0)) < float(b["materials_required"][r]):
 			return {"result": "missing_materials"}
-	b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70)
+	# Набор строителя из кузницы ускоряет каждый шаг работы
+	b["days_left"] = maxf(0.0, float(b.get("days_left", 1.0)) - 0.70 * (1.0 + get_bonus("build_speed")))
 	worker.add_work_xp("building", 0.25)
 	if b["days_left"] > 0.0:
 		return {"result": "progress"}
@@ -5534,6 +5754,7 @@ func serialize() -> Dictionary:
 		"food_batches": food_batches.duplicate(true),
 		"next_batch_id": _next_batch_id,
 		"marriage_law": marriage_law,
+		"event_bonuses": event_bonuses.duplicate(),
 		"reserved_zones": reserved_zones.duplicate(true),
 		"logging_zones": logging_zones.map(func(c): return [c.x, c.y]),
 		"active_relocations": active_relocations.duplicate(true),
@@ -5566,6 +5787,7 @@ func deserialize(data: Dictionary) -> void:
 				food_batches.append(b)
 	_next_batch_id = data.get("next_batch_id", 1)
 	marriage_law = data.get("marriage_law", "monogamy")
+	event_bonuses = data.get("event_bonuses", {}).duplicate()
 	if council == null:
 		council = ElderCouncil.new(id)
 	council.settlement_id = id

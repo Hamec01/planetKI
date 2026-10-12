@@ -12,7 +12,7 @@ var is_dragging: bool = false
 var map_bounds_rect: Rect2 = Rect2(0, 0, 5120, 5120)
 
 # Режим Короля: камера близко к герою, как в League of Legends / Dota 2
-const KING_ZOOM: float = 3.0
+const KING_ZOOM: float = 3.6
 const KING_MIN_ZOOM: float = 2.2
 const KING_MAX_ZOOM: float = 4.5
 var _king_mode_camera: bool = false
@@ -71,8 +71,15 @@ func _process(delta: float) -> void:
 		var s = GameManager.get_player_settlement()
 		var ruler = PlayerHero.get_ruler(s) if s is SettlementData else null
 		if ruler:
-			position = position.lerp(ruler.pos, clampf(8.0 * delta, 0.0, 1.0))
+			# Камера чуть опережает взгляд Короля и вздрагивает от ударов
+			var look_ahead = ruler.facing_dir.normalized() * 10.0 if ruler.facing_dir != Vector2.ZERO else Vector2.ZERO
+			position = position.lerp(ruler.pos + look_ahead, clampf(7.0 * delta, 0.0, 1.0))
 			_clamp_position()
+			if GameManager.camera_shake > 0.0:
+				offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * GameManager.camera_shake * 4.0
+				GameManager.camera_shake = maxf(0.0, GameManager.camera_shake - delta * 2.5)
+			else:
+				offset = Vector2.ZERO
 		return
 		
 	# Перемещение клавиатурой (WASD / Стрелки)
@@ -89,6 +96,12 @@ func _process(delta: float) -> void:
 	if move_vec != Vector2.ZERO:
 		position += move_vec.normalized() * (pan_speed / zoom.x) * delta
 		_clamp_position()
+	# Лёгкий толчок камеры (закладка здания и т.п.)
+	if GameManager.camera_shake > 0.0:
+		offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * GameManager.camera_shake * 3.0
+		GameManager.camera_shake = maxf(0.0, GameManager.camera_shake - delta * 3.0)
+	elif offset != Vector2.ZERO:
+		offset = Vector2.ZERO
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Зум колесиком мыши

@@ -130,6 +130,9 @@ var hero_points_lbl: Label = null
 var hero_xp_bar: ProgressBar = null
 var hero_hp_bar: ProgressBar = null
 var hero_stamina_bar: ProgressBar = null
+var hero_portrait_rect: TextureRect = null
+var hero_status_lbl: Label = null
+var hero_slots: Dictionary = {}
 var _hero_bar_timer: float = 0.0
 var hero_controller: HeroController = null
 var dialogue_window: DialogueWindow = null
@@ -279,12 +282,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		if focused is LineEdit or focused is TextEdit:
 			return
 			
-		# Режим «Путь вождя»: WASD, E и F принадлежат герою (ходьба, разговор, еда)
-		if hero_mode and event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_E]:
-			if event.keycode == KEY_E and hero_controller:
-				var npc = hero_controller.try_talk()
-				if npc:
-					_open_dialogue(npc)
+		# Режим Короля — раскладка РПГ: WASD ходьба, Пробел прыжок, Shift перекат, E взаимодействие,
+		# P/Esc пауза, I/C/K окна героя, V — назад к правлению
+		if hero_mode and event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_E, KEY_SPACE, KEY_SHIFT, KEY_P, KEY_F]:
+			if hero_controller and not (dialogue_window and dialogue_window.visible):
+				match event.keycode:
+					KEY_E, KEY_F:
+						var npc = hero_controller.interact()
+						if npc:
+							_open_dialogue(npc)
+					KEY_SPACE:
+						hero_controller.try_jump()
+					KEY_SHIFT:
+						hero_controller.try_roll()
+			if event.keycode == KEY_P:
+				GameManager.toggle_pause()
 			get_viewport().set_input_as_handled()
 			return
 		# Режим Короля: клавиши стратегии (стройка, жители, законы, армия...) не работают —
@@ -522,57 +534,210 @@ func _make_hero_bar_progress(color: Color, tip: String) -> ProgressBar:
 	return bar
 
 func _setup_hero_bar() -> void:
+	# РПГ-интерфейс Режима Короля: рамка героя слева внизу, панель действий по центру,
+	# строка текущего занятия справа. Корень — прозрачный, чтобы не закрывать мир.
 	hero_bar = PanelContainer.new()
 	hero_bar.name = "HeroBar"
+	hero_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hero_bar)
 	hero_bar.anchor_left = 0.0
 	hero_bar.anchor_right = 1.0
 	hero_bar.anchor_top = 1.0
 	hero_bar.anchor_bottom = 1.0
-	hero_bar.offset_top = -52.0
+	hero_bar.offset_top = -124.0
 	hero_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var sbox = StyleBoxFlat.new()
-	sbox.bg_color = Color(0.10, 0.08, 0.06, 0.98)
-	sbox.border_color = Color(0.95, 0.55, 0.25, 1.0)
-	sbox.border_width_top = 2
-	sbox.set_content_margin_all(6)
-	sbox.content_margin_left = 14
-	sbox.content_margin_right = 14
-	hero_bar.add_theme_stylebox_override("panel", sbox)
-	var hbox = HBoxContainer.new()
-	hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	hbox.add_theme_constant_override("separation", 10)
-	hero_bar.add_child(hbox)
-	var hint = Label.new()
-	hint.text = "ПКМ: идти • говорить • рубить • добывать • собирать • бить • очаг — поесть • склад — сдать сумку | WASD • E"
-	hint.add_theme_font_size_override("font_size", 10)
-	hint.add_theme_color_override("font_color", Color(0.8, 0.75, 0.6))
-	hbox.add_child(hint)
-	for item in [["🎒 Инвентарь [I]", HeroPanel.TAB_INVENTORY], ["🧍 Персонаж [C]", HeroPanel.TAB_CHARACTER], ["✨ Навыки [K]", HeroPanel.TAB_SKILLS]]:
-		var btn = Button.new()
-		btn.text = item[0]
-		btn.custom_minimum_size = Vector2(120, 36)
-		btn.add_theme_font_size_override("font_size", 12)
-		var tab_idx = item[1]
-		btn.pressed.connect(func(): _open_hero_tab(tab_idx))
-		hbox.add_child(btn)
-	var sep = VSeparator.new()
-	hbox.add_child(sep)
+	hero_bar.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	var row = HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 16)
+	hero_bar.add_child(row)
+
+	# --- 1. Рамка героя: портрет, имя, уровень, здоровье, выносливость, опыт ---
+	var frame = PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _rpg_panel_style(Color(0.95, 0.68, 0.30)))
+	frame.custom_minimum_size = Vector2(380, 112)
+	row.add_child(frame)
+	var fh = HBoxContainer.new()
+	fh.add_theme_constant_override("separation", 10)
+	frame.add_child(fh)
+	var portrait_bg = PanelContainer.new()
+	var pst = StyleBoxFlat.new()
+	pst.bg_color = Color(0.16, 0.12, 0.08, 1.0)
+	pst.border_color = Color(1.0, 0.82, 0.4, 1.0)
+	pst.set_border_width_all(2)
+	pst.set_corner_radius_all(40)
+	portrait_bg.add_theme_stylebox_override("panel", pst)
+	portrait_bg.custom_minimum_size = Vector2(84, 84)
+	portrait_bg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	fh.add_child(portrait_bg)
+	hero_portrait_rect = TextureRect.new()
+	hero_portrait_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hero_portrait_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hero_portrait_rect.custom_minimum_size = Vector2(80, 80)
+	portrait_bg.add_child(hero_portrait_rect)
+	var fv = VBoxContainer.new()
+	fv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fv.add_theme_constant_override("separation", 4)
+	fh.add_child(fv)
 	hero_level_lbl = Label.new()
-	hero_level_lbl.add_theme_font_size_override("font_size", 13)
-	hero_level_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
-	hbox.add_child(hero_level_lbl)
-	hero_xp_bar = _make_hero_bar_progress(Color(0.85, 0.7, 0.2), "Опыт до следующего уровня")
-	hbox.add_child(hero_xp_bar)
-	hero_hp_bar = _make_hero_bar_progress(Color(0.75, 0.18, 0.18), "Здоровье вождя")
-	hbox.add_child(hero_hp_bar)
-	hero_stamina_bar = _make_hero_bar_progress(Color(0.25, 0.65, 0.3), "Выносливость: тратится в бою, работе и пути, восстанавливается на отдыхе")
-	hbox.add_child(hero_stamina_bar)
+	hero_level_lbl.add_theme_font_size_override("font_size", 15)
+	hero_level_lbl.add_theme_color_override("font_color", Color(1.0, 0.88, 0.5))
+	fv.add_child(hero_level_lbl)
+	hero_hp_bar = _make_hero_bar_progress(Color(0.80, 0.18, 0.16), "Здоровье вождя")
+	hero_hp_bar.custom_minimum_size = Vector2(240, 20)
+	fv.add_child(hero_hp_bar)
+	hero_stamina_bar = _make_hero_bar_progress(Color(0.30, 0.70, 0.32), "Выносливость: тратится на работу, прыжки и перекаты, восстанавливается в покое")
+	hero_stamina_bar.custom_minimum_size = Vector2(240, 16)
+	fv.add_child(hero_stamina_bar)
+	hero_xp_bar = _make_hero_bar_progress(Color(0.88, 0.70, 0.20), "Опыт до следующего уровня")
+	hero_xp_bar.custom_minimum_size = Vector2(240, 12)
+	fv.add_child(hero_xp_bar)
 	hero_points_lbl = Label.new()
 	hero_points_lbl.add_theme_font_size_override("font_size", 11)
 	hero_points_lbl.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
-	hbox.add_child(hero_points_lbl)
+	fv.add_child(hero_points_lbl)
+
+	# --- 2. Панель действий с клавишами ---
+	var center = CenterContainer.new()
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(center)
+	var bar_panel = PanelContainer.new()
+	bar_panel.add_theme_stylebox_override("panel", _rpg_panel_style(Color(0.70, 0.55, 0.30)))
+	bar_panel.size_flags_vertical = Control.SIZE_SHRINK_END
+	center.add_child(bar_panel)
+	var slots = HBoxContainer.new()
+	slots.add_theme_constant_override("separation", 6)
+	bar_panel.add_child(slots)
+	hero_slots.clear()
+	for def in [
+		["interact", "E", "✋", "Действие", "Взаимодействовать с тем, что рядом (подсказка видна на карте)"],
+		["attack", "ЛКМ", "⚔", "Удар", "Ударить оружием в сторону курсора"],
+		["block", "Q", "🛡", "Блок", "Удерживайте: щит гасит 80% урона, оружие — 45%. Тратит выносливость, замедляет шаг"],
+		["jump", "Пробел", "⤴", "Прыжок", "Подпрыгнуть"],
+		["roll", "Shift", "🌀", "Перекат", "Рывок-кувырок: в перекате удары проходят мимо"],
+		["bag", "I", "🎒", "Сумка", "Инвентарь и снаряжение"],
+		["char", "C", "🧍", "Персонаж", "Характеристики героя"],
+		["skills", "K", "✨", "Навыки", "Дерево навыков"],
+		["rule", "V", "🏛", "Правление", "Вернуться к управлению племенем"]
+	]:
+		var slot = _make_rpg_slot(def[0], def[1], def[2], def[3], def[4])
+		slots.add_child(slot)
+
+	# --- 3. Что делает Король сейчас ---
+	var status_panel = PanelContainer.new()
+	status_panel.add_theme_stylebox_override("panel", _rpg_panel_style(Color(0.55, 0.50, 0.40)))
+	status_panel.custom_minimum_size = Vector2(330, 0)
+	status_panel.size_flags_vertical = Control.SIZE_SHRINK_END
+	row.add_child(status_panel)
+	var sv = VBoxContainer.new()
+	sv.add_theme_constant_override("separation", 3)
+	status_panel.add_child(sv)
+	hero_status_lbl = Label.new()
+	hero_status_lbl.add_theme_font_size_override("font_size", 13)
+	hero_status_lbl.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85))
+	hero_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hero_status_lbl.custom_minimum_size = Vector2(310, 0)
+	sv.add_child(hero_status_lbl)
+	var keys_lbl = Label.new()
+	keys_lbl.text = "WASD — идти · ЛКМ — удар · Q — блок · ПКМ — идти/действовать · P — пауза"
+	keys_lbl.add_theme_font_size_override("font_size", 11)
+	keys_lbl.add_theme_color_override("font_color", Color(0.7, 0.66, 0.58))
+	sv.add_child(keys_lbl)
 	hero_bar.visible = false
+
+func _rpg_panel_style(border: Color) -> StyleBoxFlat:
+	var st = StyleBoxFlat.new()
+	st.bg_color = Color(0.09, 0.07, 0.05, 0.92)
+	st.border_color = border
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(10)
+	st.shadow_color = Color(0, 0, 0, 0.55)
+	st.shadow_size = 8
+	st.set_content_margin_all(8)
+	return st
+
+# Ячейка панели действий: клавиша, значок, подпись; затемняется, если действие недоступно
+func _make_rpg_slot(id: String, key: String, icon: String, caption: String, tip: String) -> Button:
+	var b = Button.new()
+	b.custom_minimum_size = Vector2(84, 84)
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	var st = StyleBoxFlat.new()
+	st.bg_color = Color(0.16, 0.13, 0.10, 1.0)
+	st.border_color = Color(0.55, 0.45, 0.30, 1.0)
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(8)
+	b.add_theme_stylebox_override("normal", st)
+	var sth = st.duplicate()
+	sth.border_color = Color(1.0, 0.82, 0.4, 1.0)
+	sth.bg_color = Color(0.22, 0.17, 0.11, 1.0)
+	b.add_theme_stylebox_override("hover", sth)
+	b.add_theme_stylebox_override("pressed", sth)
+	var icon_lbl = Label.new()
+	icon_lbl.name = "Icon"
+	icon_lbl.text = icon
+	icon_lbl.add_theme_font_size_override("font_size", 26)
+	icon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon_lbl.offset_top = 14
+	icon_lbl.offset_bottom = -26
+	icon_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(icon_lbl)
+	var cap = Label.new()
+	cap.name = "Caption"
+	cap.text = caption
+	cap.add_theme_font_size_override("font_size", 11)
+	cap.add_theme_color_override("font_color", Color(0.92, 0.88, 0.78))
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.clip_text = true
+	cap.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	cap.offset_top = -22
+	cap.offset_left = 3
+	cap.offset_right = -3
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(cap)
+	var key_lbl = Label.new()
+	key_lbl.text = key
+	key_lbl.add_theme_font_size_override("font_size", 10)
+	key_lbl.add_theme_color_override("font_color", Color(0.1, 0.07, 0.03))
+	var kst = StyleBoxFlat.new()
+	kst.bg_color = Color(0.95, 0.78, 0.35, 1.0)
+	kst.set_corner_radius_all(4)
+	kst.content_margin_left = 4
+	kst.content_margin_right = 4
+	key_lbl.add_theme_stylebox_override("normal", kst)
+	key_lbl.position = Vector2(4, 4)
+	key_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(key_lbl)
+	# Затемнение перезарядки (перекат) / недоступности
+	var shade = ColorRect.new()
+	shade.name = "Shade"
+	shade.color = Color(0, 0, 0, 0.55)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shade.visible = false
+	b.add_child(shade)
+	b.pressed.connect(func(): _on_rpg_slot(id))
+	hero_slots[id] = b
+	return b
+
+func _on_rpg_slot(id: String) -> void:
+	if hero_controller == null:
+		return
+	match id:
+		"interact":
+			var npc = hero_controller.interact()
+			if npc:
+				_open_dialogue(npc)
+		"jump": hero_controller.try_jump()
+		"attack": hero_controller.attack_swing(get_viewport().get_canvas_transform().affine_inverse() * get_viewport().get_mouse_position())
+		"block": EventBus.notification_toast.emit("🛡 Блок", "Удерживайте Q, чтобы держать блок.", "info")
+		"roll": hero_controller.try_roll()
+		"bag": _open_hero_tab(HeroPanel.TAB_INVENTORY)
+		"char": _open_hero_tab(HeroPanel.TAB_CHARACTER)
+		"skills": _open_hero_tab(HeroPanel.TAB_SKILLS)
+		"rule": set_hero_mode(false)
 
 func set_hero_mode(enabled: bool) -> void:
 	hero_mode = enabled
@@ -581,6 +746,9 @@ func set_hero_mode(enabled: bool) -> void:
 		hero_controller.name = "HeroController"
 		add_child(hero_controller)
 		hero_controller.talk_requested.connect(_open_dialogue)
+		EventBus.hero_attack_order.connect(func(p):
+			if hero_mode and hero_controller and not (dialogue_window and dialogue_window.visible):
+				hero_controller.attack_swing(p))
 	hero_controller.set_active(enabled)
 	if not enabled and dialogue_window and dialogue_window.visible:
 		dialogue_window.close()
@@ -665,19 +833,51 @@ func _update_hero_bar() -> void:
 		return
 	var ruler = PlayerHero.get_ruler(s)
 	var hero: PlayerHero = s.hero
-	hero_level_lbl.text = "⭐ Ур. %d" % hero.level
+	hero_level_lbl.text = "👑 %s  ·  Ур. %d" % [ruler.name if ruler else "Вождь", hero.level]
 	_set_bar(hero_xp_bar, hero.xp, PlayerHero.xp_to_next(hero.level), "Опыт %d / %d")
 	if ruler:
 		_set_bar(hero_hp_bar, ruler.health, ruler.max_health, "❤ %d / %d")
 		_set_bar(hero_stamina_bar, ruler.stamina_current, ruler.stamina_max, "⚡ %d / %d")
+		if hero_portrait_rect and hero_portrait_rect.texture == null:
+			hero_portrait_rect.texture = ruler.get_texture()
+		var st = ruler.last_status_reason if ruler.last_status_reason != "" else "Стоит, осматривается"
+		if hero_controller and hero_controller.blocking:
+			st = "Держит блок"
+		elif hero_controller and hero_controller.is_rolling():
+			st = "Перекат!"
+		elif hero_controller and hero_controller.is_airborne():
+			st = "В прыжке"
+		hero_status_lbl.text = st
 	else:
 		_set_bar(hero_hp_bar, 0.0, 1.0, "❤ %d / %d (вождь погиб)")
 	var pts: Array[String] = []
 	if hero.unspent_attr_points > 0:
-		pts.append("+%d хар." % hero.unspent_attr_points)
+		pts.append("+%d характеристик [C]" % hero.unspent_attr_points)
 	if hero.unspent_skill_points > 0:
-		pts.append("+%d навык" % hero.unspent_skill_points)
+		pts.append("+%d навык [K]" % hero.unspent_skill_points)
 	hero_points_lbl.text = "  ".join(pts)
+	# Ячейки: E показывает, что именно сделает; Shift — перезарядку; I — вес сумки
+	if hero_slots.has("interact"):
+		var prompt: Dictionary = GameManager.hero_prompt
+		var cap: Label = hero_slots["interact"].get_node("Caption")
+		cap.text = String(prompt.get("label", "Нет цели"))
+		hero_slots["interact"].get_node("Shade").visible = prompt.is_empty()
+	if hero_slots.has("roll") and hero_controller and ruler:
+		hero_slots["roll"].get_node("Shade").visible = hero_controller.roll_cooldown > 0.0 or hero_controller.is_rolling() or ruler.stamina_current < HeroController.ROLL_STAMINA
+	if hero_slots.has("attack") and hero_controller and ruler:
+		hero_slots["attack"].get_node("Shade").visible = hero_controller.attack_cooldown > 0.0
+		var wname = String(ruler.get_combat_stats().get("weapon_name", "Кулаки"))
+		hero_slots["attack"].get_node("Caption").text = wname
+	if hero_slots.has("block") and hero_controller:
+		hero_slots["block"].modulate = Color(0.6, 1.0, 0.7) if hero_controller.blocking else Color.WHITE
+	if hero_slots.has("jump") and ruler:
+		hero_slots["jump"].get_node("Shade").visible = ruler.stamina_current < HeroController.JUMP_STAMINA
+	if hero_slots.has("bag"):
+		hero_slots["bag"].get_node("Caption").text = "%d/%d" % [int(hero.get_bag_weight()), int(hero.get_bag_capacity(s))]
+	if hero_slots.has("char"):
+		hero_slots["char"].get_node("Caption").text = "Персонаж" + (" +" if hero.unspent_attr_points > 0 else "")
+	if hero_slots.has("skills"):
+		hero_slots["skills"].get_node("Caption").text = "Навыки" + (" +" if hero.unspent_skill_points > 0 else "")
 
 func _on_menu_item_clicked(item_id: String) -> void:
 	if item_id == "map_modes":
@@ -845,17 +1045,25 @@ func _on_notification_toast(title_text: String, message_text: String, toast_type
 
 var _clock_refresh_timer: float = 0.0
 
+var _hud_refresh_timer: float = 1.0
+
 func _process(delta: float) -> void:
 	if hero_mode:
 		_hero_bar_timer -= delta
 		if _hero_bar_timer <= 0.0:
-			_hero_bar_timer = 0.2
+			_hero_bar_timer = 0.1
 			_update_hero_bar()
 	_clock_refresh_timer += delta
 	if _clock_refresh_timer >= 0.25:
 		_clock_refresh_timer = 0.0
 		if is_instance_valid(date_label):
 			date_label.text = GameManager.get_formatted_date()
+	# Счётчики ресурсов и населения живые: раз в секунду, даже если сигналов не было
+	# (иначе после старта висят заглушки из сцены вроде «Жители: 85»)
+	_hud_refresh_timer += delta
+	if _hud_refresh_timer >= 1.0:
+		_hud_refresh_timer = 0.0
+		_update_ui()
 	if cursor_context_menu and cursor_context_menu.visible and active_inspected_nature_coord != Vector2i(-1, -1):
 		_refresh_nature_context_live()
 

@@ -48,6 +48,36 @@ func _award(s: SettlementData, kind: String, mult: float = 1.0) -> void:
 	if amount > 0.0 and s.hero:
 		s.hero.add_xp(s, amount, String(XP_REASONS.get(kind, "Дела Короля")))
 const WORK_STAMINA: float = 4.0
+
+# --- ДВИЖЕНИЕ РПГ: ПРЫЖОК (ПРОБЕЛ), ПЕРЕКАТ (SHIFT), ВЗАИМОДЕЙСТВИЕ (E) ---
+const JUMP_DURATION: float = 0.48
+const JUMP_HEIGHT: float = 9.0
+const JUMP_STAMINA: float = 2.0
+const ROLL_DURATION: float = 0.36
+const ROLL_SPEED_MULT: float = 2.4 # во сколько раз быстрее шага
+const ROLL_STAMINA: float = 9.0
+const ROLL_COOLDOWN: float = 0.55
+const INTERACT_RANGE: float = 48.0
+const PROMPT_SCAN_INTERVAL: float = 0.12
+
+var jump_time: float = -1.0 # -1 — на земле
+var roll_time: float = -1.0 # -1 — не катится
+var roll_dir: Vector2 = Vector2.RIGHT
+var roll_cooldown: float = 0.0
+var land_squash: float = 0.0 # «приземление»: короткое сплющивание после прыжка/переката
+var interact_target: Dictionary = {} # ближайшее, с чем можно взаимодействовать по E
+var attack_cooldown: float = 0.0 # ЛКМ: до следующего удара
+var blocking: bool = false # Q зажата: блок
+const BLOCK_SPEED_MULT: float = 0.45
+const BLOCK_STAMINA_PER_HIT: float = 6.0
+const SWING_STAMINA: float = 3.0
+var _prompt_timer: float = 0.0
+
+const INTERACT_LABELS: Dictionary = {
+	"citizen": "Поговорить", "chop": "Рубить", "mine": "Добывать", "gather": "Собрать", "fish": "Рыбачить",
+	"flowers": "Сорвать цветы", "carcass": "Разделать тушу", "animal": "Ударить", "build": "Помочь строить",
+	"hearth": "Поесть у очага", "storage": "Сдать сумку на склад", "home": "Отдохнуть дома"
+}
 const FIGHT_DISENGAGE: float = 260.0
 const FLEE_SPEED_MULT: float = 1.6
 
@@ -88,6 +118,11 @@ func get_ruler() -> CitizenNPC:
 	return PlayerHero.get_ruler(_get_settlement())
 
 func set_active(on: bool) -> void:
+	blocking = false
+	jump_time = -1.0
+	roll_time = -1.0
+	interact_target = {}
+	GameManager.hero_prompt = {}
 	active = on
 	cancel_order()
 	GameManager.hero_control_active = on
@@ -170,6 +205,9 @@ func order_interact(world_pos: Vector2, target: Dictionary) -> bool:
 	if kind == "ground":
 		return order_move(world_pos)
 	if kind == "citizen":
+		var who: CitizenNPC = target.get("ref", null)
+		if who and _is_enemy(who):
+			return order_attack_citizen(who)
 		return order_move(world_pos, target.get("ref", null))
 	if not active or in_dialogue:
 		return false
@@ -525,6 +563,24 @@ func _strike_citizen(s: SettlementData, ruler: CitizenNPC) -> void:
 	if victim == null or not victim.is_alive:
 		cancel_action()
 		return
+	# Враг на войне: обычный бой, без суда соплеменников
+	if _is_enemy(victim):
+		var bstats = ruler.get_combat_stats()
+		action["timer"] = float(bstats["attack_interval"])
+		ruler.state = CitizenNPC.State.ATTACKING
+		HeroAnimations.play(ruler, "attack", minf(0.8, float(bstats["attack_interval"])))
+		if GameManager.battle_test_node and GameManager.battle_test_node.has_method("ruler_strike"):
+			GameManager.battle_test_node.ruler_strike(ruler, victim)
+		else:
+			var bo = CombatStatsResolver.resolve_attack(bstats, victim.get_combat_stats())
+			if bo["is_hit"]:
+				victim.take_damage(float(bo["damage"]), "Вождь %s" % ruler.name)
+		if not victim.is_alive or victim.health <= 0.0:
+			if s.hero:
+				s.hero.add_xp(s, 15.0, "Победа над врагом: %s" % victim.name)
+			cancel_action()
+			ruler.state = CitizenNPC.State.IDLE
+		return
 	if not action.get("started", false):
 		action["started"] = true
 		var reaction = RulerDeeds.on_citizen_assaulted(s, ruler, victim)
@@ -630,11 +686,252 @@ func move_ruler(ruler: CitizenNPC, dir: Vector2, delta: float) -> bool:
 		if ruler.state == CitizenNPC.State.MOVING_TO_WORK:
 			ruler.state = CitizenNPC.State.IDLE
 		return false
-	var moved = HeroMotion.step(ruler, dir * ruler.get_speed() * SPEED_MULT * delta)
-	_turn_towards(ruler, dir, delta)
+	var moved = HeroMotion.step(ruler, dir * ruler.get_speed() * SPEED_MULT * (BLOCK_SPEED_MULT if blocking else 1.0) * delta)
+	if not blocking:
+		_turn_towards(ruler, dir, delta)
 	ruler.state = CitizenNPC.State.MOVING_TO_WORK if moved else CitizenNPC.State.IDLE
 	HeroAnimations.play(ruler, "walk" if moved else "idle")
 	return moved
+
+# --- ПРЫЖОК, ПЕРЕКАТ ---
+func is_airborne() -> bool:
+	return jump_time >= 0.0
+
+func is_rolling() -> bool:
+	return roll_time >= 0.0
+
+func try_jump() -> bool:
+	var ruler = get_ruler()
+	if ruler == null or in_dialogue or is_airborne() or is_rolling():
+		return false
+	if ruler.stamina_current < JUMP_STAMINA:
+		_tired_toast()
+		return false
+	ruler.stamina_current = maxf(0.0, ruler.stamina_current - JUMP_STAMINA)
+	jump_time = 0.0
+	cancel_action()
+	return true
+
+func try_roll() -> bool:
+	var ruler = get_ruler()
+	if ruler == null or in_dialogue or is_rolling() or roll_cooldown > 0.0:
+		return false
+	if ruler.stamina_current < ROLL_STAMINA:
+		_tired_toast()
+		return false
+	ruler.stamina_current = maxf(0.0, ruler.stamina_current - ROLL_STAMINA)
+	var dir = get_move_input()
+	roll_dir = dir if dir != Vector2.ZERO else (ruler.facing_dir if ruler.facing_dir != Vector2.ZERO else Vector2.RIGHT)
+	roll_dir = roll_dir.normalized()
+	roll_time = 0.0
+	jump_time = -1.0
+	cancel_order()
+	# Неуязвимость на время переката: удары зверей и жителей проходят мимо
+	ruler.custom_data["dodging"] = true
+	return true
+
+func _tired_toast() -> void:
+	EventBus.notification_toast.emit("⚡ Нет сил", "Выносливость на исходе — передохните.", "info")
+
+func _tick_rpg_motion(ruler: CitizenNPC, delta: float) -> void:
+	roll_cooldown = maxf(0.0, roll_cooldown - delta)
+	attack_cooldown = maxf(0.0, attack_cooldown - delta)
+	var want_block = Input.is_key_pressed(KEY_Q) and not in_dialogue and not is_rolling() and ruler.stamina_current > 1.0
+	if want_block != blocking:
+		blocking = want_block
+		if blocking:
+			cancel_action()
+	if blocking:
+		ruler.custom_data["blocking"] = true
+		var shield = String(ruler.equipment.get("shield", ""))
+		var weapon = String(ruler.equipment.get("weapon", "unarmed"))
+		var block_anim = "shield_block" if shield != "" else ("axe_block" if "axe" in weapon else ("spear_block" if "spear" in weapon else "sword_block"))
+		ruler.custom_data["anim_action"] = block_anim
+		ruler.custom_data["anim_start"] = GameManager.sim_time_total
+		ruler.custom_data["anim_until"] = GameManager.sim_time_total + 0.15
+	else:
+		ruler.custom_data.erase("blocking")
+	land_squash = maxf(0.0, land_squash - delta * 5.0)
+	if is_airborne():
+		jump_time += delta
+		if jump_time >= JUMP_DURATION:
+			jump_time = -1.0
+			land_squash = 1.0
+	if is_rolling():
+		roll_time += delta
+		var moved = HeroMotion.step(ruler, roll_dir * ruler.get_speed() * SPEED_MULT * ROLL_SPEED_MULT * delta)
+		if not moved:
+			roll_time = ROLL_DURATION # упёрся в препятствие — перекат обрывается
+		ruler.facing_dir = roll_dir
+		ruler.state = CitizenNPC.State.MOVING_TO_WORK
+		if roll_time >= ROLL_DURATION:
+			roll_time = -1.0
+			roll_cooldown = ROLL_COOLDOWN
+			land_squash = 0.7
+			ruler.custom_data.erase("dodging")
+	# Для отрисовки (HeroAnimations.draw_king)
+	var jump_k = 0.0
+	if is_airborne():
+		var t = jump_time / JUMP_DURATION
+		jump_k = 4.0 * t * (1.0 - t)
+	ruler.custom_data["jump_h"] = jump_k * JUMP_HEIGHT
+	ruler.custom_data["roll_p"] = (roll_time / ROLL_DURATION) if is_rolling() else -1.0
+	ruler.custom_data["land_squash"] = land_squash
+
+# --- E: ВЗАИМОДЕЙСТВИЕ С БЛИЖАЙШИМ ---
+# Цель выбирается по расстоянию с бонусом тому, что впереди по взгляду
+func find_interactable(ruler: CitizenNPC) -> Dictionary:
+	# Лямбды GDScript копируют локальные переменные — поэтому лучший кандидат хранится в словаре
+	var st = {"best": {}, "score": INF, "fwd": ruler.facing_dir.normalized() if ruler.facing_dir != Vector2.ZERO else Vector2.RIGHT, "ruler": ruler}
+	var s = _get_settlement()
+	for os in GameManager.settlements.values():
+		if os.population == null:
+			continue
+		for c in os.population.citizens:
+			if c != ruler and c.is_alive and c.health > 0.0 and c.state != CitizenNPC.State.SLEEPING:
+				if _is_enemy(c):
+					# В бою враг важнее разговоров и деревьев
+					_consider(st, {"kind": "citizen", "ref": c}, c.pos, c.name, INTERACT_RANGE + 16.0, -30.0, "Атаковать")
+				elif os == s:
+					_consider(st, {"kind": "citizen", "ref": c}, c.pos, c.name, TALK_RANGE)
+	if GameManager.wildlife_manager:
+		for carc in GameManager.wildlife_manager.carcasses.values():
+			_consider(st, {"kind": "carcass", "id": carc["id"]}, carc["pos"], String(carc.get("name", "Туша")), INTERACT_RANGE)
+		for a in GameManager.wildlife_manager.animals.values():
+			if a.is_alive() and not a.is_tamed and a.pos.distance_to(ruler.pos) <= INTERACT_RANGE:
+				_consider(st, {"kind": "animal", "id": a.id}, a.pos, String(WildAnimal.SPECIES_CONFIG.get(a.type_id, {}).get("name", "Зверь")), INTERACT_RANGE)
+	if GameManager.resource_manager and GameManager.nav_grid:
+		var rc = GameManager.nav_grid.world_to_tile(ruler.pos)
+		for dy in range(-2, 3):
+			for dx in range(-2, 3):
+				var coord = rc + Vector2i(dx, dy)
+				var node: Dictionary = GameManager.resource_manager.nodes.get(coord, {})
+				if not node.is_empty() and not node.get("depleted", false):
+					var kind = {"wood": "chop", "stone": "mine", "metal": "mine", "food": "gather", "fish": "fish"}.get(String(node.get("category", "")), "")
+					if kind != "":
+						_consider(st, {"kind": kind, "coord": coord}, node["pos"], String(node.get("name", "")), INTERACT_RANGE)
+				if GameManager.tile_buildings.has(coord) and GameManager.tile_buildings[coord].get("status", "") == "constructing":
+					_consider(st, {"kind": "build", "coord": coord}, GameManager.nav_grid.tile_to_world_center(coord), String(BuildingDB.get_building(String(GameManager.tile_buildings[coord].get("id", ""))).get("name", "Стройка")), INTERACT_RANGE)
+	if s and not GameManager.battle_test_mode:
+		_consider(st, {"kind": "hearth"}, s._get_hearth_pos(), "Очаг", 44.0)
+		_consider(st, {"kind": "storage"}, s._get_storage_pos(ruler), "Склад", 44.0)
+		if ruler.home_id != "" and ruler.home_pos != Vector2.ZERO:
+			_consider(st, {"kind": "home"}, ruler.home_pos, "Свой дом", 40.0)
+	return st["best"]
+
+func _consider(st: Dictionary, target: Dictionary, pos: Vector2, name: String, max_d: float, bias: float = 0.0, label: String = "") -> void:
+	var ruler: CitizenNPC = st["ruler"]
+	var d = ruler.pos.distance_to(pos)
+	if d > max_d:
+		return
+	var to = (pos - ruler.pos).normalized() if d > 0.5 else st["fwd"]
+	var score = d - st["fwd"].dot(to) * 14.0 + bias
+	if score < st["score"]:
+		st["score"] = score
+		var best = target.duplicate()
+		best["marker"] = pos
+		best["name"] = name
+		best["label"] = label if label != "" else INTERACT_LABELS.get(String(target.get("kind", "")), "Действовать")
+		st["best"] = best
+
+# --- ЛКМ: УДАР ---
+# Бьёт ближайшего врага (или зверя) в стороне курсора в пределах досягаемости оружия;
+# если никого нет — просто замах. Темп ударов — по оружию (attack_interval).
+func attack_swing(aim_world: Vector2) -> bool:
+	var ruler = get_ruler()
+	if ruler == null or in_dialogue or is_rolling() or blocking or attack_cooldown > 0.0:
+		return false
+	if ruler.stamina_current < SWING_STAMINA:
+		_tired_toast()
+		return false
+	var stats = ruler.get_combat_stats()
+	var ranged = bool(stats.get("is_ranged", false))
+	var reach = maxf(16.0, float(stats.get("attack_range", 0.8)) * 20.0) + 6.0
+	var aim = (aim_world - ruler.pos).normalized() if aim_world.distance_to(ruler.pos) > 1.0 else ruler.facing_dir
+	ruler.facing_dir = aim
+	cancel_action()
+	ruler.stamina_current = maxf(0.0, ruler.stamina_current - SWING_STAMINA)
+	attack_cooldown = float(stats.get("attack_interval", 1.0)) * 0.85
+	ruler.state = CitizenNPC.State.ATTACKING
+	var weapon = String(ruler.equipment.get("weapon", "unarmed"))
+	var anim = "punch"
+	if ranged: anim = "bow_attack"
+	elif "axe" in weapon: anim = "axe_attack"
+	elif "spear" in weapon: anim = "spear_thrust"
+	elif "sword" in weapon or "knife" in weapon: anim = "slash_combo" if randf() < 0.3 else "sword_attack"
+	elif weapon in ["club", "threshing_flail"]: anim = "mace_attack"
+	ruler.custom_data["anim_action"] = anim
+	ruler.custom_data["anim_start"] = GameManager.sim_time_total
+	ruler.custom_data["anim_until"] = GameManager.sim_time_total + minf(0.6, attack_cooldown)
+	HeroAnimations.play(ruler, "attack", minf(0.6, attack_cooldown))
+	# Цель: враг в конусе ±60° от направления удара
+	var best: CitizenNPC = null
+	var best_d = reach
+	for os in GameManager.settlements.values():
+		if os.population == null:
+			continue
+		for c in os.population.citizens:
+			if c == ruler or not c.is_alive or c.health <= 0.0 or not _is_enemy(c):
+				continue
+			var to = c.pos - ruler.pos
+			var d = to.length()
+			if d <= best_d and (d < 6.0 or aim.dot(to.normalized()) > 0.5):
+				best_d = d
+				best = c
+	if best:
+		ruler.facing_dir = (best.pos - ruler.pos).normalized()
+		var s = _get_settlement()
+		if GameManager.battle_test_node and GameManager.battle_test_node.has_method("ruler_strike"):
+			GameManager.battle_test_node.ruler_strike(ruler, best)
+		else:
+			var o = CombatStatsResolver.resolve_attack(stats, best.get_combat_stats())
+			if o["is_hit"]:
+				best.take_damage(float(o["damage"]), "Вождь %s" % ruler.name)
+		if (not best.is_alive or best.health <= 0.0) and s and s.hero:
+			s.hero.add_xp(s, 15.0, "Победа над врагом: %s" % best.name)
+		GameManager.camera_shake = maxf(GameManager.camera_shake, 0.15)
+		return true
+	# Зверь под ударом
+	if GameManager.wildlife_manager:
+		for a in GameManager.wildlife_manager.animals.values():
+			if a.is_alive() and not a.is_tamed:
+				var ta = a.pos - ruler.pos
+				if ta.length() <= reach and (ta.length() < 6.0 or aim.dot(ta.normalized()) > 0.5):
+					action = {"kind": "animal", "id": a.id, "timer": 0.0}
+					return true
+	return false
+
+# Враг — житель другой фракции, с которой идёт война (или противник в тестовом бою)
+func _is_enemy(c: CitizenNPC) -> bool:
+	var ruler = get_ruler()
+	if c == null or ruler == null:
+		return false
+	if c.custom_data.has("battle_team") and ruler.custom_data.has("battle_team"):
+		return c.custom_data["battle_team"] != ruler.custom_data["battle_team"]
+	var cs = GameManager.settlements.get(c.settlement_id, null)
+	var rs = GameManager.settlements.get(ruler.settlement_id, null)
+	if cs == null or rs == null or cs.faction_id == rs.faction_id:
+		return false
+	var f = GameManager.factions.get(rs.faction_id, null)
+	return f != null and bool(f.get_relation(cs.faction_id).get("is_at_war", false))
+
+func interact() -> CitizenNPC:
+	var ruler = get_ruler()
+	if ruler == null or in_dialogue or is_rolling():
+		return null
+	var t = find_interactable(ruler)
+	if t.is_empty():
+		EventBus.notification_toast.emit("✋ Рядом ничего", "Подойдите к жителю, дереву, камню, туше или очагу и нажмите E.", "info")
+		return null
+	if t["kind"] == "citizen" and _is_enemy(t["ref"]):
+		order_attack_citizen(t["ref"])
+		return null
+	if t["kind"] == "citizen":
+		cancel_order()
+		talk_requested.emit(t["ref"])
+		return t["ref"]
+	order_interact(t["marker"], t)
+	return null
 
 func find_nearest_npc(ruler: CitizenNPC, max_dist: float = TALK_RANGE) -> CitizenNPC:
 	var s = _get_settlement()
@@ -686,7 +983,10 @@ func _process(delta: float) -> void:
 	var ruler = get_ruler()
 	if ruler == null:
 		return
-	if not in_dialogue:
+	_tick_rpg_motion(ruler, delta)
+	if roll_time >= 0.0:
+		pass # во время переката управление у переката
+	elif not in_dialogue:
 		var dir = get_move_input()
 		if dir != Vector2.ZERO:
 			click_path.clear()
@@ -701,6 +1001,11 @@ func _process(delta: float) -> void:
 		else:
 			move_ruler(ruler, Vector2.ZERO, delta)
 	_tick_fight(ruler, delta)
+	_prompt_timer -= delta
+	if _prompt_timer <= 0.0:
+		_prompt_timer = PROMPT_SCAN_INTERVAL
+		interact_target = find_interactable(ruler) if not in_dialogue else {}
+		GameManager.hero_prompt = interact_target
 	_call_timer -= delta
 	if _call_timer <= 0.0:
 		_call_timer = CALL_SCAN_INTERVAL

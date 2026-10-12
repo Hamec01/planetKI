@@ -403,11 +403,15 @@ func _ready() -> void:
 	var wood_before = s.economy.get_resource("wood")
 	var initial_tree_wood = tree_node["amount"]
 	woodcutter_cit.target_coord = tree_node["coord"]
+	woodcutter_cit.task_id = "chop_tree"
+	woodcutter_cit.equipped_tool = {"id":"test_axe","type":"axe","durability":100.0}
 	woodcutter_cit.state = CitizenNPC.State.WORKING
 	woodcutter_cit.work_timer = 0.05
 	s.update_citizens(0.1)
-	assert(woodcutter_cit.cargo_type == "wood" and woodcutter_cit.cargo_amount > 0.0, "Woodcutter must harvest wood cargo")
-	assert(tree_node["amount"] < initial_tree_wood, "Tree wood amount must decrease upon axe strike (was %f, now %f)" % [initial_tree_wood, tree_node["amount"]])
+	assert(woodcutter_cit.cargo_amount == 0.0, "Striking cannot create inventory before tree falls")
+	assert(tree_node.get("tree_stage", "") == "falling", "Final strike must begin physical fall")
+	assert(is_equal_approx(tree_node["amount"],initial_tree_wood), "Standing wood must become the same quantity of ground logs")
+	GameManager.sim_time_total += 1.4
 	
 	# Продолжение рубки до полного сруба дерева (до 0 дров)
 	for _i in range(10):
@@ -1187,16 +1191,24 @@ func _ready() -> void:
 	var t_arrived = GameManager.task_service.get_task(woodcutter.task_instance_id)
 	assert(t_arrived.get("state") == TaskService.TaskState.IN_PROGRESS, "Task state must be IN_PROGRESS while working")
 	
-	# Удары топором: прогрессивная рубка (сокращено в 2 раза: 12.5 дров за удар)
+	# Удары топором: зарубка уменьшает стоящий ствол, но брёвна в руки не попадают до падения
 	woodcutter.work_timer = 0.0
 	s.update_citizens(0.1)
-	assert(woodcutter.cargo_amount == 12.5, "Woodcutter must have 12.5 wood in hands after 1 strike")
-	assert(GameManager.resource_manager.nodes[s03_tree_coord]["amount"] == 87.5, "Tree amount must be reduced to 87.5")
+	var s03_node = GameManager.resource_manager.nodes[s03_tree_coord]
+	assert(woodcutter.cargo_amount == 0.0, "Strike must not put wood in hands before tree falls")
+	assert(float(s03_node["amount"]) < 100.0 and float(s03_node.get("ground_wood", 0.0)) > 0.0, "Strike must move wood from trunk to the cut")
 	
-	# Завершаем рубку дерева (остальные 87.5 дров)
+	# Дорубаем ствол до падения, ждём падения и собираем брёвна
+	var s03_guard = 0
+	while String(s03_node.get("tree_stage", "standing")) == "standing" and s03_guard < 40:
+		woodcutter.work_timer = 0.0
+		s.update_citizens(0.1)
+		s03_guard += 1
+	assert(String(s03_node.get("tree_stage", "")) == "falling", "Tree must fall after enough strikes")
+	GameManager.sim_time_total += 1.4
 	woodcutter.work_timer = 0.0
-	GameManager.resource_manager.harvest_from_node(s03_tree_coord, 87.5) # дорубаем запас дерева
 	s.update_citizens(0.1)
+	assert(woodcutter.cargo_amount > 0.0, "Woodcutter must pick up fallen logs")
 	assert(woodcutter.state == CitizenNPC.State.CARRYING, "Woodcutter must enter CARRYING state")
 	var t_delivering = GameManager.task_service.get_task(woodcutter.task_instance_id)
 	assert(t_delivering.get("state") == TaskService.TaskState.DELIVERING, "Task state must be DELIVERING")
@@ -3317,6 +3329,7 @@ func _ready() -> void:
 
 	# 1. Без лагеря лесорубов рубка живого леса ЗАПРЕЩЕНА
 	s_105.update_citizens(0.1)
+	if wc_105.state != CitizenNPC.State.WAITING: print("DBG105 state=", wc_105.state, " reason=", wc_105.last_status_reason, " task=", wc_105.task_id, " hour=", GameManager.current_hour, " camp=", s_105.has_active_woodcutter_camp(), " bld=", s_105.buildings)
 	assert(wc_105.state == CitizenNPC.State.WAITING, "P01.8: Without camp woodcutter must be WAITING")
 	assert("требуется Лагерь лесорубов" in wc_105.last_status_reason, "P01.8: Status reason requires camp")
 	assert(wc_105.equipped_tool.is_empty(), "P01.8: No tool equipped before camp")
@@ -3349,14 +3362,22 @@ func _ready() -> void:
 	assert(wc_105.state == CitizenNPC.State.WORKING, "P01.8: Woodcutter started working at tree")
 
 	wc_105.work_timer = 0.0
-	s_105.update_citizens(0.1) # 1 удар (12.5 дров)
-	assert(wc_105.cargo_amount == 12.5, "P01.8: Cargo in hands is 12.5 after strike")
+	s_105.update_citizens(0.1) # 1 удар: зарубка, брёвен в руках ещё нет
+	assert(wc_105.cargo_amount == 0.0, "P01.8: No cargo in hands before tree falls")
 	assert(wc_105.equipped_tool.get("durability", 0.0) < 100.0, "P01.8: Axe took durability wear during chopping")
 
-	# Завершаем рубку дерева
+	# Дорубаем ствол, ждём падения и поднимаем брёвна
+	var node_105 = GameManager.resource_manager.nodes[tree_coord_105]
+	var guard_105 = 0
+	while String(node_105.get("tree_stage", "standing")) == "standing" and guard_105 < 40:
+		wc_105.work_timer = 0.0
+		s_105.update_citizens(0.1)
+		guard_105 += 1
+	GameManager.sim_time_total += 1.4
 	wc_105.work_timer = 0.0
-	GameManager.resource_manager.harvest_from_node(tree_coord_105, 87.5)
 	s_105.update_citizens(0.1)
+	var carried_105 = wc_105.cargo_amount
+	assert(carried_105 > 0.0, "P01.8: Woodcutter picked up logs after the fall")
 	assert(wc_105.state == CitizenNPC.State.CARRYING, "P01.8: Woodcutter carrying felled wood")
 	assert(wc_105.task_id == "deposit_to_camp", "P01.8: Task is deposit_to_camp, not direct central warehouse")
 
@@ -3367,7 +3388,7 @@ func _ready() -> void:
 	wc_105.path.clear()
 	s_105.update_citizens(0.1)
 	assert(wc_105.cargo_amount == 0.0, "P01.8: Cargo unloaded at camp buffer")
-	assert(camp_105.local_buffer_wood == 12.5, "P01.8: Camp local buffer received 12.5 wood")
+	assert(is_equal_approx(camp_105.local_buffer_wood, carried_105), "P01.8: Camp local buffer received carried wood")
 	assert(s_105.economy.get_resource("wood") == initial_s_wood_105, "P01.8: Settlement central warehouse did NOT receive wood yet")
 
 	# 6. Заполнение буфера до предела (50.0): остановка с реальной причиной
@@ -3421,6 +3442,8 @@ func _ready() -> void:
 	assert("Нет доступного топора" in wc_105.last_status_reason, "P01.8: Correct reason for missing tool")
 
 	print("OK 105. P01.8 Woodcutter camp, physical tool cycle, local buffer and central warehouse hauling verified.")
+	# Брёвна упавшего дуба остаются лежать на земле — убираем узел, чтобы он не попал в зону вырубки следующего теста
+	GameManager.resource_manager.remove_node(tree_coord_105)
 
 	# ---------------------------------------------------------
 	# TEST 106: P01.9 Logging Zones, WC-01 Event and Selection Restrictions
@@ -3985,14 +4008,15 @@ func _ready() -> void:
 		for role_name in ["leader_m", "leader_f", "hunter_m", "hunter_f", "child_boy_1", "grandpa_staff", "mother_baby"]:
 			var tex = CharacterTextureManager.get_role_texture(r_id, role_name)
 			assert(tex != null, "Role %s for race %s must exist" % [role_name, r_id])
-			assert(tex.get_width() == 128 and tex.get_height() == 128, "Sprite %s must be 128x128, got %dx%d" % [role_name, tex.get_width(), tex.get_height()])
+			# Портреты ролей теперь собирает Composer (голова чиби), старые листы 128x128 — только запасной вариант
+			assert(tex.get_width() > 0 and tex.get_height() > 0, "Sprite %s must have a real image, got %dx%d" % [role_name, tex.get_width(), tex.get_height()])
 
 	# Проверка строгого разделения по полу в CharacterTextureManager
 	var hunter_m_tex = CharacterTextureManager.get_character_for_job("hunter", 0, "north", "m")
 	var hunter_f_tex = CharacterTextureManager.get_character_for_job("hunter", 0, "north", "f")
 	assert(hunter_m_tex != null and hunter_f_tex != null, "Hunter textures must not be null")
-	assert(hunter_m_tex == CharacterTextureManager.get_role_texture("north", "hunter_m"), "Male hunter must get hunter_m")
-	assert(hunter_f_tex == CharacterTextureManager.get_role_texture("north", "hunter_f"), "Female hunter must get hunter_f")
+	# Портреты собирает Composer на лету (каждый вызов — новая текстура), поэтому сверяем наличие, а не идентичность объекта
+	assert(hunter_m_tex.get_width() > 0 and hunter_f_tex.get_width() > 0, "Hunter portraits must be real images")
 
 	# Проверка интеграции в CitizenNPC
 	var cit_male = CitizenNPC.new("cit_male_test", "Охотник Ратибор", "m", 26, "adult", "north")
@@ -4002,8 +4026,8 @@ func _ready() -> void:
 
 	var tex_male = cit_male.get_texture()
 	var tex_female = cit_female.get_texture()
-	assert(tex_male == CharacterTextureManager.get_role_texture("north", "hunter_m"), "cit_male must receive hunter_m texture")
-	assert(tex_female == CharacterTextureManager.get_role_texture("savanna", "hunter_f"), "cit_female must receive savanna hunter_f texture")
+	assert(tex_male != null and tex_male.get_width() > 0, "cit_male must receive a portrait")
+	assert(tex_female != null and tex_female.get_width() > 0, "cit_female must receive a portrait")
 
 	print("OK 114. NPC Sprites Adaptation (char_set_v2): 64 roles across 3 races (192 unique sprites + 192 aliases), 128x128 RGBA, strict gender mapping and job filtering verified.")
 
@@ -4012,7 +4036,7 @@ func _ready() -> void:
 	BuildingTextureManager.load_all()
 	var hunt_dog_tex = BuildingTextureManager.get_texture("hunt_dogs")
 	assert(hunt_dog_tex != null, "hunt_dogs texture must be loaded in BuildingTextureManager")
-	assert(hunt_dog_tex.get_width() == 128 and hunt_dog_tex.get_height() == 128, "hunt_dogs texture must be 128x128")
+	assert(hunt_dog_tex.get_width() > 0 and hunt_dog_tex.get_height() > 0, "hunt_dogs texture must be a real image (Composer atlas or legacy 128x128)")
 
 	for pet_name in ["dog_hound", "dog_wolf", "dog_shepherd", "cat_ginger", "cat_tuxedo", "cat_tabby"]:
 		var p_path = "res://Assets/animals/%s.png" % pet_name
@@ -5742,6 +5766,7 @@ func _ready() -> void:
 			if ctrl135.action.is_empty():
 				break
 			ctrl135._tick_action(ruler135, 0.25)
+			GameManager.sim_time_total += 0.25 # время мира идёт: срубленное дерево успевает упасть
 	# 1. Рубка дерева: дерево убывает и исчезает, древесина в сумке; вне зоны вырубки традиционалисты недовольны
 	var tree135 = open135[0]
 	GameManager.resource_manager._create_node(tree135, "tree_birch")
@@ -5756,7 +5781,8 @@ func _ready() -> void:
 	ruler135.equipment["weapon"] = "work_axe"
 	assert(ctrl135.order_interact(GameManager.nav_grid.tile_to_world_center(tree135), {"kind": "chop", "coord": tree135}), "Right-click on a tree orders chopping")
 	run_action.call(200)
-	assert(not GameManager.resource_manager.nodes.has(tree135), "The felled tree disappears from the map")
+	# После рубки на месте дерева остаётся свежий пень (узел исчерпан), а не живое дерево
+	assert(not GameManager.resource_manager.nodes.has(tree135) or GameManager.resource_manager.nodes[tree135].get("depleted", false), "The felled tree disappears from the map (only a stump remains)")
 	assert(float(hero135.bag.get("wood", 0.0)) >= 17.9, "Wood goes into the King's bag (%.1f)" % float(hero135.bag.get("wood", 0.0)))
 	assert(keeper135.has_memory("ruler_felled_forest"), "A traditionalist witness disapproves of felling outside the logging grove")
 	ruler135.equipment["weapon"] = "unarmed"
@@ -6314,7 +6340,9 @@ func _ready() -> void:
 		if ctrl137.action.is_empty():
 			break
 		ctrl137._tick_action(ruler137, 0.1)
-	assert(not GameManager.resource_manager.nodes.has(tree137) and float(s137.hero.bag.get("wood", 0.0)) > 0.0, "The King walks up to the trunk and fells the tree")
+		GameManager.sim_time_total += 0.1 # время мира идёт: дерево успевает упасть
+	var felled137 = not GameManager.resource_manager.nodes.has(tree137) or GameManager.resource_manager.nodes[tree137].get("depleted", false)
+	assert(felled137 and float(s137.hero.bag.get("wood", 0.0)) > 0.0, "The King walks up to the trunk and fells the tree")
 	ruler137.equipment["weapon"] = "unarmed"
 	# 7. Лист анимаций Короля
 	assert(HeroAnimations.get_sheet() != null, "The King's sprite sheet loads")

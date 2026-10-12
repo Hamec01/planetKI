@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "file": "workshop_parts.png",
+  "atlasSize": [1536, 1024],
+  "quern": {
+    "baseRect": [75, 199, 422, 277],
+    "rotorRect": [564, 93, 382, 415],
+    "worldWidth": 310,
+    "rotorWidth": 275,
+    "planeScaleY": 0.58,
+    "rotorOffset": [0, -125],
+    "durationMs": 4000
+  },
+  "oven": {
+    "sourceRect": [1014, 41, 498, 453],
+    "worldWidth": 430,
+    "fireOffset": [-75, -115],
+    "fireWidth": 95,
+    "flameRects": [[145, 523, 297, 400], [602, 514, 330, 413], [1115, 547, 298, 379]],
+    "durationMs": 600
+  }
+}

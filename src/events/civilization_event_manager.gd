@@ -273,6 +273,42 @@ func _check_event_conditions(conds: Dictionary, total_days: int, settlement: Ref
 						break
 			if not has_b:
 				return false
+		# Повод должен реально случиться в мире, а не просто наступить N-й день
+		if conds.get("requires_death", false) and "deceased_registry" in settlement:
+			var any_dead = not settlement.deceased_registry.is_empty()
+			if not any_dead and settlement.population:
+				for dc in settlement.population.citizens:
+					if not dc.is_alive:
+						any_dead = true
+						break
+			if not any_dead:
+				return false
+		if conds.has("requires_deed") and "deeds_log" in settlement:
+			var found_deed = false
+			for d in settlement.deeds_log:
+				if d.get("kind", "") == conds["requires_deed"]:
+					found_deed = true
+					break
+			if not found_deed:
+				return false
+		if conds.get("requires_female_hunter", false) and settlement.population:
+			var huntress = false
+			for hc in settlement.population.citizens:
+				if hc.is_alive and hc.gender == "f" and hc.job_id == "hunter":
+					huntress = true
+					break
+			if not huntress:
+				return false
+		if conds.get("requires_war", false):
+			var at_war = false
+			var pf = GameManager.factions.get(settlement.faction_id, null) if GameManager else null
+			if pf:
+				for rel in pf.relations.values():
+					if rel.get("is_at_war", false):
+						at_war = true
+						break
+			if not at_war:
+				return false
 		if conds.has("min_huts"):
 			var hut_cnt = 0
 			if GameManager and GameManager.building_instances:
@@ -668,6 +704,93 @@ func _resolve_placeholder_str(val: String, ev: Dictionary) -> String:
 		val = val.replace("{" + k + "}", str(ctx[k]))
 	return val
 
+# Последствия, у которых нет отдельного обработчика выше: раньше они молча игнорировались.
+# Числовые — меняют ресурсы, верность, порядок, веру или дают долговременный бонус поселению;
+# флаги — становятся обычаями в памяти культуры (видны в реестре традиций и влияют на механику).
+const CONSEQUENCE_COSTS: Dictionary = {"wood_cost": "wood", "bone_cost": "bone"}
+const CONSEQUENCE_LOYALTY_ALL: Array[String] = ["modify_loyalty_all", "tribal_loyalty", "ruler_authority"]
+const CONSEQUENCE_STABILITY: Array[String] = ["cohesion", "tribal_collectivism", "ruler_prestige"]
+const CONSEQUENCE_STABILITY_MINUS: Array[String] = ["individualism", "private_property"]
+const CONSEQUENCE_SETTLEMENT_BONUS: Dictionary = {"hunt_damage_boost": "hunter_damage", "game_regeneration_boost": "game_regeneration"}
+const CONSEQUENCE_HUNTER_MORALE: Array[String] = ["hunter_courage", "hunter_motivation"]
+const CONSEQUENCE_HANDLED_FLAGS: Array[String] = ["council_vote", "dog_taming", "domestic_brawl", "domestication_seed", "no_intervention", "no_logging_zone", "partition_hut", "protect_tenants", "replace_caretaker", "skill_boost_youth", "tame_deer", "tame_role", "tame_wolf", "unlock_ox_plow", "unlock_role_caretaker", "ward_of_lodge", "young_hunter_skill_boost", "young_skill_boost"]
+
+func _apply_generic_consequences(ev: Dictionary, choice: Dictionary, consequences: Dictionary, settlement: RefCounted, pop: RefCounted, culture: CultureMemory) -> Array[String]:
+	var report: Array[String] = []
+	var s: SettlementData = settlement as SettlementData
+	for key in consequences:
+		var v = consequences[key]
+		if CONSEQUENCE_COSTS.has(key) and s:
+			var res = CONSEQUENCE_COSTS[key]
+			s.economy.resources[res] = maxf(0.0, s.economy.get_resource(res) - float(v))
+			report.append("−%d %s" % [int(v), SettlementData.RESOURCE_NAMES_RU.get(res, res)])
+		elif key == "labor_cost" and pop:
+			# Общий труд: взрослые тратят силы на решение племени
+			for c in pop.citizens:
+				if c.is_alive and not c.is_ruler and c.cohort in ["adult", "youth"]:
+					c.energy = maxf(0.0, c.energy - float(v))
+			report.append("взрослые устали (−%d сил)" % int(v))
+		elif key in CONSEQUENCE_LOYALTY_ALL and pop:
+			for c in pop.citizens:
+				if c.is_alive and not c.is_ruler:
+					c.loyalty = clampf(c.loyalty + float(v), 0.0, 100.0)
+			report.append("верность всех %+d" % int(v))
+		elif key in CONSEQUENCE_STABILITY and s:
+			s.economy.stability = clampf(s.economy.stability + float(v) * 0.5, 0.0, 100.0)
+			report.append("порядок %+d" % int(float(v) * 0.5))
+		elif key in CONSEQUENCE_STABILITY_MINUS and s:
+			s.economy.stability = clampf(s.economy.stability - float(v) * 0.3, 0.0, 100.0)
+			report.append("порядок −%d" % int(float(v) * 0.3))
+		elif key == "traditions" and pop:
+			# Старики ценят верность обычаям (и обижаются на отход от них)
+			for c in pop.citizens:
+				if c.is_alive and not c.is_ruler and c.cohort == "elder":
+					c.loyalty = clampf(c.loyalty + float(v), 0.0, 100.0)
+			report.append("старейшины %+d верности" % int(v))
+		elif key == "clan_elder_influence" and pop:
+			for c in pop.citizens:
+				if c.is_alive and c.cohort == "elder":
+					c.loyalty = clampf(c.loyalty + float(v), 0.0, 100.0)
+			report.append("влияние старейшин +%d" % int(v))
+		elif key == "mentor_bond" and pop:
+			for c in pop.citizens:
+				if c.is_alive and c.cohort == "youth":
+					c.loyalty = clampf(c.loyalty + float(v), 0.0, 100.0)
+			report.append("молодёжь +%d верности" % int(v))
+		elif key == "spiritual_zeal" and s:
+			s.deposit_resource("faith", float(v), "Решение: " + choice.get("title", ""))
+			report.append("+%d веры" % int(v))
+		elif key == "innovation_boost" and s:
+			s.deposit_resource("knowledge", float(v), "Решение: " + choice.get("title", ""))
+			report.append("+%d знаний" % int(v))
+		elif key == "care_weak" and pop:
+			for c in pop.citizens:
+				if c.is_alive and (c.health < c.max_health * 0.6 or c.cohort in ["child", "elder"]):
+					c.health = minf(c.max_health, c.health + float(v))
+			report.append("слабые окрепли (+%d здоровья)" % int(v))
+		elif key in CONSEQUENCE_HUNTER_MORALE and pop:
+			for c in pop.citizens:
+				if c.is_alive and c.job_id == "hunter":
+					c.morale = minf(100.0, c.morale + float(v))
+			report.append("дух охотников +%d" % int(v))
+		elif CONSEQUENCE_SETTLEMENT_BONUS.has(key) and s:
+			s.add_event_bonus(CONSEQUENCE_SETTLEMENT_BONUS[key], float(v))
+			report.append("%s +%d%%" % ["урон охотников" if key == "hunt_damage_boost" else "восстановление дичи", int(float(v) * 100.0)])
+		elif key == "unlock_building" and culture:
+			culture.unlock_building(String(v))
+			report.append("открыта постройка: %s" % BuildingDB.get_building(String(v)).get("name", v))
+		elif key == "unlock_practice" and culture:
+			culture.unlock_practice(String(v))
+		elif key == "next_event":
+			# Продолжение цепочки: следующее событие встаёт в очередь
+			var next_t: Dictionary = CivilizationEventDB.EVENTS.get(String(v), {})
+			if not next_t.is_empty():
+				call_deferred("trigger_event", next_t, {})
+				report.append("история продолжится…")
+		elif v is bool and v == true and culture and not CONSEQUENCE_HANDLED_FLAGS.has(key) and not String(key).begins_with("unlock_upgrade") and not String(key).begins_with("set_logging") and not String(key).begins_with("consume_"):
+			culture.unlock_practice(String(key))
+	return report
+
 func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences: Dictionary, settlement: RefCounted) -> void:
 	var pop = settlement.population if settlement and "population" in settlement else null
 	if pop == null and GameManager and not GameManager.settlements.is_empty():
@@ -675,6 +798,11 @@ func _apply_choice_consequences(ev: Dictionary, choice: Dictionary, consequences
 			if s_cand and "population" in s_cand and s_cand.population:
 				pop = s_cand.population
 	var culture = GameManager.culture_memory if GameManager else null
+	var generic_report = _apply_generic_consequences(ev, choice, consequences, settlement, pop, culture)
+	if not generic_report.is_empty() and settlement and settlement.has_method("is_player_settlement") and settlement.is_player_settlement():
+		EventBus.notification_toast.emit("Последствия: %s" % choice.get("title", ""), ", ".join(generic_report), "info")
+		if settlement.faction_id == GameManager.player_faction_id:
+			EventBus.resources_updated.emit(settlement.faction_id, settlement.economy.resources)
 	
 	# Отношения между участниками
 	if consequences.has("modify_relations") and pop:

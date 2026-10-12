@@ -30,9 +30,33 @@ var orders_vbox: VBoxContainer
 var events_vbox: VBoxContainer
 var history_vbox: VBoxContainer
 
+var _live_refresh_timer: float = 0.0
+
 func _ready() -> void:
 	visible = false
 	_build_ui()
+
+# Карточка здания живая: раз в секунду перерисовывается открытая вкладка
+func _process(delta: float) -> void:
+	if not visible or current_building == null or current_settlement == null:
+		return
+	_live_refresh_timer += delta
+	if _live_refresh_timer < 1.0:
+		return
+	_live_refresh_timer = 0.0
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		return
+	var tab_ctrl = tab_container.get_current_tab_control()
+	if tab_ctrl == null:
+		return
+	if tab_ctrl.is_ancestor_of(overview_vbox):
+		_render_overview()
+	elif tab_ctrl.is_ancestor_of(workers_vbox):
+		_render_workers()
+	elif tab_ctrl.is_ancestor_of(upgrades_grid):
+		_render_upgrades()
+	elif tab_ctrl.is_ancestor_of(orders_vbox):
+		_render_orders()
 
 func _build_ui() -> void:
 	anchors_preset = Control.PRESET_CENTER
@@ -1083,75 +1107,186 @@ func _render_modes() -> void:
 		card.add_child(hbox)
 		modes_vbox.add_child(card)
 
+# Требования улучшения: "req" (BuildingDB) или "prerequisites" (BuildingSystem)
+func _upgrade_prereqs(u: Dictionary) -> Array:
+	var reqs: Array = []
+	if u.has("req") and String(u["req"]) != "":
+		reqs.append(String(u["req"]))
+	for r in u.get("prerequisites", []):
+		reqs.append(String(r))
+	return reqs
+
+func _count_builders() -> int:
+	var n = 0
+	if current_settlement and current_settlement.population:
+		for c in current_settlement.population.citizens:
+			if c.is_alive and c.job_id == "builder":
+				n += 1
+	return n
+
+func _res_ru(r: String) -> String:
+	return String(SettlementData.RESOURCE_NAMES_RU.get(r, r))
+
 func _render_upgrades() -> void:
 	for c in upgrades_grid.get_children():
 		c.queue_free()
-		
+
 	var upgrades = BuildingSystem.get_upgrades_for_building(current_building.type)
 	var econ = current_settlement.economy
-	
+	var pending_id = String(current_building.pending_upgrade.get("id", "")) if current_building.has_pending_upgrade() else ""
+	var builders = _count_builders()
+
+	if upgrades.is_empty():
+		var none_lbl = Label.new()
+		none_lbl.text = "У этого здания пока нет улучшений."
+		none_lbl.add_theme_font_size_override("font_size", 13)
+		upgrades_grid.add_child(none_lbl)
+		return
+
 	for u in upgrades:
 		var u_id = u["id"]
 		var is_unlocked = current_building.is_upgrade_unlocked(u_id)
 		var can_afford = econ.can_afford(u["cost"])
-		
+		var is_in_progress = pending_id == u_id
+		var missing_reqs: Array[String] = []
+		for r_id in _upgrade_prereqs(u):
+			if not current_building.is_upgrade_unlocked(r_id):
+				missing_reqs.append(String(BuildingSystem.get_upgrade(r_id).get("name", r_id)))
+		var locked = not missing_reqs.is_empty()
+
 		var card = PanelContainer.new()
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		card.custom_minimum_size = Vector2(380, 80)
-		
+		card.custom_minimum_size = Vector2(400, 96)
+
 		var sbox = StyleBoxFlat.new()
-		sbox.bg_color = Color(0.12, 0.18, 0.14, 0.95) if is_unlocked else Color(0.12, 0.15, 0.21, 0.95)
-		sbox.border_color = Color(0.35, 0.85, 0.45, 0.9) if is_unlocked else (Color(0.85, 0.65, 0.25, 0.8) if can_afford else Color(0.5, 0.35, 0.3, 0.5))
-		sbox.set_border_width_all(1)
+		sbox.bg_color = Color(0.12, 0.18, 0.14, 0.95) if is_unlocked else (Color(0.16, 0.15, 0.10, 0.95) if is_in_progress else Color(0.12, 0.15, 0.21, 0.95))
+		sbox.border_color = Color(0.35, 0.85, 0.45, 0.9) if is_unlocked else (Color(0.95, 0.8, 0.3, 1.0) if is_in_progress else (Color(0.85, 0.65, 0.25, 0.8) if (can_afford and not locked) else Color(0.5, 0.35, 0.3, 0.5)))
+		sbox.set_border_width_all(2 if is_in_progress else 1)
 		sbox.set_corner_radius_all(6)
-		sbox.set_content_margin_all(6)
+		sbox.set_content_margin_all(8)
 		card.add_theme_stylebox_override("panel", sbox)
-		
+		if locked and not is_unlocked:
+			card.modulate = Color(1, 1, 1, 0.6)
+
 		var hbox = HBoxContainer.new()
 		hbox.add_theme_constant_override("separation", 8)
-		
+
 		var vbox = VBoxContainer.new()
 		vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		vbox.add_theme_constant_override("separation", 2)
-		
+		vbox.add_theme_constant_override("separation", 3)
+
 		var name_lbl = Label.new()
-		name_lbl.text = ("✅ " if is_unlocked else "✨ ") + u["name"]
-		name_lbl.add_theme_font_size_override("font_size", 11)
+		name_lbl.text = ("✅ " if is_unlocked else ("🔨 " if is_in_progress else ("🔒 " if locked else "✨ "))) + u["name"]
+		name_lbl.add_theme_font_size_override("font_size", 14)
 		name_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
 		vbox.add_child(name_lbl)
-		
+
 		var desc_lbl = Label.new()
 		desc_lbl.text = u["desc"]
-		desc_lbl.add_theme_font_size_override("font_size", 9)
+		desc_lbl.add_theme_font_size_override("font_size", 12)
 		desc_lbl.add_theme_color_override("font_color", Color(0.8, 0.86, 0.94))
 		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		vbox.add_child(desc_lbl)
-		
-		var cost_items = []
-		for r in u["cost"]:
-			cost_items.append("%s %d" % [r, u["cost"][r]])
-		var cost_lbl = Label.new()
-		cost_lbl.text = "Цена: " + " | ".join(cost_items)
-		cost_lbl.add_theme_font_size_override("font_size", 9)
-		cost_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4) if can_afford else Color(0.95, 0.4, 0.35))
-		vbox.add_child(cost_lbl)
-		
+
+		var eff_text = BuildingSystem.describe_effects(u.get("effects", {}))
+		if eff_text != "":
+			var eff_lbl = Label.new()
+			eff_lbl.text = "Эффект: " + eff_text
+			eff_lbl.add_theme_font_size_override("font_size", 12)
+			eff_lbl.add_theme_color_override("font_color", Color(0.55, 0.95, 0.75))
+			eff_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			vbox.add_child(eff_lbl)
+
+		if locked and not is_unlocked:
+			var req_lbl = Label.new()
+			req_lbl.text = "Сначала: " + ", ".join(missing_reqs)
+			req_lbl.add_theme_font_size_override("font_size", 12)
+			req_lbl.add_theme_color_override("font_color", Color(0.95, 0.6, 0.4))
+			vbox.add_child(req_lbl)
+
+		if is_in_progress:
+			# Живой прогресс: сколько материалов донесли строители и сколько работы осталось
+			var up = current_building.pending_upgrade
+			var req_m: Dictionary = up.get("materials_required", {})
+			var del_m: Dictionary = up.get("materials_delivered", {})
+			var parts: Array[String] = []
+			var all_delivered = true
+			for r in req_m:
+				var d = float(del_m.get(r, 0.0))
+				if d < float(req_m[r]):
+					all_delivered = false
+				parts.append("%s %d/%d" % [_res_ru(r), int(d), int(req_m[r])])
+			var prog_lbl = Label.new()
+			prog_lbl.text = "Доставлено: " + (" | ".join(parts) if not parts.is_empty() else "материалы не нужны")
+			prog_lbl.add_theme_font_size_override("font_size", 12)
+			prog_lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.45))
+			prog_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			vbox.add_child(prog_lbl)
+			var total_work = maxf(0.1, float(up.get("total_work", 4.0)))
+			var bar = ProgressBar.new()
+			bar.max_value = 100.0
+			bar.value = (1.0 - float(up.get("work_left", total_work)) / total_work) * 100.0 if all_delivered else 0.0
+			bar.custom_minimum_size = Vector2(120, 12)
+			bar.show_percentage = false
+			vbox.add_child(bar)
+			var st_lbl = Label.new()
+			st_lbl.add_theme_font_size_override("font_size", 12)
+			if builders == 0:
+				st_lbl.text = "⚠ Нет строителей! Назначьте жителя строителем — без него улучшение не продвинется."
+				st_lbl.add_theme_color_override("font_color", Color(1.0, 0.45, 0.35))
+			elif not all_delivered:
+				st_lbl.text = "Строители (%d) носят материалы со склада." % builders
+				st_lbl.add_theme_color_override("font_color", Color(0.8, 0.86, 0.94))
+			else:
+				st_lbl.text = "Материалы на месте — строители работают (%d%%)." % int(bar.value)
+				st_lbl.add_theme_color_override("font_color", Color(0.55, 0.95, 0.55))
+			st_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			vbox.add_child(st_lbl)
+		elif not is_unlocked:
+			var cost_items = []
+			for r in u["cost"]:
+				cost_items.append("%s %d" % [_res_ru(r), u["cost"][r]])
+			var cost_lbl = Label.new()
+			cost_lbl.text = "Материалы: " + " | ".join(cost_items) + ("" if can_afford else "  (не хватает на складе)")
+			cost_lbl.add_theme_font_size_override("font_size", 12)
+			cost_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4) if can_afford else Color(0.95, 0.4, 0.35))
+			cost_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			vbox.add_child(cost_lbl)
+
 		hbox.add_child(vbox)
-		
+
 		var buy_btn = Button.new()
-		var is_in_progress = current_building.has_pending_upgrade() and current_building.pending_upgrade.get("id", "") == u_id
-		buy_btn.text = "Изучено" if is_unlocked else ("Строится..." if is_in_progress else "Исследовать")
-		buy_btn.disabled = is_unlocked or is_in_progress
-		buy_btn.custom_minimum_size = Vector2(85, 30)
+		buy_btn.custom_minimum_size = Vector2(110, 34)
 		buy_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		buy_btn.add_theme_font_size_override("font_size", 10)
-		buy_btn.pressed.connect(func():
-			if current_building.start_upgrade(u_id, u.get("cost", {})):
-				EventBus.notification_toast.emit("Улучшение начато", "Начато улучшение: %s. Требуется доставка стройматериалов." % u.get("name", u_id), "info")
+		buy_btn.add_theme_font_size_override("font_size", 12)
+		if is_unlocked:
+			buy_btn.text = "Готово"
+			buy_btn.disabled = true
+		elif is_in_progress:
+			buy_btn.text = "Отменить"
+			buy_btn.tooltip_text = "Остановить улучшение и вернуть доставленные материалы на склад"
+			buy_btn.pressed.connect(func():
+				current_settlement.cancel_building_upgrade(current_building, true)
+				EventBus.notification_toast.emit("Улучшение отменено", "Доставленные материалы возвращены на склад.", "info")
 				refresh_all_tabs()
-		)
+			)
+		else:
+			buy_btn.text = "Построить"
+			buy_btn.disabled = locked or pending_id != ""
+			if pending_id != "":
+				buy_btn.tooltip_text = "Сначала завершите текущее улучшение здания"
+			elif locked:
+				buy_btn.tooltip_text = "Требуется предыдущее улучшение"
+			else:
+				buy_btn.tooltip_text = "Строители принесут материалы со склада и выполнят работу"
+			buy_btn.pressed.connect(func():
+				if current_building.start_upgrade(u_id, u.get("cost", {})):
+					var hint = "" if builders > 0 else " Внимание: в поселении нет строителей!"
+					EventBus.notification_toast.emit("Улучшение начато", "Начато улучшение: %s. Строители доставят материалы.%s" % [u.get("name", u_id), hint], "info" if builders > 0 else "warning")
+					refresh_all_tabs()
+			)
 		hbox.add_child(buy_btn)
-		
+
 		card.add_child(hbox)
 		upgrades_grid.add_child(card)
 

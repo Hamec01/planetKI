@@ -392,10 +392,15 @@ func update_regrowth(delta: float) -> void:
 			GameManager.nav_grid.register_resource(coord, "wood")
 			
 	# 2. Восстановление природных кустов ягод, грибов и рыбных мест (камень и руда не отрастают)
+	# Обычай бережной охоты и сбора (решение события) ускоряет восстановление угодий
+	var regen_mult = 1.0
+	var player_s = GameManager.get_player_settlement() if GameManager else null
+	if player_s:
+		regen_mult += player_s.get_bonus("game_regeneration")
 	for coord in nodes:
 		var node = nodes[coord]
 		if node["category"] in RENEWABLE_CATEGORIES and node["depleted"]:
-			node["regrowth_timer"] -= delta
+			node["regrowth_timer"] -= delta * regen_mult
 			if node["regrowth_timer"] <= 0.0:
 				node["depleted"] = false
 				node["amount"] = node["max_amount"]

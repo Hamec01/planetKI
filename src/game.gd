@@ -83,6 +83,16 @@ func start_game(seed_str: String) -> void:
 	
 	_setup_army_command_panel()
 	_setup_citizen_detail_panel()
+	if GameManager.battle_test_mode:
+		_start_battle_test()
+
+func _start_battle_test() -> void:
+	var bt = BattleTest.new()
+	bt.name = "BattleTest"
+	map_view.add_child(bt)
+	GameManager.battle_test_node = bt
+	bt.setup()
+	main_hud.set_hero_mode(true)
 
 const ArmyCommandPanelScript = preload("res://src/ui/army_command_panel.gd")
 const CitizenDetailPanelScript = preload("res://src/ui/citizen_detail_panel.gd")
@@ -112,6 +122,19 @@ func _on_day_passed(_day: int, _month: int, _year: int) -> void:
 		if player_f:
 			var sages = player_s.assigned_jobs.get("sage", 0)
 			player_f.sim_daily_research(0.2 + sages * 0.8)
+			# Тотем предков: отряды быстрее восстанавливают боевой дух (до 85 + бонус)
+			var morale_cap = 85.0 + player_s.get_bonus("army_morale_bonus")
+			for army in player_f.armies:
+				if army and not army.in_combat and army.morale < morale_cap:
+					army.morale = minf(morale_cap, army.morale + 2.0 + player_s.get_bonus("army_morale_bonus") * 0.2)
+			# Дом вождя и обычаи гостеприимства: соседи постепенно проникаются уважением
+			var prestige = player_s.get_bonus("diplo_prestige")
+			if prestige > 0.0:
+				for other_id in GameManager.factions:
+					if other_id != player_f.id and randf() < prestige / 100.0:
+						var other_f = GameManager.factions[other_id]
+						other_f.change_opinion(player_f.id, 1)
+						player_f.change_opinion(other_id, 1)
 			
 	# Обновление ИИ-фракций
 	for f_id in GameManager.factions:

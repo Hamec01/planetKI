@@ -155,6 +155,47 @@ static func load_all() -> void:
 	_load_if_exists("ox_cart", "res://Assets/buildings/foraging/extracted/ox_cart.png")
 	_load_if_exists("ox_plow", "res://Assets/buildings/foraging/extracted/ox_plow.png")
 	
+	# Подключаем ассеты Asset Composer (7 зданий, 35 строительных состояний, 36 улучшений и предметов)
+	if ComposerBuildings.ready_pack():
+		for b_id in ComposerBuildings.get_all_building_ids():
+			var at_comp = ComposerBuildings.get_building_atlas_texture(b_id, "complete")
+			if at_comp:
+				textures[b_id] = at_comp
+			var at_ruin = ComposerBuildings.get_building_atlas_texture(b_id, "ruined")
+			if at_ruin:
+				textures["destr_" + b_id] = at_ruin
+			for st in ComposerBuildings.STATES:
+				var at_st = ComposerBuildings.get_building_atlas_texture(b_id, st)
+				if at_st:
+					textures["%s_%s" % [b_id, st]] = at_st
+					textures["composer_%s_%s" % [b_id, st]] = at_st
+		
+		# Все 36 улучшений и предметов
+		for u_id in ComposerBuildings.get_all_upgrade_ids():
+			var u_data = ComposerBuildings.get_upgrade_data(u_id)
+			var at_u = ComposerBuildings.get_upgrade_atlas_texture(u_id)
+			if at_u:
+				textures[u_id] = at_u
+				var game_id = u_data.get("upgradeId", "")
+				if game_id != "":
+					textures[game_id] = at_u
+		
+		# Исторические алиасы к новым текстурам улучшений
+		var aliases = {
+			"great_lodge_nursery": "nursery_corner",
+			"great_lodge_caretaker": "caretaker_quarters",
+			"great_lodge_knowledge": "knowledge_circle",
+			"great_lodge_store": "communal_store",
+			"great_lodge_totems": "clan_totems",
+			"hunt_butcher_table": "hunt_butchering_area",
+			"seed_sorting_table": "forage_seed_sorting"
+		}
+		for al_k in aliases:
+			var target = aliases[al_k]
+			var at_al = ComposerBuildings.get_upgrade_atlas_texture(target)
+			if at_al:
+				textures[al_k] = at_al
+	
 	# Привязка алиасов
 	if not textures.has("watchtower") and textures.has("tower_blue"):
 		textures["watchtower"] = textures["tower_blue"]

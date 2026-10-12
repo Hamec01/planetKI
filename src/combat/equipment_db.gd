@@ -151,6 +151,67 @@ const WEAPONS = {
 		"skill_type": "bow",
 		"is_ranged": true,
 		"is_metal": false
+	},
+	"flint_sickle": {
+		"id": "flint_sickle",
+		"name": "Кремнёвый серп",
+		"damage": 6.0,
+		"interval": 1.2,
+		"range": 0.6,
+		"pen_flat": 0.0,
+		"pen_fraction": 0.0,
+		"skill_type": "knife",
+		"is_ranged": false,
+		"is_metal": false,
+		"harvest_bonus": 0.20
+	},
+	"digging_stick": {
+		"id": "digging_stick",
+		"name": "Палка-копалка",
+		"damage": 4.0,
+		"interval": 1.5,
+		"range": 0.7,
+		"pen_flat": 0.0,
+		"pen_fraction": 0.0,
+		"skill_type": "spear",
+		"is_ranged": false,
+		"is_metal": false
+	},
+	"stone_hoe": {
+		"id": "stone_hoe",
+		"name": "Каменная мотыга",
+		"damage": 7.0,
+		"interval": 1.6,
+		"range": 0.8,
+		"pen_flat": 0.0,
+		"pen_fraction": 0.0,
+		"skill_type": "axe",
+		"is_ranged": false,
+		"is_metal": false
+	},
+	"wooden_hoe": {
+		"id": "wooden_hoe",
+		"name": "Деревянная мотыга",
+		"damage": 5.0,
+		"interval": 1.6,
+		"range": 0.8,
+		"pen_flat": 0.0,
+		"pen_fraction": 0.0,
+		"skill_type": "axe",
+		"is_ranged": false,
+		"is_metal": false
+	},
+	"threshing_flail": {
+		"id": "threshing_flail",
+		"name": "Цеп для молотьбы",
+		"damage": 8.0,
+		"interval": 1.7,
+		"range": 0.9,
+		"pen_flat": 0.0,
+		"pen_fraction": 0.0,
+		"skill_type": "mace",
+		"is_ranged": false,
+		"is_metal": false
 	}
 }
 
@@ -412,6 +473,94 @@ const RECIPES = {
 		"cost": {"metal": 5},
 		"work_days": 1.25,
 		"tech_req": "bronze_working",
+		"upgrade_req": ""
+	},
+	"flint_sickle": {
+		"id": "flint_sickle",
+		"category": "tool",
+		"name": "Кремнёвый серп",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 1, "stone": 2},
+		"work_days": 0.5,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"digging_stick": {
+		"id": "digging_stick",
+		"category": "tool",
+		"name": "Палка-копалка",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 1},
+		"work_days": 0.25,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"stone_hoe": {
+		"id": "stone_hoe",
+		"category": "tool",
+		"name": "Каменная мотыга",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 2, "stone": 2},
+		"work_days": 0.5,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"wooden_hoe": {
+		"id": "wooden_hoe",
+		"category": "tool",
+		"name": "Деревянная мотыга",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 2},
+		"work_days": 0.25,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"threshing_flail": {
+		"id": "threshing_flail",
+		"category": "tool",
+		"name": "Цеп для молотьбы",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 3, "leather": 1},
+		"work_days": 0.5,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"winnowing_sieve": {
+		"id": "winnowing_sieve",
+		"category": "tool",
+		"name": "Веялка",
+		"workshop_type": "craft_workshop",
+		"specialization": "basic",
+		"cost": {"wood": 2},
+		"work_days": 0.5,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"wooden_ard": {
+		"id": "wooden_ard",
+		"category": "tool",
+		"name": "Деревянное рало",
+		"workshop_type": "craft_workshop",
+		"specialization": "woodworking",
+		"cost": {"wood": 6},
+		"work_days": 1.0,
+		"tech_req": "",
+		"upgrade_req": ""
+	},
+	"ox_yoke": {
+		"id": "ox_yoke",
+		"category": "tool",
+		"name": "Ярмо и упряжь",
+		"workshop_type": "craft_workshop",
+		"specialization": "woodworking",
+		"cost": {"wood": 4, "leather": 2},
+		"work_days": 1.0,
+		"tech_req": "",
 		"upgrade_req": ""
 	}
 }

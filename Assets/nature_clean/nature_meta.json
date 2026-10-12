@@ -1,0 +1,706 @@
+{
+  "tree_oak": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      132,
+      144
+    ]
+  },
+  "tree_birch": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      92,
+      146
+    ]
+  },
+  "tree_maple_green": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      109,
+      130
+    ]
+  },
+  "tree_poplar": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      54,
+      152
+    ]
+  },
+  "tree_willow": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      127,
+      124
+    ]
+  },
+  "tree_young": {
+    "category": "tree",
+    "scale_h": 34.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      78,
+      108
+    ]
+  },
+  "tree_autumn_red": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      114,
+      131
+    ]
+  },
+  "tree_birch_yellow": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      83,
+      147
+    ]
+  },
+  "tree_spruce": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      98,
+      155
+    ]
+  },
+  "tree_spruce_blue": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      93,
+      145
+    ]
+  },
+  "tree_pine": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      117,
+      150
+    ]
+  },
+  "tree_spruce_young": {
+    "category": "tree",
+    "scale_h": 34.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_fresh",
+    "orig_size": [
+      67,
+      117
+    ]
+  },
+  "tree_spruce_snow": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": true,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_mossy",
+    "orig_size": [
+      94,
+      145
+    ]
+  },
+  "tree_pine_snow": {
+    "category": "tree",
+    "scale_h": 42.0,
+    "is_winter_only": true,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_mossy",
+    "orig_size": [
+      99,
+      135
+    ]
+  },
+  "tree_bare": {
+    "category": "tree",
+    "scale_h": 34.0,
+    "is_winter_only": true,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_mossy",
+    "orig_size": [
+      119,
+      143
+    ]
+  },
+  "tree_dead": {
+    "category": "tree",
+    "scale_h": 34.0,
+    "is_winter_only": true,
+    "harvest_resource": "wood",
+    "harvest_stump": "stump_mossy",
+    "orig_size": [
+      82,
+      131
+    ]
+  },
+  "bush_round_green": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      94,
+      88
+    ]
+  },
+  "bush_spreading": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      108,
+      100
+    ]
+  },
+  "bush_light": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      89,
+      82
+    ]
+  },
+  "bush_dark": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      106,
+      88
+    ]
+  },
+  "bush_berries_red": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      97,
+      93
+    ]
+  },
+  "bush_berries_blue": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      93,
+      88
+    ]
+  },
+  "bush_flowers": {
+    "category": "bush",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      101,
+      96
+    ]
+  },
+  "bush_dry_thorny": {
+    "category": "bush",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      88,
+      81
+    ]
+  },
+  "rock_small_pebbles": {
+    "category": "rock",
+    "scale_h": 16.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      77,
+      61
+    ]
+  },
+  "rock_round_boulder": {
+    "category": "rock",
+    "scale_h": 22.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      86,
+      72
+    ]
+  },
+  "rock_cliff_group": {
+    "category": "rock",
+    "scale_h": 22.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      118,
+      104
+    ]
+  },
+  "rock_flat_slabs": {
+    "category": "rock",
+    "scale_h": 22.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      112,
+      69
+    ]
+  },
+  "rock_mossy": {
+    "category": "rock",
+    "scale_h": 16.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      105,
+      92
+    ]
+  },
+  "rock_red_stone": {
+    "category": "rock",
+    "scale_h": 16.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      95,
+      88
+    ]
+  },
+  "rock_limestone": {
+    "category": "rock",
+    "scale_h": 16.0,
+    "is_winter_only": false,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      101,
+      92
+    ]
+  },
+  "rock_snow_boulder": {
+    "category": "rock",
+    "scale_h": 22.0,
+    "is_winter_only": true,
+    "harvest_resource": "stone",
+    "harvest_stump": "rock_small_pebbles",
+    "orig_size": [
+      97,
+      87
+    ]
+  },
+  "grass_tuft_low": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      52,
+      46
+    ]
+  },
+  "grass_dense": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      91,
+      78
+    ]
+  },
+  "grass_tall_meadow": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      98,
+      105
+    ]
+  },
+  "grass_thin": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      81,
+      88
+    ]
+  },
+  "grass_dry_yellow": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      92,
+      80
+    ]
+  },
+  "grass_steppe_orange": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      95,
+      87
+    ]
+  },
+  "plant_broadleaf": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      104,
+      78
+    ]
+  },
+  "plant_fern": {
+    "category": "grass",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      103,
+      76
+    ]
+  },
+  "flowers_white": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      80,
+      72
+    ]
+  },
+  "flowers_yellow": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      82,
+      80
+    ]
+  },
+  "flowers_purple": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      85,
+      90
+    ]
+  },
+  "flowers_poppies": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      81,
+      88
+    ]
+  },
+  "mushrooms_flyagaric": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      72,
+      67
+    ]
+  },
+  "mushrooms_brown": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      79,
+      68
+    ]
+  },
+  "plant_dense_fern": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      108,
+      99
+    ]
+  },
+  "bush_berry_low": {
+    "category": "flower_mushroom",
+    "scale_h": 11.5,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      105,
+      94
+    ]
+  },
+  "reeds": {
+    "category": "marsh_desert",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      90,
+      120
+    ]
+  },
+  "cattails": {
+    "category": "marsh_desert",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      103,
+      125
+    ]
+  },
+  "marsh_grass": {
+    "category": "marsh_desert",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      87,
+      115
+    ]
+  },
+  "marsh_broadleaf": {
+    "category": "marsh_desert",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      105,
+      102
+    ]
+  },
+  "water_lily": {
+    "category": "marsh_desert",
+    "scale_h": 12.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      102,
+      65
+    ]
+  },
+  "cactus_branched": {
+    "category": "marsh_desert",
+    "scale_h": 13.71,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      76,
+      101
+    ]
+  },
+  "cactus_round": {
+    "category": "marsh_desert",
+    "scale_h": 15.43,
+    "is_winter_only": false,
+    "harvest_resource": "food",
+    "harvest_stump": null,
+    "orig_size": [
+      77,
+      79
+    ]
+  },
+  "tumbleweed": {
+    "category": "marsh_desert",
+    "scale_h": 18.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      87,
+      84
+    ]
+  },
+  "stump_fresh": {
+    "category": "detail",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      90,
+      75
+    ]
+  },
+  "stump_mossy": {
+    "category": "detail",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      97,
+      77
+    ]
+  },
+  "log_fallen": {
+    "category": "detail",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": null,
+    "orig_size": [
+      122,
+      80
+    ]
+  },
+  "branch_broken": {
+    "category": "detail",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": null,
+    "orig_size": [
+      108,
+      73
+    ]
+  },
+  "branches_pile": {
+    "category": "detail",
+    "scale_h": 14.0,
+    "is_winter_only": false,
+    "harvest_resource": "wood",
+    "harvest_stump": null,
+    "orig_size": [
+      100,
+      62
+    ]
+  },
+  "leaves_fallen": {
+    "category": "detail",
+    "scale_h": 16.57,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      79,
+      73
+    ]
+  },
+  "creeping_greens": {
+    "category": "detail",
+    "scale_h": 20.0,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      121,
+      82
+    ]
+  },
+  "sapling": {
+    "category": "detail",
+    "scale_h": 15.71,
+    "is_winter_only": false,
+    "harvest_resource": null,
+    "harvest_stump": null,
+    "orig_size": [
+      82,
+      85
+    ]
+  }
+}

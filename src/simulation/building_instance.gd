@@ -115,7 +115,9 @@ func refill_axes_from_stockpile(s: SettlementData) -> void:
 		if int(s.equipment_stockpile.get(item_id, 0)) <= 0: continue
 		s.equipment_stockpile[item_id] -= 1
 		if s.equipment_stockpile[item_id] <= 0: s.equipment_stockpile.erase(item_id)
-		tool_inventory.append({"id":"%s_%s_%d" % [id,item_id,Time.get_ticks_usec()],"type":"axe","name":EquipmentDB.get_weapon(item_id).get("name","Топор"),"source_item":item_id,"durability":100.0,"max_durability":100.0,"assigned_to":""})
+		# Закалка кузницы делает новые топоры прочнее
+		var dur = 100.0 * (1.0 + s.get_bonus("durability"))
+		tool_inventory.append({"id":"%s_%s_%d" % [id,item_id,Time.get_ticks_usec()],"type":"axe","name":EquipmentDB.get_weapon(item_id).get("name","Топор"),"source_item":item_id,"durability":dur,"max_durability":dur,"assigned_to":""})
 		return
 
 func take_tool(tool_type: String = "axe", citizen_id: String = "") -> Dictionary:
@@ -221,6 +223,8 @@ func add_history_entry(year: int, text: String) -> void:
 	})
 
 var pending_upgrade: Dictionary = {}
+# Растёт при каждом изучении улучшения: по нему поселения сбрасывают кэш бонусов
+static var upgrade_revision: int = 0
 
 func is_upgrade_unlocked(u_id: String) -> bool:
 	return unlocked_upgrades.has(u_id)
@@ -231,6 +235,14 @@ func has_pending_upgrade() -> bool:
 func start_upgrade(u_id: String, custom_cost: Dictionary = {}) -> bool:
 	if is_upgrade_unlocked(u_id) or has_pending_upgrade():
 		return false
+	# Нельзя перепрыгнуть ступень: предыдущее улучшение должно быть изучено
+	var u_def = BuildingSystem.get_upgrade(u_id)
+	var reqs: Array = u_def.get("prerequisites", []).duplicate()
+	if String(u_def.get("req", "")) != "":
+		reqs.append(u_def["req"])
+	for r in reqs:
+		if not is_upgrade_unlocked(String(r)):
+			return false
 	var cost = custom_cost
 	if cost.is_empty() and BuildingSystem.UPGRADES.has(u_id):
 		cost = BuildingSystem.UPGRADES[u_id].get("cost", {}).duplicate()
@@ -248,6 +260,7 @@ func start_upgrade(u_id: String, custom_cost: Dictionary = {}) -> bool:
 func unlock_upgrade(u_id: String) -> bool:
 	if not is_upgrade_unlocked(u_id):
 		unlocked_upgrades.append(u_id)
+		BuildingInstance.upgrade_revision += 1
 		if pending_upgrade.get("id", "") == u_id:
 			pending_upgrade.clear()
 		var year = GameManager.current_year if GameManager else 1
@@ -465,6 +478,14 @@ func process_production_tick(delta: float, worker_count: int, settlement: RefCou
 		
 	current_order["status"] = "in_progress"
 	var labor_speed = float(worker_count)
+	# Мехи кузницы ускоряют плавку и ковку, медные топоры — работу плотников
+	if settlement.has_method("get_bonus"):
+		if type == "forge":
+			labor_speed *= 1.0 + settlement.get_bonus("smelting_speed")
+		elif type == "carpenter_workshop":
+			labor_speed *= 1.0 + settlement.get_bonus("carpenter_boost")
+		elif type == "craft_workshop":
+			labor_speed *= 1.0 + settlement.get_bonus("smelting_speed") + settlement.get_bonus("carpenter_boost")
 	current_order["work_progress"] = float(current_order.get("work_progress", 0.0)) + delta * labor_speed
 	
 	var target_work = float(current_order.get("work_required", 60.0))
@@ -573,6 +594,7 @@ func deserialize(data: Dictionary) -> void:
 	active_mode = data.get("active_mode", active_mode)
 	production_queue.assign(data.get("production_queue", []))
 	unlocked_upgrades.assign(data.get("unlocked_upgrades", []))
+	BuildingInstance.upgrade_revision += 1
 	specialization = data.get("specialization", "")
 	active_modifiers = data.get("active_modifiers", {}).duplicate(true)
 	event_history.assign(data.get("event_history", []))
@@ -910,14 +932,23 @@ func harvest_crop(settlement: RefCounted) -> Dictionary:
 			base_yield *= 1.3
 		if is_upgrade_unlocked("wheat_sickles"):
 			base_yield *= 1.2
+		if is_upgrade_unlocked("wheat_scarecrow"):
+			base_yield *= 1.15 # птицы больше не склёвывают колосья
+		# Отборные семена из семенного хранилища поселения
+		if settlement and settlement.has_method("has_settlement_upgrade") and settlement.has_settlement_upgrade("seed_selection_bench"):
+			base_yield *= 1.2
 	elif type == "primitive_garden":
 		base_yield = 22.0
 		if is_upgrade_unlocked("garden_compost"):
 			base_yield *= 1.25
+		if is_upgrade_unlocked("garden_fencing"):
+			base_yield *= 1.3 # звери не вытаптывают грядки
 	elif type == "orchard":
 		base_yield = 28.0
 		if is_upgrade_unlocked("orchard_grafting"):
 			base_yield *= 1.3
+		if is_upgrade_unlocked("orchard_smoke_pots"):
+			base_yield *= 1.15 # завязи уцелели от заморозков и вредителей
 			
 	# Модификаторы плодородия, влажности и сорняков
 	var fert_mod = clampf(soil_fertility / 80.0, 0.3, 1.5)
@@ -944,7 +975,7 @@ func harvest_crop(settlement: RefCounted) -> Dictionary:
 		elif type == "primitive_garden":
 			var veg_amt = total_yield * 0.6
 			var roots_amt = total_yield * 0.4
-			var herbs_amt = total_yield * 0.3
+			var herbs_amt = total_yield * (0.6 if is_upgrade_unlocked("garden_herbal_bed") else 0.3)
 			var seeds_amt = total_yield * 0.2
 			settlement.economy.add_resource("food", veg_amt + roots_amt)
 			settlement.economy.add_resource("roots", roots_amt)
@@ -982,6 +1013,11 @@ func advance_crop_cycle(delta_days: float, settlement: RefCounted = null) -> Dic
 		evap_rate *= 0.6
 	elif type == "primitive_garden" and is_upgrade_unlocked("garden_water_trough"):
 		evap_rate *= 0.7
+	elif type == "orchard" and is_upgrade_unlocked("orchard_irrigation"):
+		evap_rate *= 0.6
+	# Навоз с загонов понемногу возвращает плодородие пашне
+	if type in ["primitive_field", "wheat_field"] and is_upgrade_unlocked("field_manure_spreading"):
+		soil_fertility = clampf(soil_fertility + 0.6 * delta_days, 0.0, 100.0)
 	soil_moisture = clampf(soil_moisture - evap_rate, 0.0, 100.0)
 	
 	# Сорняки растут быстрее при влажной и плодородной почве
@@ -1007,6 +1043,8 @@ func advance_crop_cycle(delta_days: float, settlement: RefCounted = null) -> Dic
 		growth_speed *= 0.6
 	if soil_fertility < 30.0:
 		growth_speed *= 0.5
+	if type in ["primitive_field", "wheat_field"] and is_upgrade_unlocked("field_stone_clearing"):
+		growth_speed *= 1.15 # пашня без валунов, вспашка быстрее
 		
 	var stage_time = stage_duration_days
 	if type == "orchard":

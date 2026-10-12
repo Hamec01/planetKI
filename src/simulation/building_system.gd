@@ -525,13 +525,77 @@ const UPGRADES: Dictionary = {
 	}
 }
 
+# --- ГЕОМЕТРИЯ ПОСТРОЕК НА КАРТЕ: здания не должны залезать друг на друга ---
+const MAP_TILE_PX: float = 32.0
+
+# Прямоугольник, который постройка реально занимает на экране (мировые px)
+static func get_visual_rect(coord: Vector2i, b_id: String, offset: Vector2 = Vector2.ZERO) -> Rect2:
+	var center = Vector2(coord.x * MAP_TILE_PX + MAP_TILE_PX * 0.5, coord.y * MAP_TILE_PX + MAP_TILE_PX * 0.5) + offset
+	var base = MAP_TILE_PX * (0.46 if b_id == "grave" else 0.88)
+	var sprite = ComposerBuildings.get_sprite_size(b_id) if ComposerBuildings.has_building(b_id) else Vector2.ZERO
+	if sprite == Vector2.ZERO:
+		var k = legacy_sprite_scale(b_id)
+		var big = base * k
+		return Rect2(center.x - big * 0.5, center.y + base * 0.5 - big, big, big)
+	# Спрайт стоит опорой на нижней кромке клетки; прозрачные углы допускают ~10% нахлёста
+	var ground = Vector2(center.x, center.y + base * 0.5)
+	var w = sprite.x * 0.96
+	var h = sprite.y * 0.88
+	return Rect2(ground.x - w * 0.5, ground.y - h, w, h)
+
+# Клетки, на которых стоит основание постройки (нижняя часть спрайта): там не растут деревья и цветы
+static func get_covered_tiles(coord: Vector2i, b_id: String, offset: Vector2 = Vector2.ZERO) -> Array[Vector2i]:
+	var result: Array[Vector2i] = [coord]
+	var r = get_visual_rect(coord, b_id, offset)
+	var ground_h = minf(r.size.y, r.size.x * 0.6)
+	var ground = Rect2(r.position.x, r.end.y - ground_h, r.size.x, ground_h)
+	for ty in range(floori(ground.position.y / MAP_TILE_PX), floori(ground.end.y / MAP_TILE_PX) + 1):
+		for tx in range(floori(ground.position.x / MAP_TILE_PX), floori(ground.end.x / MAP_TILE_PX) + 1):
+			var t = Vector2i(tx, ty)
+			if t != coord and ground.has_point(Vector2(tx * MAP_TILE_PX + MAP_TILE_PX * 0.5, ty * MAP_TILE_PX + MAP_TILE_PX * 0.5)):
+				result.append(t)
+	return result
+
+# Старые однотайловые спрайты рисуются крупнее, чтобы не теряться рядом с Composer-зданиями.
+# Заборы, ворота, поля и могилы остаются ровно в клетку — они стыкуются друг с другом.
+const LEGACY_FLAT_TYPES: Array[String] = ["wooden_fence", "wooden_gate", "palisade", "grave", "cemetery", "primitive_garden", "primitive_field", "wheat_field", "orchard", "irrigation_ditch", "fishing_spot"]
+
+static func legacy_sprite_scale(b_id: String) -> float:
+	if b_id in LEGACY_FLAT_TYPES or ComposerBuildings.has_building(b_id):
+		return 1.0
+	return 1.55
+
+# Пересекается ли будущая постройка с уже стоящими (ignore — клетка переносимого здания)
+static func overlaps_existing(coord: Vector2i, b_id: String, offset: Vector2 = Vector2.ZERO, ignore: Vector2i = Vector2i(-99999, -99999)) -> bool:
+	if not GameManager:
+		return false
+	var cand = get_visual_rect(coord, b_id, offset)
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			var n = coord + Vector2i(dx, dy)
+			if n == ignore or not GameManager.tile_buildings.has(n):
+				continue
+			if n == coord:
+				return true
+			var nd: Dictionary = GameManager.tile_buildings[n]
+			var arr = nd.get("visual_offset", [0.0, 0.0])
+			var n_off = Vector2(float(arr[0]), float(arr[1])) if arr is Array and arr.size() >= 2 else Vector2.ZERO
+			if cand.intersects(get_visual_rect(n, String(nd.get("id", "")), n_off)):
+				return true
+	return false
+
 static func get_modes_for_building(b_type: String) -> Array:
 	return BUILDING_MODES.get(b_type, [])
 
+# Мастерская ремесленника 1-й эпохи объединяет кузнечное и плотницкое дело:
+# у неё ветки улучшений кузницы и плотницкой (иначе их нельзя было построить вовсе)
+const UPGRADE_TYPE_ALIASES: Dictionary = {"craft_workshop": ["forge", "carpenter_workshop"]}
+
 static func get_upgrades_for_building(b_type: String) -> Array:
 	var list = []
+	var types: Array = UPGRADE_TYPE_ALIASES.get(b_type, [b_type])
 	for u_id in UPGRADES:
-		if UPGRADES[u_id].get("building_type", "") == b_type:
+		if UPGRADES[u_id].get("building_type", "") in types:
 			list.append(UPGRADES[u_id])
 	if list.is_empty():
 		list = BuildingDB.get_upgrades_for_building(b_type)
@@ -546,3 +610,42 @@ static func get_upgrade(u_id: String) -> Dictionary:
 				return u
 	return {}
 
+
+
+# Подписи эффектов улучшений для интерфейса. "%" — доля (0.25 → +25%), "+" — абсолютная прибавка
+const EFFECT_LABELS: Dictionary = {
+	"woodcutting_speed": ["Скорость рубки", "%"], "carpenter_boost": ["Работа плотников", "%"],
+	"stone_speed": ["Добыча камня", "%"], "ore_chance": ["Шанс найти руду в камне", "%"],
+	"metal_find_chance": ["Шанс найти руду в камне", "%"], "build_speed": ["Скорость стройки", "%"],
+	"archer_damage": ["Урон лучников и охотников", "%"], "hunter_damage": ["Урон охотников", "%"],
+	"smelting_speed": ["Скорость кузнечных заказов", "%"], "durability": ["Прочность новых топоров", "%"],
+	"tool_wear_reduction": ["Износ инструмента", "-%"], "carry_capacity": ["Груз за одну ходку", "%"],
+	"logistics_boost": ["Скорость носильщиков с грузом", "%"], "spoilage_reduction": ["Порча пищи", "-%"],
+	"loyalty_boost": ["Ежедневный рост верности", "+"], "revolt_risk_reduction": ["Вербовка заговорщиков", "-%"],
+	"faith_generation": ["Вера от жрецов", "%"], "training_speed": ["Рост навыков воинов", "%"],
+	"training_xp_gain": ["Опыт тренировок", "%"], "healing_speed": ["Скорость лечения", "%"],
+	"meat_yield": ["Выход мяса", "%"], "butchering_speed": ["Скорость разделки", "%"],
+	"hunt_speed_boost": ["Скорость охоты", "%"], "comfort_capacity": ["Уютных мест", "+"],
+	"max_residents": ["Жильцов", "+"], "domestic_capacity": ["Места для вещей", "+"],
+	"domestic_storage": ["Общая кладовая", "+"], "mood_bonus": ["Настроение", "+"],
+	"cohesion": ["Сплочённость", "+"], "tradition_loyalty": ["Верность традициям", "+"],
+	"yield_bonus": ["Урожай/выход", "%"], "work_speed": ["Скорость работы", "%"],
+	"health_protection": ["Защита здоровья работников", "%"]
+}
+
+static func describe_effects(effects: Dictionary) -> String:
+	var parts: Array[String] = []
+	for k in effects:
+		var v = effects[k]
+		if not EFFECT_LABELS.has(k):
+			continue
+		var lab: Array = EFFECT_LABELS[k]
+		if v is bool:
+			parts.append(String(lab[0]))
+		elif lab[1] == "%":
+			parts.append("%s +%d%%" % [lab[0], int(round(float(v) * 100.0))])
+		elif lab[1] == "-%":
+			parts.append("%s −%d%%" % [lab[0], int(round(float(v) * 100.0))])
+		else:
+			parts.append("%s +%s" % [lab[0], str(v)])
+	return ", ".join(parts)

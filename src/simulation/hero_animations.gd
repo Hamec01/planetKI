@@ -159,9 +159,9 @@ static func draw_king(canvas: CanvasItem, c: CitizenNPC, loop_time: float) -> bo
 	var scale = WORLD_CELL_H / CELL.y
 	var size = CELL * scale
 	var flip = c.facing_dir.x < -0.1 and String(fr["anim"]) in SIDE_VIEW
-	var origin = c.pos
 	var rect = Rect2(Vector2(-size.x * 0.5, -FOOT_Y * scale), size)
-	canvas.draw_set_transform(origin, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+	var motion = ComposerAssets.body_motion(c, "walk" if String(fr["anim"]) == "walk" else "idle", _now(), -1.0 if flip else 1.0)
+	canvas.draw_set_transform_matrix(Transform2D(0.0, c.pos) * motion)
 	canvas.draw_texture_rect_region(tex, rect, src)
 	canvas.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	return true

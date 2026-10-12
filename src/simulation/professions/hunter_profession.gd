@@ -206,7 +206,8 @@ func on_state_tick(s: SettlementData, c: CitizenNPC, delta: float) -> bool:
 	c.work_timer -= delta * c.get_work_speed_multiplier()
 	if c.work_timer <= 0.0:
 		var camp_inst = s._get_hunting_camp_instance(c)
-		var meat_mult = camp_inst.get_meat_yield_mult() if camp_inst else 1.0
+		# Площадка разделки лагеря + открытые силки и луки (технология)
+		var meat_mult = (camp_inst.get_meat_yield_mult() if camp_inst else 1.0) + s.get_bonus("hunt_yield")
 		var fur_bonus = camp_inst.get_fur_bonus() if camp_inst else 0
 		var bone_bonus = camp_inst.get_bone_bonus() if camp_inst else 0
 		# Бонусы площадки разделки зависят от реальной добычи: шкуру можно выделать лучше

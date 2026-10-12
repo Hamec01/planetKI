@@ -28,7 +28,11 @@ func save_game() -> bool:
 				"leader_name": f.leader_name,
 				"color": [f.color.r, f.color.g, f.color.b, f.color.a],
 				"is_player": f.is_player,
-				"active_laws": f.active_laws.duplicate()
+				"active_laws": f.active_laws.duplicate(),
+				"unlocked_techs": f.unlocked_techs.duplicate(),
+				"current_research_tech": f.current_research_tech,
+				"research_progress": f.research_progress,
+				"research_saved": f.research_saved.duplicate()
 			}
 
 	# Сохранение зданий на плитках и экземпляров BuildingInstance
@@ -193,6 +197,10 @@ func load_game(_slot: String = "") -> bool:
 				var col = Color(c_arr[0], c_arr[1], c_arr[2], c_arr[3]) if c_arr.size() == 4 else Color.WHITE
 				var new_f = FactionData.new(f_id, fd.get("name", ""), fd.get("leader_name", ""), col, fd.get("is_player", false))
 				new_f.active_laws.assign(fd.get("active_laws", new_f.active_laws))
+				new_f.unlocked_techs.assign(fd.get("unlocked_techs", []))
+				new_f.current_research_tech = String(fd.get("current_research_tech", new_f.current_research_tech))
+				new_f.research_progress = float(fd.get("research_progress", 0.0))
+				new_f.research_saved = fd.get("research_saved", {}).duplicate()
 				GameManager.factions[f_id] = new_f
 				
 	GameManager.star_system_data = data.get("star_system_data", {})

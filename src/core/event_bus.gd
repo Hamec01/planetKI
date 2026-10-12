@@ -70,6 +70,7 @@ signal history_entry_added(year: int, title: String, description: String, catego
 signal notification_toast(title: String, message: String, type: String)
 signal map_mode_changed(mode_name: String)
 signal ruler_died(ruler_name: String, killer_name: String)
+signal hero_attack_order(world_pos: Vector2) # ЛКМ в Режиме Короля — удар
 signal game_over(reason: String)
 signal roster_requested()
 signal cemetery_memorial_requested(settlement: RefCounted, building_inst: RefCounted)

@@ -16,30 +16,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# Media & Heavy Asset Directories (Code-only repo)
-Assets/
-Buildings/
-Characters/
-GUI/
-Icons/
-Tilemaps/
-tiles/
-tilemap/
-spriteframes/
-spritesheets/
-dock/
-addons/
-@icons picker.html
-
-# Raw binary media files
-*.png
-*.jpg
-*.jpeg
-*.svg
-*.webp
-*.gif
-# Исключение: лист анимаций Короля (нарезан из присланного спрайта, фон убран — art/hero/cut_king_sheet.py)
-!art/hero/king_sheet.png
+# Спрайты, тайлы и манифесты Composer теперь хранятся в репозитории (проект запускается из клона).
+# Импорт-кэш Godot (*.import, .godot/) пересоздаётся редактором и не хранится.
 *.wav
 *.ogg
 *.mp3
@@ -49,3 +27,7 @@ addons/
 *.aseprite
 *.zip
 *.tar.gz
+
+# Отладочные скрипты и сборки
+scratch/
+build/

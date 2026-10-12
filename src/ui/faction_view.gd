@@ -206,11 +206,13 @@ func _get_building_build_status(b_id: String) -> String:
 func _refresh_tech(f: FactionData) -> void:
 	if f.current_research_tech != "":
 		var cur_t = TechTree.get_tech(f.current_research_tech)
-		current_tech_label.text = "Изучается: %s (%.1f / %.1f очков знаний)" % [cur_t["name"], f.research_progress, cur_t["cost"]]
+		var left = maxf(0.0, float(cur_t["cost"]) - f.research_progress)
+		var eta = ("≈ %d дн." % int(ceil(left / f.last_research_rate))) if f.last_research_rate > 0.0 else "—"
+		current_tech_label.text = "Изучается: %s (%.1f / %.1f очков знаний, +%.1f в день, осталось %s)" % [cur_t["name"], f.research_progress, cur_t["cost"], f.last_research_rate, eta]
 		tech_progress_bar.max_value = cur_t["cost"]
 		tech_progress_bar.value = f.research_progress
 	else:
-		current_tech_label.text = "Исследование не выбрано"
+		current_tech_label.text = "Исследование не выбрано — мудрецы простаивают. Выберите тему ниже."
 		tech_progress_bar.value = 0
 		
 	for child in tech_list.get_children():
@@ -221,20 +223,35 @@ func _refresh_tech(f: FactionData) -> void:
 		var row = HBoxContainer.new()
 		var is_unlocked = f.unlocked_techs.has(t_id)
 		var is_current = (f.current_research_tech == t_id)
+		var available = f.can_research(t_id)
 		
 		var lbl = Label.new()
-		var status_icon = "✅ " if is_unlocked else ("🔬 " if is_current else "🔒 ")
-		lbl.text = "%s %s (Цена: %d зн.)\n%s" % [status_icon, t["name"], int(t["cost"]), t["description"]]
+		var status_icon = "✅ " if is_unlocked else ("🔬 " if is_current else ("📜 " if available else "🔒 "))
+		var extra = ""
+		if not is_unlocked and not available:
+			var missing: Array[String] = []
+			for req in t.get("unlocked_by", []):
+				if not f.unlocked_techs.has(req):
+					missing.append(TechTree.get_tech(req).get("name", req))
+			extra = "
+Требуется открыть: " + ", ".join(missing)
+		elif f.research_saved.has(t_id):
+			extra = "
+Накоплено: %.1f зн." % float(f.research_saved[t_id])
+		lbl.text = "%s %s (Цена: %d зн.)
+%s%s" % [status_icon, t["name"], int(t["cost"]), t["description"], extra]
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if not is_unlocked and not available:
+			lbl.modulate = Color(1, 1, 1, 0.55)
 		row.add_child(lbl)
 		
-		if not is_unlocked and not is_current:
+		if available and not is_current:
 			var btn = Button.new()
 			btn.text = "Исследовать"
 			btn.pressed.connect(func():
-				f.current_research_tech = t_id
-				f.research_progress = 0.0
-				_refresh_tech(f)
+				if f.set_research(t_id):
+					_refresh_tech(f)
 			)
 			row.add_child(btn)
 			

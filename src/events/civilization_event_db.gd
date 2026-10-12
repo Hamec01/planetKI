@@ -20,7 +20,7 @@ const EVENTS: Dictionary = {
 		"once": true,
 		"exclusive_group": "burial_practice",
 		"description": "В племени случилась первая смерть соплеменника. Семьи растеряны и спорят у костра: как проводить умершего, чтобы не навлечь беду на живых?",
-		"conditions": { "min_days": 1 },
+		"conditions": { "min_days": 1, "requires_death": true },
 		"npc_reactions": [
 			{
 				"filter": "cohort == 'elder' or personality == 'keeper'",
@@ -111,7 +111,7 @@ const EVENTS: Dictionary = {
 		"once": true,
 		"exclusive_group": "cannibalism_taboo",
 		"description": "После трудных дней без добычи охотники принесли тело погибшего. Старик Варн мрачно говорит: «Мёртвому еда не нужна. Живые ещё могут пережить стужу». Другие семьи в ужасе требуют запретить даже мысль об этом.",
-		"conditions": { "min_days": 8 },
+		"conditions": { "min_days": 8, "requires_death": true, "food_less_than": 30.0 },
 		"npc_reactions": [
 			{
 				"filter": "personality == 'caretaker' or traits.empathy >= 60",
@@ -386,7 +386,7 @@ const EVENTS: Dictionary = {
 		"once": true,
 		"exclusive_group": "justice_system",
 		"description": "В ночной ссоре у костра охотник убил соплеменника из соседнего рода. Родичи погибшего хватаются за копья, требуя крови убийцы. Племя на грани междоусобицы.",
-		"conditions": { "min_days": 20 },
+		"conditions": { "min_days": 20, "requires_deed": "murder" },
 		"choices": [
 			{
 				"id": "A",
@@ -608,7 +608,7 @@ const EVENTS: Dictionary = {
 		"once": true,
 		"exclusive_group": "gender_roles",
 		"description": "Девушка Мира метко поразила вепря копьём, превзойдя лучших охотников. Она требует права полноправно ходить на охоту и защищать стоянку. Мужчины родов спорят: «Охота и война — не женское дело».",
-		"conditions": { "min_days": 16 },
+		"conditions": { "min_days": 16, "requires_female_hunter": true },
 		"choices": [
 			{
 				"id": "A",
@@ -692,7 +692,7 @@ const EVENTS: Dictionary = {
 		"once": true,
 		"exclusive_group": "slavery_model",
 		"description": "После пограничной стычки воины привели троих связанных чужаков. Дружинники требуют заставить их таскать камни и рубить лес, но старейшины сомневаются.",
-		"conditions": { "min_days": 26 },
+		"conditions": { "min_days": 26, "requires_war": true },
 		"choices": [
 			{
 				"id": "A",

@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "atlasSize": [
+    1536,
+    1024
+  ],
+  "frameSize": [
+    600,
+    560
+  ],
+  "states": [
+    "foundation",
+    "half_built",
+    "complete",
+    "damaged",
+    "ruined"
+  ],
+  "buildings": [
+    {
+      "id": "tannery",
+      "name": "Кожевенная мастерская",
+      "file": "tannery.png",
+      "scale": 3,
+      "frames": [
+        [
+          11,
+          174,
+          493,
+          351
+        ],
+        [
+          510,
+          50,
+          516,
+          483
+        ],
+        [
+          1028,
+          44,
+          503,
+          492
+        ],
+        [
+          13,
+          532,
+          511,
+          464
+        ],
+        [
+          521,
+          611,
+          539,
+          391
+        ]
+      ],
+      "gameMapping": "tannery",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "seed_store",
+      "name": "Свайный амбар семян",
+      "file": "seed_store.png",
+      "scale": 4,
+      "frames": [
+        [
+          28,
+          156,
+          484,
+          354
+        ],
+        [
+          547,
+          49,
+          454,
+          457
+        ],
+        [
+          1046,
+          20,
+          464,
+          491
+        ],
+        [
+          33,
+          517,
+          476,
+          471
+        ],
+        [
+          532,
+          638,
+          479,
+          352
+        ]
+      ],
+      "gameMapping": "seed_store",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "great_lodge",
+      "name": "Большой дом рода",
+      "file": "great_lodge.png",
+      "scale": 4,
+      "frames": [
+        [
+          16,
+          141,
+          502,
+          316
+        ],
+        [
+          522,
+          47,
+          506,
+          417
+        ],
+        [
+          1024,
+          33,
+          506,
+          432
+        ],
+        [
+          59,
+          529,
+          563,
+          462
+        ],
+        [
+          681,
+          618,
+          574,
+          376
+        ]
+      ],
+      "gameMapping": "great_lodge",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "foraging_post",
+      "name": "Стоянка собирателей",
+      "file": "foraging_post.png",
+      "scale": 3,
+      "frames": [
+        [
+          29,
+          69,
+          469,
+          370
+        ],
+        [
+          542,
+          58,
+          464,
+          384
+        ],
+        [
+          1053,
+          35,
+          451,
+          420
+        ],
+        [
+          36,
+          545,
+          461,
+          422
+        ],
+        [
+          540,
+          640,
+          464,
+          326
+        ]
+      ],
+      "gameMapping": "foraging_post",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "hunting_camp",
+      "name": "Охотничий лагерь",
+      "file": "hunting_camp.png",
+      "scale": 3,
+      "frames": [
+        [
+          18,
+          141,
+          497,
+          322
+        ],
+        [
+          524,
+          98,
+          496,
+          361
+        ],
+        [
+          1034,
+          98,
+          498,
+          364
+        ],
+        [
+          15,
+          533,
+          502,
+          377
+        ],
+        [
+          519,
+          573,
+          513,
+          344
+        ]
+      ],
+      "gameMapping": "hunting_camp",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "quern_house",
+      "name": "Дом ручных жерновов",
+      "file": "quern_house.png",
+      "scale": 3,
+      "frames": [
+        [
+          20,
+          160,
+          489,
+          315
+        ],
+        [
+          533,
+          11,
+          480,
+          473
+        ],
+        [
+          1046,
+          10,
+          480,
+          474
+        ],
+        [
+          20,
+          529,
+          493,
+          467
+        ],
+        [
+          529,
+          618,
+          508,
+          380
+        ]
+      ],
+      "gameMapping": "quern_house",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    },
+    {
+      "id": "bakery",
+      "name": "Пекарня",
+      "file": "bakery.png",
+      "scale": 3,
+      "frames": [
+        [
+          3,
+          132,
+          493,
+          315
+        ],
+        [
+          516,
+          54,
+          501,
+          408
+        ],
+        [
+          1031,
+          34,
+          500,
+          433
+        ],
+        [
+          3,
+          536,
+          503,
+          445
+        ],
+        [
+          514,
+          611,
+          512,
+          370
+        ]
+      ],
+      "gameMapping": "bakery",
+      "layersReady": true,
+      "interactionReady": false,
+      "layerFile": "layers.json",
+      "layerStates": [
+        "complete"
+      ]
+    }
+  ]
+}

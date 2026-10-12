@@ -120,6 +120,8 @@ static func _recruit(s: SettlementData, ruler: CitizenNPC, leader: CitizenNPC) -
 				chance -= 0.2
 		if hates:
 			chance += 0.25
+		# Палата совета старейшин гасит смуту: заговорщикам труднее найти сторонников
+		chance *= clampf(1.0 - s.get_bonus("revolt_risk_reduction"), 0.2, 1.0)
 		if randf() < clampf(chance, 0.05, 0.9):
 			members.append(c.citizen_id)
 			c.add_memory("conspiracy", leader.citizen_id, ruler.citizen_id, 1.0, "%s позвал меня в заговор против вождя" % leader.name, true)

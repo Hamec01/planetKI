@@ -70,7 +70,8 @@ func pick_task(s: SettlementData, c: CitizenNPC, _delta: float) -> bool:
 
 func on_arrived(s: SettlementData, c: CitizenNPC) -> bool:
 	c.state = CitizenNPC.State.WORKING
-	c.work_timer = randf_range(3.0, 4.5)
+	# Укреплённые кирки кузницы и обработка кремня ускоряют удары кайлом
+	c.work_timer = randf_range(3.0, 4.5) / (1.0 + s.get_bonus("stone_speed"))
 	c.last_status_reason = s._get_job_action_name(c.job_id)
 	start_task_timer(c)
 	return true
@@ -81,12 +82,19 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 	if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
 		var rock_node = GameManager.resource_manager.nodes.get(c.target_coord, {})
 		res_cat = rock_node.get("category", res_cat)
-		h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, STRIKE_AMOUNT)
+		h_amount = GameManager.resource_manager.harvest_from_node(c.target_coord, STRIKE_AMOUNT * (1.0 + s.get_bonus("stone_speed")))
 		GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 	if h_amount > 0.0:
 		c.cargo_type = res_cat
 		c.cargo_amount = h_amount
 		c.add_work_xp("ore_mining" if res_cat == "metal" else "stone_mining", 0.3)
+		# Глубокие шахты и закалённые кирки: в отколотой породе иногда попадается самородная руда
+		var ore_chance = s.get_bonus("ore_chance") + s.get_bonus("metal_find_chance")
+		if res_cat == "stone" and ore_chance > 0.0 and randf() < ore_chance:
+			s.deposit_resource("metal", 1.0, c.name)
+			c.last_status_reason = "Нашёл в породе самородок руды"
+			if s.is_player_settlement():
+				EventBus.notification_toast.emit("Находка в каменоломне", "%s нашёл самородок руды в отколотом камне" % c.name, "good")
 	c.target_coord = Vector2i(-1, -1)
 	send_to(c, s._get_storage_pos(c), CitizenNPC.State.CARRYING, "Несёт %d %s на склад" % [int(c.cargo_amount), "руды" if c.cargo_type == "metal" else "камня"])
 	if GameManager.task_service and c.task_instance_id != "":

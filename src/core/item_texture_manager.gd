@@ -12,6 +12,13 @@ static func get_icon(name: String) -> Texture2D:
 		if native_icon:
 			_cache[name] = native_icon
 			return native_icon
+	
+	# Проверка ассетов инструментов и предметов из ComposerBuildings
+	if ComposerBuildings.ready_pack() and ComposerBuildings.has_upgrade(name):
+		var comp_icon = ComposerBuildings.get_upgrade_atlas_texture(name)
+		if comp_icon:
+			_cache[name] = comp_icon
+			return comp_icon
 		
 	var path = _resolve_path(name)
 	if path != "" and ResourceLoader.exists(path):

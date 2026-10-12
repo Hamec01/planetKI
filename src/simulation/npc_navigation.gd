@@ -154,7 +154,7 @@ func find_path(from_world: Vector2, to_world: Vector2, allow_dest_solid: bool = 
 		
 	if cell_path.is_empty():
 		# Путь не найден (например, изолированный остров)
-		return []
+		return result
 		
 	for p in cell_path:
 		# Преобразуем координаты сетки в центр клетки
@@ -219,7 +219,8 @@ func find_adjacent_path(from_world: Vector2, target_tile: Vector2i) -> Array[Vec
 	
 	# Если житель уже стоит вплотную к точке контакта
 	if from_world.distance_to(contact_pos) <= 2.5:
-		return [contact_pos]
+		var direct_path: Array[Vector2] = [contact_pos]
+		return direct_path
 		
 	return find_path(from_world, contact_pos, false)
 

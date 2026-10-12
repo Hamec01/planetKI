@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "rig": "chibi_token_v1",
+  "slot": "token_main",
+  "bone": "token_weapon",
+  "coordinateSystem": "sourceRect-local pixels, rotation degrees clockwise, Y down",
+  "items": [
+    { "id": "digging_stick", "assetId": "agriculture__digging_stick", "length": 145, "grip": [73, 95], "rotation": 35, "carryAction": "walk" },
+    { "id": "stone_hoe", "assetId": "agriculture__stone_hoe", "length": 135, "grip": [225, 270], "rotation": 39, "carryAction": "walk" },
+    { "id": "wooden_hoe", "assetId": "agriculture__wooden_hoe", "length": 135, "grip": [208, 80], "rotation": -28, "carryAction": "walk" },
+    { "id": "flint_sickle", "assetId": "agriculture__flint_sickle", "length": 85, "grip": [280, 850], "rotation": 0, "carryAction": "walk" },
+    { "id": "threshing_flail", "assetId": "agriculture__threshing_flail", "length": 145, "grip": [46, 252], "rotation": -25, "carryAction": "walk" },
+    { "id": "winnowing_sieve", "assetId": "agriculture__winnowing_sieve", "length": 80, "grip": [45, 130], "rotation": 0, "carryAction": "walk" }
+  ],
+  "worldEquipment": [
+    { "id": "wooden_ard", "assetId": "agriculture__wooden_ard", "reason": "Ground implement; attach to field task and draught animal, not token_main" },
+    { "id": "ox_yoke", "assetId": "agriculture__ox_yoke", "reason": "Draught animal harness; not a handheld chibi item" }
+  ]
+}

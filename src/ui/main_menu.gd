@@ -20,6 +20,14 @@ func _ready() -> void:
 		get_tree().change_scene_to_file("res://src/editor/map_editor.tscn")
 	)
 	exit_btn.pressed.connect(func(): get_tree().quit())
+	# Тестовый бой: небольшая поляна, Король + 10 воинов против 10 воинов другого племени
+	var battle_btn = Button.new()
+	battle_btn.text = "⚔ Тестовый бой: стенка на стенку (10 на 10)"
+	battle_btn.custom_minimum_size = new_game_btn.custom_minimum_size
+	battle_btn.tooltip_text = "Небольшая карта: ваше племя с Королём против Чёрного Волка. Всем выдаётся случайное оружие — мечи, топоры, копья, луки, щиты."
+	battle_btn.pressed.connect(func(): BattleTest.start_from_menu(get_tree()))
+	map_editor_btn.get_parent().add_child(battle_btn)
+	map_editor_btn.get_parent().move_child(battle_btn, map_editor_btn.get_index())
 	
 	continue_btn.disabled = not SaveSystem.has_save_file()
 
@@ -28,6 +36,7 @@ func _on_new_game() -> void:
 	if seed_val == "":
 		seed_val = GameManager._generate_random_seed()
 	GameManager.world_seed = seed_val
+	GameManager.battle_test_mode = false
 	get_tree().change_scene_to_file("res://src/game.tscn")
 
 func _on_continue() -> void:

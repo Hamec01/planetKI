@@ -55,6 +55,7 @@ func _get_map_font() -> Font:
 	return _map_font
 
 func _ready() -> void:
+	EventBus.building_placed_on_map.connect(_on_building_placed_fx)
 	TileTextureManager.load_all_textures()
 	BuildingTextureManager.load_all_textures()
 	
@@ -308,7 +309,34 @@ func resolve_hero_target(m_world: Vector2) -> Dictionary:
 			return {"kind": "flowers", "coord": coord, "marker": Vector2(coord.x * TILE_SIZE + 16.0, coord.y * TILE_SIZE + 16.0)}
 	return {"kind": "ground", "marker": m_world}
 
+# Отклик закладки здания: пыль и «удар» фундамента о землю
+var place_fx: Array[Dictionary] = []
+const PLACE_FX_TIME: float = 0.7
+
+func _on_building_placed_fx(b_id: String, coord: Vector2i) -> void:
+	var r = BuildingSystem.get_visual_rect(coord, b_id, _get_visual_offset_from_tile_data(GameManager.tile_buildings.get(coord, {})))
+	place_fx.append({"ground": Vector2(r.get_center().x, r.end.y - 2.0), "w": r.size.x, "t": 0.0, "seed": randi()})
+	GameManager.camera_shake = maxf(GameManager.camera_shake, 0.2)
+
+func _draw_place_fx() -> void:
+	for fx in place_fx:
+		var k = clampf(fx["t"] / PLACE_FX_TIME, 0.0, 1.0)
+		var g: Vector2 = fx["ground"]
+		var w = float(fx["w"])
+		# Кольцо пыли расходится и тает
+		_draw_ground_shadow(g, w * (0.35 + k * 0.45), Color(0.62, 0.52, 0.38, 0.45 * (1.0 - k)), 0.38)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = int(fx["seed"])
+		for i in range(10):
+			var ang = rng.randf_range(0.0, TAU)
+			var dist = w * (0.25 + k * rng.randf_range(0.3, 0.6))
+			var p = g + Vector2(cos(ang) * dist, sin(ang) * dist * 0.4 - sin(k * PI) * rng.randf_range(2.0, 6.0))
+			draw_circle(p, (1.0 - k) * rng.randf_range(1.0, 2.2), Color(0.75, 0.66, 0.5, 0.8 * (1.0 - k)))
+
 func _process(delta: float) -> void:
+	for fx in place_fx:
+		fx["t"] += delta
+	place_fx = place_fx.filter(func(f): return f["t"] < PLACE_FX_TIME)
 	if hero_move_marker_time > 0.0:
 		hero_move_marker_time = maxf(0.0, hero_move_marker_time - delta)
 		queue_redraw()
@@ -541,8 +569,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			queue_redraw()
 			return
-		# Левый клик в Режиме Короля не открывает окна стратегии (постройки, жители, клетки)
+		# ЛКМ в Режиме Короля — удар в сторону курсора (окна стратегии не открываются)
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				EventBus.hero_attack_order.emit(get_global_mouse_position())
 			get_viewport().set_input_as_handled()
 			return
 
@@ -910,9 +940,7 @@ func _get_building_footprint_size(b_id: String) -> Vector2:
 	return Vector2(s, s)
 
 func _get_building_visual_rect(coord: Vector2i, b_id: String, offset: Vector2) -> Rect2:
-	var center = Vector2(coord.x * TILE_SIZE + TILE_SIZE * 0.5, coord.y * TILE_SIZE + TILE_SIZE * 0.5) + offset
-	var size = _get_building_footprint_size(b_id)
-	return Rect2(center - size * 0.5, size)
+	return BuildingSystem.get_visual_rect(coord, b_id, offset)
 
 func _get_visual_offset_from_tile_data(b_data: Dictionary) -> Vector2:
 	var arr = b_data.get("visual_offset", [0.0, 0.0])
@@ -948,19 +976,8 @@ func _can_place_building_at(coord: Vector2i, b_id: String, offset: Vector2 = Vec
 		return {"valid": false, "reason": "❌ Не хватает ресурсов для стройки"}
 
 	# Реальная проверка пересечения спрайтов с соседними постройками (а не просто "занята ли клетка")
-	var candidate_rect = _get_building_visual_rect(coord, b_id, offset)
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
-			if dx == 0 and dy == 0:
-				continue
-			var n_coord = coord + Vector2i(dx, dy)
-			if not GameManager.tile_buildings.has(n_coord):
-				continue
-			var n_data = GameManager.tile_buildings[n_coord]
-			var n_offset = _get_visual_offset_from_tile_data(n_data)
-			var n_rect = _get_building_visual_rect(n_coord, n_data.get("id", ""), n_offset)
-			if candidate_rect.intersects(n_rect):
-				return {"valid": false, "reason": "❌ Здание перекрывает соседнюю постройку"}
+	if BuildingSystem.overlaps_existing(coord, b_id, offset):
+		return {"valid": false, "reason": "❌ Здание перекрывает соседнюю постройку — отодвиньте подальше"}
 
 	return {"valid": true, "reason": "✅ ЛКМ: Заложить фундамент", "cost": b_info["cost"], "name": b_info["name"]}
 
@@ -1053,7 +1070,9 @@ func _draw() -> void:
 				
 			# Водные тайлы теперь рисуются отдельным WaterRenderLayer (анимированный шейдер), см. water.gdshader
 			if tex and not tile.get("is_water", false):
-				draw_texture_rect(tex, rect, false, mod_color)
+				# Нижний ряд пикселей базовых тайлов светлее — без него на траве нет полос-«швов»
+				var t_size = tex.get_size()
+				draw_texture_rect_region(tex, rect, Rect2(0, 0, t_size.x, t_size.y - 1), mod_color)
 			elif not tex and not tile.get("is_water", false):
 				var biome_info = BiomeDefinitions.get_biome_info(tile["biome"])
 				var b_col = biome_info["color"]
@@ -1080,10 +1099,17 @@ func _draw() -> void:
 	var y_entities: Array[Dictionary] = []
 
 	# 1. Природные объекты (деревья, скалы, кустарники, трава, цветы, грибы)
+	# Под основанием больших построек ничего не растёт — иначе деревья торчат сквозь стены
+	var covered_by_buildings: Dictionary = {}
+	for b_coord in GameManager.tile_buildings:
+		if b_coord.x >= min_tx - 3 and b_coord.x <= max_tx + 3 and b_coord.y >= min_ty - 3 and b_coord.y <= max_ty + 3:
+			var cb_data: Dictionary = GameManager.tile_buildings[b_coord]
+			for ct in BuildingSystem.get_covered_tiles(b_coord, String(cb_data.get("id", "")), _get_visual_offset_from_tile_data(cb_data)):
+				covered_by_buildings[ct] = true
 	for y in range(min_ty, max_ty + 1):
 		for x in range(min_tx, max_tx + 1):
 			var tile = tiles[y][x]
-			if tile["settlement_id"] != "" or GameManager.tile_buildings.has(Vector2i(x, y)):
+			if tile["settlement_id"] != "" or covered_by_buildings.has(Vector2i(x, y)):
 				continue
 			var custom_nat = tile.get("nature_object", "")
 			var n_data = TileTextureManager.get_nature_data(tile["biome"], tile["coord"], tile.get("resource", null), custom_nat)
@@ -1110,12 +1136,30 @@ func _draw() -> void:
 			var c = Vector2(coord.x * TILE_SIZE + 16, coord.y * TILE_SIZE + 16) + _get_visual_offset_from_tile_data(b_data)
 			var foot_y = c.y + b_size * 0.5 + b_offset_y
 			y_entities.append({
-				"y": foot_y,
+				"y": foot_y + _composer_back_sort_offset(b_id) if _composer_has_complete_layers(coord, b_data) else foot_y,
 				"x": c.x,
 				"type": "building",
 				"coord": coord,
 				"b_data": b_data
 			})
+			if _composer_has_complete_layers(coord, b_data):
+				y_entities.append({"y": foot_y, "x": c.x, "type": "composer_front", "coord": coord, "b_data": b_data, "ground_pos": Vector2(c.x, foot_y)})
+			if ComposerBuildings.ready_pack() and ComposerBuildings.has_building(b_id):
+				var b_inst_cand: BuildingInstance = _composer_building_instance(coord)
+				if b_inst_cand and b_data.get("status", "active") != "constructing":
+					for u_id in b_inst_cand.unlocked_upgrades:
+						if _composer_has_complete_layers(coord, b_data) and ComposerBuildings.is_interior_upgrade(u_id):
+							var interior_pos: Vector2 = Vector2(c.x, foot_y) + _composer_interior_offset(u_id) * ComposerBuildings.UNIT_SCALE
+							y_entities.append({"y": interior_pos.y, "x": interior_pos.x, "type": "composer_upgrade", "upgrade_id": u_id, "ground_pos": interior_pos})
+						if ComposerBuildings.is_yard_upgrade(u_id):
+							var u_off = ComposerBuildings.get_yard_offset(u_id)
+							y_entities.append({
+								"y": foot_y + u_off.y,
+								"x": c.x + u_off.x,
+								"type": "composer_upgrade",
+								"upgrade_id": u_id,
+								"ground_pos": Vector2(c.x + u_off.x, foot_y + u_off.y)
+							})
 
 	# 3. Центры поселений (хаб / костер / дом старейшин)
 	for s_id in GameManager.settlements:
@@ -1219,6 +1263,10 @@ func _draw() -> void:
 				_draw_single_nature_object(entity["n_data"], entity["c"], entity["y"])
 			"building":
 				_draw_single_building(entity["coord"], entity["b_data"])
+			"composer_front":
+				ComposerSettlementDetails.draw_front(self, String(entity["b_data"]["id"]), entity["ground_pos"], _composer_interior_open(entity["coord"], entity["b_data"], entity["ground_pos"]))
+			"composer_upgrade":
+				_draw_single_composer_upgrade(entity["upgrade_id"], entity["ground_pos"])
 			"settlement_hub":
 				_draw_single_settlement_hub(entity["rect"], entity["s"])
 			"npc_decoration":
@@ -1279,11 +1327,46 @@ func _draw() -> void:
 	if selected_animal_id != "":
 		_draw_selected_animal_highlight()
 
+	if not place_fx.is_empty():
+		_draw_place_fx()
+	# 8b. Подсказка взаимодействия Короля: что сделает E
+	if GameManager.hero_control_active and not GameManager.hero_prompt.is_empty():
+		_draw_hero_prompt(GameManager.hero_prompt)
+
 	# 9. Метка приказа движения вождю (ПКМ в режиме «Путь вождя»)
 	if hero_move_marker_time > 0.0:
 		var k = hero_move_marker_time / 0.6
 		var mc = hero_move_marker_color
 		draw_arc(hero_move_marker_pos, 4.0 + (1.0 - k) * 10.0, 0.0, TAU, 20, Color(mc.r, mc.g, mc.b, k), 2.0)
+
+# Кольцо под целью и табличка «[E] Действие · Имя»; размер таблички не зависит от зума
+func _draw_hero_prompt(t: Dictionary) -> void:
+	var pos: Vector2 = t.get("marker", Vector2.ZERO)
+	var pulse = 0.5 + 0.5 * sin(anim_time * 6.0)
+	_draw_ground_shadow(pos + Vector2(0, 1), 7.0 + pulse * 1.5, Color(1.0, 0.85, 0.35, 0.18 + 0.12 * pulse), 0.5)
+	draw_set_transform(Vector2(0.0, (pos.y + 1.0) * 0.5), 0.0, Vector2(1.0, 0.5))
+	draw_arc(pos + Vector2(0, 1), 8.0 + pulse * 1.5, 0.0, TAU, 28, Color(1.0, 0.85, 0.35, 0.85), 1.2, true)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var font = _get_map_font()
+	var cam = get_viewport().get_camera_2d()
+	var k = 1.0 / maxf(0.5, cam.zoom.x if cam else 1.0)
+	var anchor = pos + Vector2(0, -16.0)
+	draw_set_transform(anchor * (1.0 - k), 0.0, Vector2(k, k))
+	var action_text = String(t.get("label", ""))
+	var name_text = String(t.get("name", ""))
+	var text = action_text + ("  ·  " + name_text if name_text != "" else "")
+	var fs = 15
+	var tw = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var key_w = 24.0
+	var w = tw + key_w + 22.0
+	var box = Rect2(anchor.x - w * 0.5, anchor.y - 34.0, w, 28.0)
+	draw_rect(box, Color(0.07, 0.06, 0.05, 0.88))
+	draw_rect(box, Color(0.95, 0.75, 0.35, 0.9), false, 1.5)
+	var key_box = Rect2(box.position.x + 6.0, box.position.y + 4.0, key_w, 20.0)
+	draw_rect(key_box, Color(0.95, 0.78, 0.35, 1.0))
+	draw_string(font, key_box.position + Vector2(6.5, 15.5), "E", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.1, 0.07, 0.03))
+	draw_string(font, Vector2(key_box.end.x + 8.0, box.position.y + 19.5), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.95, 0.85))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # --- ОТРИСОВКА ОДНОГО ПРИРОДНОГО ОБЪЕКТА (ДЕРЕВО / КАМЕНЬ / КУСТ) ---
 func _draw_single_nature_object(n_data: Dictionary, c: Vector2, foot_y: float) -> void:
@@ -1302,15 +1385,26 @@ func _draw_single_nature_object(n_data: Dictionary, c: Vector2, foot_y: float) -
 
 	var n_rect = Rect2(c.x - target_w * 0.5, foot_y - target_h, target_w, target_h)
 	var flip_h = (variant_seed % 2) == 0
-	if flip_h:
-		n_rect = Rect2(n_rect.position + Vector2(n_rect.size.x, 0), Vector2(-n_rect.size.x, n_rect.size.y))
 
-	# Мягкая эллиптическая тень под основанием
-	var shadow_radius = target_w * (0.30 if n_data.get("category", "") == "tree" else 0.40)
-	draw_circle(Vector2(c.x, foot_y - 1.0), absf(shadow_radius), Color(0, 0, 0, 0.22))
+	# Мягкая эллиптическая тень под основанием (только у объёмных объектов, не у цветов и травы)
+	var cat = String(n_data.get("category", ""))
+	if cat in ["tree", "rock", "stone", "bush", "boulder"] or target_h >= 18.0:
+		var shadow_radius = target_w * (0.30 if cat == "tree" else 0.38)
+		_draw_ground_shadow(Vector2(c.x, foot_y - 1.0), absf(shadow_radius), Color(0, 0, 0, 0.20))
 
 	var brightness = 0.92 + float(variant_seed % 17) / 100.0
+	# Зеркалим через трансформацию холста: прямоугольник с отрицательной шириной не рисуется
+	if flip_h:
+		draw_set_transform(Vector2(c.x * 2.0, 0.0), 0.0, Vector2(-1.0, 1.0))
 	draw_texture_rect(n_tex, n_rect, false, Color(brightness, brightness, brightness))
+	if flip_h:
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+# Сплюснутая тень на земле (эллипс вместо круга — без «пятен» на траве)
+func _draw_ground_shadow(center: Vector2, radius: float, color: Color, flatten: float = 0.42) -> void:
+	draw_set_transform(Vector2(0.0, center.y * (1.0 - flatten)), 0.0, Vector2(1.0, flatten))
+	draw_circle(center, radius, color)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # --- ОТРИСОВКА ПРОТОПТАННЫХ ТРОПИНОК МЕЖДУ ДОМАМИ И КОСТРОМ ---
 func _draw_beaten_footpaths() -> void:
@@ -1331,19 +1425,36 @@ func _draw_beaten_footpaths() -> void:
 			for pt in pts:
 				if pt is Vector2:
 					packed_pts.append(pt)
-				var is_hub = (p_data.get("type", "") == "hub")
-				# Мягкая естественная тропинка (утоптанная земля)
-				draw_polyline(packed_pts, Color(0.48, 0.40, 0.28, 0.22 if is_hub else 0.16), 2.0 if is_hub else 1.5, true)
+			if packed_pts.size() < 2:
+				continue
+			var is_hub = (p_data.get("type", "") == "hub")
+			# Мягкая естественная тропинка (утоптанная земля)
+			draw_polyline(packed_pts, Color(0.48, 0.40, 0.28, 0.22 if is_hub else 0.16), 2.0 if is_hub else 1.5, true)
 
 	# 2. Протоптанные клетки от частого передвижения жителей (GameManager.trample_map)
 	if GameManager.trample_map:
-		for coord in GameManager.trample_map:
-			var wear = float(GameManager.trample_map[coord])
-			if wear >= 0.15:
-				var center = Vector2(coord.x * TILE_SIZE + 16, coord.y * TILE_SIZE + 16)
-				var radius = 6.0 + wear * 6.0
-				var alpha = clampf(wear * 0.45, 0.12, 0.40)
-				draw_circle(center, radius, Color(0.52, 0.40, 0.26, alpha))
+		# Соседние протоптанные клетки соединяются полосой — получается тропа, а не россыпь кругов
+		var tm: Dictionary = GameManager.trample_map
+		for coord in tm:
+			var wear = float(tm[coord])
+			if wear < 0.15:
+				continue
+			var center = Vector2(coord.x * TILE_SIZE + 16, coord.y * TILE_SIZE + 16)
+			var width = 3.0 + wear * 4.0
+			var alpha = clampf(wear * 0.30, 0.08, 0.26)
+			var col = Color(0.50, 0.40, 0.27, alpha)
+			var linked = false
+			for nb in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]:
+				var n_wear = float(tm.get(coord + nb, 0.0))
+				if n_wear >= 0.15:
+					# Диагональ рисуем, только если нет прямого соединения (иначе двойная тропа)
+					if nb.x != 0 and nb.y != 0 and (float(tm.get(coord + Vector2i(nb.x, 0), 0.0)) >= 0.15 or float(tm.get(coord + Vector2i(0, nb.y), 0.0)) >= 0.15):
+						continue
+					var n_center = Vector2((coord.x + nb.x) * TILE_SIZE + 16, (coord.y + nb.y) * TILE_SIZE + 16)
+					draw_line(center, n_center, Color(col.r, col.g, col.b, minf(alpha, clampf(n_wear * 0.30, 0.08, 0.26))), minf(width, 3.0 + n_wear * 4.0), true)
+					linked = true
+			if not linked:
+				_draw_ground_shadow(center, width * 0.8, col, 0.6)
 
 # --- ОТРИСОВКА РЕЖИМА СТРОИТЕЛЬСТВА НА КАРТЕ ---
 func _draw_building_placement_preview() -> void:
@@ -1393,7 +1504,16 @@ func _draw_building_placement_preview() -> void:
 					b_w = b_h * (tw / th)
 				var b_rect = Rect2(c.x - b_w * 0.5, c.y - b_h * 0.5, b_w, b_h)
 				var tint = Color(0.6, 1.0, 0.6, 0.85) if is_valid else Color(1.0, 0.45, 0.45, 0.7)
-				draw_texture_rect(b_tex, b_rect, false, tint)
+				# Призрак здания в настоящем размере — видно, сколько места оно займёт
+				var real_rect = BuildingSystem.get_visual_rect(coord, placement_building_id, Vector2.ZERO)
+				if ComposerBuildings.has_building(placement_building_id):
+					ComposerBuildings.draw_building(self, placement_building_id, "complete", Vector2(c.x, c.y + _get_building_footprint_size(placement_building_id).y * 0.5), tint)
+				elif BuildingSystem.legacy_sprite_scale(placement_building_id) != 1.0:
+					draw_texture_rect(b_tex, real_rect, false, tint)
+				else:
+					draw_texture_rect(b_tex, b_rect, false, tint)
+				if line_tiles.size() <= 1:
+					draw_rect(real_rect, Color(0.3, 1.0, 0.45, 0.55) if is_valid else Color(1.0, 0.35, 0.3, 0.7), false, 1.0)
 				
 		# Парящий бейдж над текущим положением мыши
 		var mouse_coord = hovered_tile_coord if hovered_tile_coord != Vector2i(-1, -1) else shift_drag_current_coord
@@ -1471,7 +1591,15 @@ func _draw_building_placement_preview() -> void:
 				b_w = b_h * (tw / th)
 			var b_rect = Rect2(c.x - b_w * 0.5, c.y - b_h * 0.5, b_w, b_h)
 			var tint = Color(0.6, 1.0, 0.6, 0.8) if is_valid else Color(1.0, 0.5, 0.5, 0.65)
-			draw_texture_rect(b_tex, b_rect, false, tint)
+			# Призрак в настоящем размере и рамка занимаемого места
+			var real_rect = BuildingSystem.get_visual_rect(coord, placement_building_id, placement_visual_offset)
+			if ComposerBuildings.has_building(placement_building_id):
+				ComposerBuildings.draw_building(self, placement_building_id, "complete", Vector2(c.x, c.y + _get_building_footprint_size(placement_building_id).y * 0.5), tint)
+			elif BuildingSystem.legacy_sprite_scale(placement_building_id) != 1.0:
+				draw_texture_rect(b_tex, real_rect, false, tint)
+			else:
+				draw_texture_rect(b_tex, b_rect, false, tint)
+			draw_rect(real_rect, Color(0.3, 1.0, 0.45, 0.55) if is_valid else Color(1.0, 0.35, 0.3, 0.7), false, 1.0)
 			
 		var tip_pos = c + Vector2(0, -TILE_SIZE * 0.8)
 		var tip_text = "%s (Shift+ЛКМ: Растянуть)" % check.get("reason", "")
@@ -1523,6 +1651,9 @@ func _draw_building_relocation_preview() -> void:
 			elif GameManager.tile_buildings.has(target_coord):
 				is_valid = false
 				fail_reason = "Клетка уже занята"
+			elif BuildingSystem.overlaps_existing(target_coord, relocation_building_id, Vector2.ZERO, src_coord):
+				is_valid = false
+				fail_reason = "Здание перекроет соседнюю постройку"
 				
 		var target_col = Color(0.2, 0.9, 0.4, 0.85) if is_valid else Color(0.95, 0.25, 0.2, 0.85)
 		var target_fill = Color(0.2, 0.9, 0.4, 0.22) if is_valid else Color(0.95, 0.25, 0.2, 0.25)
@@ -1626,6 +1757,10 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 	var b_size = _get_building_footprint_size(b_id).x
 	var b_offset_y = 4.0 if b_id == "grave" else 0.0
 	var b_rect = Rect2(c.x - b_size * 0.5, c.y - b_size * 0.5 + b_offset_y, b_size, b_size)
+	var legacy_k = BuildingSystem.legacy_sprite_scale(b_id)
+	if legacy_k != 1.0:
+		var big = b_size * legacy_k
+		b_rect = Rect2(c.x - big * 0.5, b_rect.end.y - big, big, big)
 	
 	var b_inst: BuildingInstance = null
 	if GameManager and GameManager.building_instances:
@@ -1636,6 +1771,51 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 				if bi is BuildingInstance and bi.pos == coord:
 					b_inst = bi
 					break
+	
+	var foot_y = c.y + b_size * 0.5 + b_offset_y
+	var foot_pos = Vector2(c.x, foot_y)
+	if ComposerBuildings.ready_pack() and ComposerBuildings.has_building(b_id):
+		var comp_state := "complete"
+		if status == "constructing":
+			var days_left = float(b_data.get("days_left", 1.0))
+			var total_days = float(b_data.get("total_days", 1.0))
+			var pct = clampf(1.0 - (days_left / maxf(total_days, 1.0)), 0.0, 1.0)
+			comp_state = "foundation" if pct < 0.5 else "half_built"
+		elif b_inst and b_inst.condition <= 0.0:
+			comp_state = "ruined"
+		elif b_inst and b_inst.condition < 50.0:
+			comp_state = "damaged"
+		elif b_data.has("composer_state"):
+			comp_state = str(b_data["composer_state"])
+		
+		# Мягкая компактная тень основания постройки по контуру фундамента
+		var sh_rad = minf(b_size * 0.42, 22.0)
+		_draw_ground_shadow(foot_pos + Vector2(0, -sh_rad * 0.20), sh_rad, Color(0.0, 0.0, 0.0, 0.16), 0.35)
+		
+		var b_mod = Color(1, 1, 1, 0.70) if status == "constructing" else Color.WHITE
+		if comp_state == "complete" and _composer_has_complete_layers(coord, b_data):
+			ComposerSettlementDetails.draw_layer(self, b_id, "back", foot_pos, b_mod)
+			var work_ground: Vector2 = foot_pos + (Vector2(250, -420) if b_id == "bakery" else Vector2(0, -450)) * ComposerBuildings.UNIT_SCALE
+			ComposerSettlementDetails.draw_mechanism(self, b_id, work_ground, _composer_work_active(b_inst), GameManager.sim_time_total)
+		else:
+			ComposerBuildings.draw_building(self, b_id, comp_state, foot_pos, b_mod)
+		
+		if status == "constructing":
+			var scaffold_rect = Rect2(c.x - 13, c.y - 13, 26, 26)
+			draw_rect(scaffold_rect, Color(0.85, 0.65, 0.25, 0.7), false, 1.8)
+			draw_line(c + Vector2(-11, -11), c + Vector2(11, 11), Color(0.85, 0.65, 0.25, 0.8), 1.5)
+			draw_line(c + Vector2(11, -11), c + Vector2(-11, 11), Color(0.85, 0.65, 0.25, 0.8), 1.5)
+			
+			var days_left = float(b_data.get("days_left", 1.0))
+			var total_days = float(b_data.get("total_days", 1.0))
+			var pct = clampf(1.0 - (days_left / maxf(total_days, 1.0)), 0.0, 1.0)
+			
+			var p_rect = Rect2(c.x - 14, c.y + 11, 28, 5)
+			draw_rect(p_rect, Color(0.08, 0.1, 0.14, 0.9))
+			draw_rect(Rect2(p_rect.position.x + 1, p_rect.position.y + 1, (p_rect.size.x - 2) * pct, p_rect.size.y - 2), Color(0.35, 0.88, 0.35, 0.95))
+			draw_rect(p_rect, Color(0.85, 0.7, 0.3, 0.7), false, 1.0)
+		
+		return
 	
 	var b_tex: Texture2D = null
 	if b_id == "hut" or b_id.begins_with("hut"):
@@ -1695,7 +1875,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 
 	
 	if status == "constructing":
-		draw_circle(c, b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+		_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 		if b_tex:
 			draw_texture_rect(b_tex, b_rect, false, Color(1, 1, 1, 0.45))
 		
@@ -1723,11 +1903,11 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 				if pantry_tex:
 					var p_size = b_size * 0.48
 					var p_rect = Rect2(c.x + b_size * 0.18, c.y - b_size * 0.48, p_size, p_size)
-					draw_circle(p_rect.get_center() + Vector2(0, p_size * 0.35), p_size * 0.35, Color(0.12, 0.15, 0.1, 0.45))
+					_draw_ground_shadow(p_rect.get_center() + Vector2(0, p_size * 0.40), p_size * 0.35, Color(0, 0, 0, 0.20), 0.4)
 					draw_texture_rect(pantry_tex, p_rect, false)
 			
 			# 2. Основной дом хижины (main_house / House_update / dest_house)
-			draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 			
@@ -1745,7 +1925,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 				if shed_tex:
 					var s_size = b_size * 0.50
 					var s_rect = Rect2(c.x - b_size * 0.58, c.y + b_size * 0.06, s_size, s_size)
-					draw_circle(s_rect.get_center() + Vector2(0, s_size * 0.35), s_size * 0.35, Color(0.12, 0.15, 0.1, 0.45))
+					_draw_ground_shadow(s_rect.get_center() + Vector2(0, s_size * 0.40), s_size * 0.35, Color(0, 0, 0, 0.20), 0.4)
 					draw_texture_rect(shed_tex, s_rect, false)
 		elif b_id == "great_lodge" and b_inst != null:
 			# Большой дом рода с пристройками
@@ -1766,7 +1946,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 					draw_texture_rect(care_tex, ck_rect, false)
 
 			# 3. Основной Большой дом рода
-			draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.46, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 
@@ -1812,7 +1992,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 					draw_texture_rect(wep_tex, wr_rect, false)
 
 			# 3. Основное здание лагеря (hunter_lodge / destr_hunter_lodge / hunter_shelter)
-			draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.46, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 
@@ -1857,7 +2037,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 					draw_texture_rect(sort_tex, st_rect, false)
 
 			# 3. Основной навес стоянки
-			draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.46, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 
@@ -1885,7 +2065,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 					var pl_rect = Rect2(c.x - b_size * 0.24, c.y + b_size * 0.18, pl_size, pl_size)
 					draw_texture_rect(plot_tex, pl_rect, false)
 		elif b_id == "seed_store" and b_inst != null:
-			draw_circle(c + Vector2(0, b_size * 0.2), b_size * 0.46, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 			if b_inst.is_upgrade_unlocked("seed_selection_bench"):
@@ -1896,7 +2076,7 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 					draw_texture_rect(sel_tex, sl_rect, false)
 		elif (b_id in ["primitive_garden", "primitive_field", "wheat_field", "orchard"]) and b_inst != null:
 			# Сельскохозяйственные посадки
-			draw_circle(c, b_size * 0.46, Color(0.15, 0.18, 0.12, 0.65))
+			pass
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 				
@@ -2029,11 +2209,72 @@ func _draw_single_building(coord: Vector2i, b_data: Dictionary) -> void:
 				draw_rect(Rect2(c.x - tw * 0.5, c.y - b_size * 0.65 - 12, tw, 16), Color(0.08, 0.1, 0.15, 0.9))
 				draw_string(font, Vector2(c.x - tw * 0.5 + 6, c.y - b_size * 0.65), tip_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.9, 0.5))
 		else:
-			draw_circle(c, b_size * 0.42, Color(0.18, 0.22, 0.16, 0.6))
+			_draw_ground_shadow(Vector2(c.x, b_rect.end.y - b_rect.size.y * 0.14), b_rect.size.x * 0.38, Color(0, 0, 0, 0.20), 0.36)
 			if b_tex:
 				draw_texture_rect(b_tex, b_rect, false)
 
-# --- ОТРИСОВКА ЦЕНТРА ПОСЕЛЕНИЯ (РОДОВОЙ ОЧАГ / КОСТРИЩЕ) ---
+func _draw_single_composer_upgrade(upgrade_id: String, ground_pos: Vector2) -> void:
+	if not ComposerBuildings.ready_pack():
+		return
+	# Мягкая тень под предметом двора
+	_draw_ground_shadow(ground_pos + Vector2(0, -1), 3.5, Color(0.12, 0.16, 0.10, 0.35))
+	# Отрисовка визуала через контракт ComposerBuildings
+	ComposerBuildings.draw_upgrade(self, upgrade_id, ground_pos)
+
+func _composer_has_complete_layers(coord: Vector2i, data: Dictionary) -> bool:
+	if data.get("status", "active") == "constructing" or data.get("composer_state", "complete") != "complete": return false
+	var instance: BuildingInstance = _composer_building_instance(coord)
+	if instance != null and instance.condition < 50.0: return false
+	var b_id := String(data.get("id", ""))
+	# Здания с дефектными/неполными слоями (стоянка собирателей с полукрышей, большой дом с торчащими столбами)
+	# отрисовываются исключительно через цельный мастер-спрайт ComposerBuildings
+	if b_id in ["great_lodge", "foraging_post", "hunting_camp"]:
+		return false
+	return ComposerSettlementDetails.has_layers(b_id)
+
+func _composer_building_instance(coord: Vector2i) -> BuildingInstance:
+	var direct: BuildingInstance = GameManager.building_instances.get(coord, null)
+	if direct != null: return direct
+	for candidate in GameManager.building_instances.values():
+		if candidate is BuildingInstance and candidate.pos == coord: return candidate
+	return null
+
+func _composer_back_sort_offset(id: String) -> float:
+	if not ComposerSettlementDetails.has_layers(id): return 0.0
+	var result := 0.0
+	for point in ComposerSettlementDetails.buildings[id]["interior"]["floorPolygon"]:
+		result = minf(result, float(point[1]) * ComposerBuildings.UNIT_SCALE)
+	return result - 0.01
+
+func _composer_interior_open(coord: Vector2i, data: Dictionary, ground: Vector2) -> bool:
+	if hovered_tile_coord == coord or selected_tile_coord == coord: return true
+	var id := String(data.get("id", ""))
+	if not ComposerSettlementDetails.has_layers(id): return false
+	var points := PackedVector2Array()
+	for point in ComposerSettlementDetails.buildings[id]["interior"]["floorPolygon"]:
+		points.append(ground + Vector2(float(point[0]), float(point[1])) * ComposerBuildings.UNIT_SCALE)
+	for settlement in GameManager.settlements.values():
+		if settlement.population == null: continue
+		for citizen in settlement.population.citizens:
+			if citizen.is_alive and Geometry2D.is_point_in_polygon(citizen.pos, points): return true
+	return false
+
+func _composer_work_active(instance: BuildingInstance) -> bool:
+	if instance == null or instance.condition <= 0.0 or instance.production_queue.is_empty(): return false
+	for settlement in GameManager.settlements.values():
+		if settlement.population == null: continue
+		for citizen in settlement.population.citizens:
+			if instance.workers.has(citizen.citizen_id) and citizen.is_alive and citizen.state == CitizenNPC.State.WORKING:
+				return true
+	return false
+
+func _composer_interior_offset(upgrade_id: String) -> Vector2:
+	return {"great_hearth": Vector2(0,-600), "partitions": Vector2(-250,-450),
+		"nursery_corner": Vector2(-400,-350), "caretaker_quarters": Vector2(-350,-650),
+		"elders_quarters": Vector2(350,-650), "communal_store": Vector2(400,-350),
+		"infirmary_corner": Vector2(200,-200)}.get(upgrade_id, Vector2(0,-400))
+
+
 func _draw_single_settlement_hub(rect: Rect2, s: SettlementData) -> void:
 	var c = rect.get_center()
 	var is_player = (s.id == "player_tribe_settlement")
@@ -2077,11 +2318,17 @@ func _draw_settlement_hub_overlay(s: SettlementData, font: Font) -> void:
 		var c = Vector2(s.pos.x * TILE_SIZE + 16, s.pos.y * TILE_SIZE + 16)
 		var title_pos = c + Vector2(0, -TILE_SIZE * 0.95)
 		var full_text = "%s • %d чел." % [s.name, s.population.get_total_population()]
-		var text_w = full_text.length() * 6.5 + 14
+		# Табличка не раздувается при сильном приближении и не закрывает постройки
+		var cam = get_viewport().get_camera_2d()
+		var k = clampf(1.5 / maxf(0.1, cam.zoom.x if cam else 1.0), 0.3, 1.0)
+		title_pos = c + Vector2(0, -TILE_SIZE * 1.6)
+		draw_set_transform(title_pos * (1.0 - k), 0.0, Vector2(k, k))
+		var text_w = font.get_string_size(full_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 14
 		var banner_rect = Rect2(title_pos.x - text_w * 0.5, title_pos.y - 9, text_w, 18)
-		draw_rect(banner_rect, Color(0.12, 0.15, 0.22, 0.94))
+		draw_rect(banner_rect, Color(0.12, 0.15, 0.22, 0.85))
 		draw_rect(banner_rect, theme_color, false, 1.2)
 		draw_string(font, title_pos + Vector2(-text_w * 0.5 + 7, 4), full_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.92, 0.7))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 # --- ОТРИСОВКА ТЕЛА ЖИТЕЛЯ (NPC) ---
 # Возвращает ключ N-кадровой последовательности ("prefix_1".."prefix_count") по времени —
@@ -2164,8 +2411,9 @@ func _draw_single_citizen_body(c: CitizenNPC) -> void:
 	var flipped = (c.facing_dir.x < 0.0)
 	var y_offset = -char_size.y * 0.95 + bob
 
-	# Тень под ногами строго центрирована на c.pos (сбалансированная под новый размер)
-	draw_circle(p + Vector2(0, 0.5), char_size.x * 0.20, Color(0, 0, 0, 0.26))
+	# Тень под ногами: эллипс; в прыжке Короля сжимается и светлеет
+	var air = clampf(float(c.custom_data.get("jump_h", 0.0)) / 10.0, 0.0, 1.0)
+	_draw_ground_shadow(p + Vector2(0, 0.3), char_size.x * 0.32 * (1.0 - air * 0.45), Color(0, 0, 0, 0.28 * (1.0 - air * 0.5)), 0.45)
 	if ComposerAssets.draw_citizen(self,c,GameManager.sim_time_total):
 		return
 
@@ -2795,6 +3043,28 @@ func _get_night_darkness_factor() -> float:
 		return 1.0 - (hour - 5.0) / 2.5
 	return 0.0
 
+static var _glow_tex: Texture2D = null
+
+# Радиальная текстура света: яркий центр плавно гаснет к краю
+func _get_glow_texture() -> Texture2D:
+	if _glow_tex == null:
+		var g = Gradient.new()
+		g.set_color(0, Color(1, 1, 1, 1))
+		g.set_color(1, Color(1, 1, 1, 0))
+		g.add_point(0.45, Color(1, 1, 1, 0.45))
+		var gt = GradientTexture2D.new()
+		gt.gradient = g
+		gt.fill = GradientTexture2D.FILL_RADIAL
+		gt.fill_from = Vector2(0.5, 0.5)
+		gt.fill_to = Vector2(1.0, 0.5)
+		gt.width = 128
+		gt.height = 128
+		_glow_tex = gt
+	return _glow_tex
+
+func _draw_glow(center: Vector2, radius: float, color: Color) -> void:
+	draw_texture_rect(_get_glow_texture(), Rect2(center - Vector2(radius, radius), Vector2(radius, radius) * 2.0), false, color)
+
 func _draw_night_atmosphere(screen_rect: Rect2, night_factor: float) -> void:
 	if night_factor <= 0.01:
 		return
@@ -2810,9 +3080,9 @@ func _draw_night_atmosphere(screen_rect: Rect2, night_factor: float) -> void:
 				if screen_rect.has_point(c_pos):
 					var flicker = 1.0 + 0.08 * sin(anim_time * 7.5 + float(s.pos.x))
 					# Тройной тёплый ореол огня, пробивающий ночную тьму
-					draw_circle(c_pos, 85.0 * flicker, Color(1.0, 0.65, 0.20, 0.26 * night_factor))
-					draw_circle(c_pos, 52.0 * flicker, Color(1.0, 0.80, 0.35, 0.42 * night_factor))
-					draw_circle(c_pos, 22.0 * flicker, Color(1.0, 0.95, 0.65, 0.65 * night_factor))
+					_draw_glow(c_pos, 85.0 * flicker, Color(1.0, 0.65, 0.20, 0.26 * night_factor))
+					_draw_glow(c_pos, 52.0 * flicker, Color(1.0, 0.80, 0.35, 0.42 * night_factor))
+					_draw_glow(c_pos, 22.0 * flicker, Color(1.0, 0.95, 0.65, 0.65 * night_factor))
 					# Взлетающие золотые искры
 					for i in range(5):
 						var spark_y = c_pos.y - fmod(anim_time * 28.0 + float(i * 11), 36.0)
@@ -2827,7 +3097,9 @@ func _draw_night_atmosphere(screen_rect: Rect2, night_factor: float) -> void:
 				if screen_rect.has_point(b_pos):
 					var b_flicker = 1.0 + 0.05 * sin(anim_time * 5.0 + float(b.pos.x + b.pos.y))
 					# Тёплый свет у порога
-					draw_circle(b_pos + Vector2(0, 4), 36.0 * b_flicker, Color(1.0, 0.75, 0.30, 0.28 * night_factor))
+					_draw_glow(b_pos + Vector2(0, 4), 36.0 * b_flicker, Color(1.0, 0.75, 0.30, 0.28 * night_factor))
+					if ComposerBuildings.has_building(b.type):
+						continue
 					# Золотистый уютный свет в окошках
 					var win_left = Rect2(b_pos.x - 5.5, b_pos.y - 3.5, 3.2, 3.2)
 					var win_right = Rect2(b_pos.x + 2.5, b_pos.y - 3.5, 3.2, 3.2)
@@ -2844,8 +3116,8 @@ func _draw_night_atmosphere(screen_rect: Rect2, night_factor: float) -> void:
 				var tw_pos = Vector2(coord.x * TILE_SIZE + 16, coord.y * TILE_SIZE + 16)
 				if screen_rect.has_point(tw_pos):
 					var tf = 1.0 + 0.1 * sin(anim_time * 8.0 + float(coord.x))
-					draw_circle(tw_pos + Vector2(-6, -12), 24.0 * tf, Color(1.0, 0.78, 0.28, 0.35 * night_factor))
-					draw_circle(tw_pos + Vector2(6, -12), 24.0 * tf, Color(1.0, 0.78, 0.28, 0.35 * night_factor))
+					_draw_glow(tw_pos + Vector2(-6, -12), 24.0 * tf, Color(1.0, 0.78, 0.28, 0.35 * night_factor))
+					_draw_glow(tw_pos + Vector2(6, -12), 24.0 * tf, Color(1.0, 0.78, 0.28, 0.35 * night_factor))
 
 	# 5. Факелы ночной стражи
 	if GameManager and GameManager.settlements:
@@ -2855,7 +3127,7 @@ func _draw_night_atmosphere(screen_rect: Rect2, night_factor: float) -> void:
 					if c.is_alive and c.job_id in ["guard", "warrior"] and c.state != CitizenNPC.State.SLEEPING:
 						if screen_rect.has_point(c.pos):
 							var gf = 1.0 + 0.08 * sin(anim_time * 9.0 + float(c.seed_val))
-							draw_circle(c.pos + Vector2(0, -3), 26.0 * gf, Color(1.0, 0.80, 0.35, 0.32 * night_factor))
+							_draw_glow(c.pos + Vector2(0, -3), 26.0 * gf, Color(1.0, 0.80, 0.35, 0.32 * night_factor))
 							var torch_pos = c.pos + Vector2(3.5 * c.facing_dir.x, -6)
 							draw_circle(torch_pos, 2.0, Color(1.0, 0.95, 0.55, 0.95 * night_factor))
 

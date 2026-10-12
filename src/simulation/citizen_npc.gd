@@ -70,7 +70,7 @@ var pregnancy: Dictionary = {} # {"partner_id": String, "progress_sec": float, "
 var pos: Vector2 = Vector2.ZERO
 var home_pos: Vector2 = Vector2.ZERO
 var facing_dir: Vector2 = Vector2.DOWN
-var path: Array[Vector2] = []
+var path: Array = []
 var path_index: int = 0
 var base_speed: float = 24.0
 var stuck_timer: float = 0.0
@@ -263,7 +263,25 @@ var social_target_id: String = ""
 var social_timer: float = 0.0
 
 func take_damage(amount: float, source_name: String = "") -> bool:
+	# Король в перекате уходит из-под удара
+	if is_ruler and custom_data.get("dodging", false) and amount > 0.0:
+		custom_data["dodged_at"] = GameManager.sim_time_total if GameManager else 0.0
+		return false
+	if custom_data.get("blocking", false) and amount > 0.0 and stamina_current > 0.0:
+		var absorb = 0.8 if String(equipment.get("shield", "")) != "" else 0.45
+		amount *= 1.0 - absorb
+		stamina_current = maxf(0.0, stamina_current - HeroController.BLOCK_STAMINA_PER_HIT)
+		custom_data["blocked_at"] = GameManager.sim_time_total if GameManager else 0.0
+		if GameManager:
+			GameManager.camera_shake = maxf(GameManager.camera_shake, 0.12)
 	health = maxf(0.0, health - amount)
+	if is_ruler and amount > 0.0 and GameManager and GameManager.hero_control_active:
+		GameManager.camera_shake = clampf(0.25 + amount / 30.0, 0.0, 1.0)
+	# Короткая анимация получения удара (живой отклик на попадание)
+	if amount > 0.0 and health > 0.0 and GameManager:
+		custom_data["anim_action"] = "hit"
+		custom_data["anim_start"] = GameManager.sim_time_total
+		custom_data["anim_until"] = GameManager.sim_time_total + 0.45
 	if health <= 0.0:
 		is_alive = false
 		if death_cause == "":
@@ -440,6 +458,7 @@ func _init(p_id: String = "", p_name: String = "", p_gender: String = "m", p_age
 	_pick_initial_appearance()
 	if p_id != "":
 		init_personality(seed_val)
+	ComposerAssets.generate_npc_appearance(self)
 
 func _pick_initial_appearance() -> void:
 	if appearance_role != "" and appearance_role != "villager_brown_m":
@@ -501,7 +520,9 @@ func _is_appearance_valid_for_gender() -> bool:
 	return true
 
 func get_texture() -> Texture2D:
-	var composer_portrait = ComposerAssets.head_texture(self)
+	var composer_portrait = ComposerAssets.render_portrait(self)
+	if composer_portrait == null:
+		composer_portrait = ComposerAssets.head_texture(self)
 	if composer_portrait != null:
 		return composer_portrait
 	if cached_texture != null:
@@ -624,6 +645,15 @@ func get_speed() -> float:
 		var tile_c = Vector2i(int(floor(pos.x / 32.0)), int(floor(pos.y / 32.0)))
 		if GameManager.trample_map.get(tile_c, 0.0) >= 0.2:
 			spd *= 1.15
+	# Колёса плотника облегчают переноску грузов (+логистика)
+	if cargo_amount > 0.0 and GameManager and settlement_id != "":
+		var s = GameManager.settlements.get(settlement_id, null)
+		if s:
+			spd *= 1.0 + s.get_bonus("logistics_boost")
+	if job_id == "forager" and GameManager and settlement_id != "":
+		var fs = GameManager.settlements.get(settlement_id, null)
+		if fs and fs.get_bonus("forager_speed") > 0.0:
+			spd *= 1.0 + fs.get_bonus("forager_speed")
 	return maxf(6.0, spd)
 
 # --- ЭФФЕКТИВНЫЕ ПАРАМЕТРЫ И ВИТАЛЬНЫЙ МНОЖИТЕЛЬ (P01.2 / ТЗ 4.1) ---
@@ -1017,6 +1047,7 @@ func serialize() -> Dictionary:
 		"revenge_reason": revenge_reason,
 		"jailed_until": float(custom_data.get("jailed_until", 0.0)),
 		"stash": custom_data.get("stash", {}).duplicate(),
+		"composer_slots": custom_data.get("composer_slots", {}).duplicate(),
 		"loyalty": loyalty,
 		"experience": experience.duplicate(),
 		"skills": skills.duplicate(),
@@ -1125,6 +1156,8 @@ func deserialize(data: Dictionary) -> void:
 		custom_data["jailed_until"] = float(data["jailed_until"])
 	if not data.get("stash", {}).is_empty():
 		custom_data["stash"] = data["stash"].duplicate()
+	if data.has("composer_slots") and data["composer_slots"] is Dictionary:
+		custom_data["composer_slots"] = data["composer_slots"].duplicate()
 	loyalty = data.get("loyalty", 85.0)
 	experience = data.get("experience", {}).duplicate()
 	skills = data.get("skills", experience).duplicate()

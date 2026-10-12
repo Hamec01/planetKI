@@ -25,6 +25,10 @@ var current_time_period: String = "Утро" # "Утро", "День", "Вече
 var is_paused: bool = false
 # Режим «Путь вождя» с прямым управлением: игрок сам водит правителя (WASD), камера следует за ним
 var hero_control_active: bool = false
+var hero_prompt: Dictionary = {}
+var battle_test_mode: bool = false # тестовый бой из главного меню
+var battle_test_node: Node = null
+var camera_shake: float = 0.0 # 0..1 — тряска камеры в Режиме Короля (удар по Королю) # цель взаимодействия Короля по E (для подсказки на карте)
 var user_paused: bool = false
 var modal_pause_count: int = 0
 var game_speed: float = 1.0 # 1.0, 2.0, 4.0, 8.0
@@ -84,6 +88,10 @@ var game_over_reason: String = ""
 
 func trigger_game_over(reason: String) -> void:
 	if is_game_over:
+		return
+	# В тестовом бою гибель Короля — не конец: воины бьются дальше, итог покажет BattleTest
+	if battle_test_mode:
+		EventBus.notification_toast.emit("👑 Король пал", "Ваш вождь погиб, но племя продолжает бой.", "danger")
 		return
 	is_game_over = true
 	game_over_reason = reason

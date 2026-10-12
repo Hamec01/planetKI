@@ -80,7 +80,7 @@ func pick_task(s: SettlementData, c: CitizenNPC, _delta: float) -> bool:
 	var plant_mode = false
 	for b_coord in GameManager.building_instances:
 		var b_inst = GameManager.building_instances[b_coord]
-		if b_inst and "type" in b_inst and b_inst.type == "woodcutter_camp":
+		if b_inst and "type" in b_inst and b_inst.type == "woodcutter_camp" and b_inst.settlement_id == s.id:
 			if b_inst.is_upgrade_unlocked("woodcutter_forestry"):
 				can_plant = true
 			if b_inst.active_mode == "reforestation":
@@ -151,7 +151,8 @@ func pick_task(s: SettlementData, c: CitizenNPC, _delta: float) -> bool:
 		if t_path.is_empty() and GameManager.nav_grid:
 			t_path = GameManager.nav_grid.find_path(c.pos, tree["pos"], true)
 		if t_path.is_empty() and c.pos.distance_to(tree["pos"]) <= 36.0:
-			t_path = [c.pos]
+			var direct_t: Array[Vector2] = [c.pos]
+			t_path = direct_t
 
 		if t_path.is_empty():
 			if GameManager.task_service:
@@ -213,7 +214,7 @@ func on_arrived(s: SettlementData, c: CitizenNPC) -> bool:
 		c.work_timer = 2.5
 		c.last_status_reason = "Сажает саженец дерева"
 	else:
-		c.work_timer = randf_range(4.5, 6.0)
+		c.work_timer = randf_range(4.5, 6.0) / (1.0 + s.get_bonus("woodcutting_speed"))
 		c.last_status_reason = "Рубит дерево топором"
 	return true
 
@@ -231,8 +232,14 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 	else:
 		var resource_node: Dictionary = GameManager.resource_manager.nodes.get(c.target_coord, {}) if GameManager.resource_manager else {}
 		var stage = String(resource_node.get("tree_stage", "standing"))
+		if stage == "standing" and not c.has_tool("axe"):
+			c.state = CitizenNPC.State.WAITING
+			c.task_id = ""
+			c.last_status_reason = "Для рубки нужен исправный топор из лагеря"
+			if GameManager.resource_manager: GameManager.resource_manager.release_node(c.target_coord,c.citizen_id)
+			return true
 		if stage == "standing" and not c.equipped_tool.is_empty():
-			c.wear_tool(0.06)
+			c.wear_tool(0.06 * clampf(1.0 - s.get_bonus("tool_wear_reduction"), 0.2, 1.0))
 			if not c.has_tool("axe"):
 				c.state = CitizenNPC.State.WAITING
 				c.last_status_reason = "Топор сломан во время рубки"
@@ -242,7 +249,7 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 					GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
 				return true
 
-		var strike_harvest = 12.5 * c.get_vitality_multiplier()
+		var strike_harvest = 12.5 * c.get_vitality_multiplier() * (1.0 + s.get_bonus("woodcutting_speed"))
 		var h_amount = 0.0
 		if c.target_coord != Vector2i(-1, -1) and GameManager.resource_manager:
 			if GameManager.nav_grid:
@@ -255,7 +262,7 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 				c.work_timer = 1.4
 				c.last_status_reason = "Дерево падает — ждёт перед подбором брёвен" if resource_node.get("tree_stage", "") == "falling" else "Рубит ствол: летят щепки, углубляется зарубка"
 				return true
-			h_amount = GameManager.resource_manager.collect_tree_logs(c.target_coord, c.max_carry - c.cargo_amount)
+			h_amount = GameManager.resource_manager.collect_tree_logs(c.target_coord, s.get_carry_capacity(c) - c.cargo_amount)
 			if stage == "falling" and h_amount <= 0:
 				c.work_timer = 0.3
 				return true
@@ -270,7 +277,7 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 		var rem_wood = float(node.get("amount", 0.0)) if not node.is_empty() else 0.0
 		var is_done = node.get("depleted", false) or rem_wood <= 0.0 or h_amount <= 0.0
 
-		if is_done or c.cargo_amount >= minf(18.0, c.max_carry):
+		if is_done or c.cargo_amount >= minf(18.0 * (1.0 + s.get_bonus("carry_capacity")), s.get_carry_capacity(c)):
 			# Дерево срублено полностью (или достигнут переносимый объем древесины)
 			if GameManager.resource_manager:
 				GameManager.resource_manager.release_node(c.target_coord, c.citizen_id)
@@ -304,7 +311,7 @@ func on_work_done(s: SettlementData, c: CitizenNPC) -> bool:
 					c.task_instance_id = ""
 		else:
 			# Следующий удар топором через 4.5-6.0 сек (размеренная физическая рубка)
-			c.work_timer = randf_range(4.5, 6.0)
+			c.work_timer = randf_range(4.5, 6.0) / (1.0 + s.get_bonus("woodcutting_speed"))
 			c.last_status_reason = "Рубит дерево (осталось %d дров)" % int(rem_wood)
 	return true
 
